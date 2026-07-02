@@ -6,7 +6,7 @@ use super::{Panel, PanelKind, DEFAULT_DEPTH};
 use crate::source::{SourceId, Symbol};
 use crate::state::AppState;
 use crate::view::{PanelView, TapePrint, TapeView};
-use wickra_exchange::OrderSide;
+use wickra_exchange_core::OrderSide;
 
 /// The number of prints the tape shows.
 const TAPE_ROWS: usize = DEFAULT_DEPTH * 2;

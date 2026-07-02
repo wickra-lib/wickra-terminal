@@ -7,6 +7,9 @@
 //! forwarded to the state fold, so `poll()` only ever yields market events for a
 //! concrete market.
 
+// The Live source pulls the native exchange facade (tokio/reqwest), so it is
+// gated behind the `live` feature and excluded from wasm builds.
+#[cfg(feature = "live")]
 pub mod live;
 pub mod replay;
 pub mod synth;
@@ -16,8 +19,9 @@ use crate::error::Result;
 
 // The market vocabulary is the exchange layer's — re-exported so the whole core
 // (and every binding) speaks one set of types.
-pub use wickra_exchange::{Event, Symbol};
+pub use wickra_exchange_core::{Event, Symbol};
 
+#[cfg(feature = "live")]
 pub use live::LiveSource;
 pub use replay::ReplaySource;
 pub use synth::SynthSource;
@@ -87,17 +91,42 @@ pub fn build_source(id: SourceId, spec: &SourceSpec) -> Result<Box<dyn DataSourc
             venue,
             symbol,
             testnet,
-        } => Ok(Box::new(LiveSource::connect(id, venue, symbol, *testnet)?)),
+        } => build_live(id, venue, symbol, *testnet),
         SourceSpec::Replay { dataset } => Ok(Box::new(ReplaySource::from_dataset(id, dataset)?)),
         SourceSpec::Synth { seed } => Ok(Box::new(SynthSource::new(id, *seed))),
     }
+}
+
+/// Build a Live source (native builds with the `live` feature).
+#[cfg(feature = "live")]
+fn build_live(
+    id: SourceId,
+    venue: &str,
+    symbol: &str,
+    testnet: bool,
+) -> Result<Box<dyn DataSource>> {
+    Ok(Box::new(LiveSource::connect(id, venue, symbol, testnet)?))
+}
+
+/// Without the `live` feature (e.g. wasm), a Live spec is an error: the browser
+/// renderer feeds live data over its own WebSocket, not this native source.
+#[cfg(not(feature = "live"))]
+fn build_live(
+    _id: SourceId,
+    _venue: &str,
+    _symbol: &str,
+    _testnet: bool,
+) -> Result<Box<dyn DataSource>> {
+    Err(crate::error::Error::Source(
+        "live sources require the `live` feature (native builds only)".to_string(),
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use rust_decimal_macros::dec;
-    use wickra_exchange::{OrderSide, TradePrint};
+    use wickra_exchange_core::{OrderSide, TradePrint};
 
     #[test]
     fn trade_event_has_a_symbol_tag() {

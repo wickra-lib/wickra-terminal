@@ -2078,6 +2078,7 @@ dependencies = [
  "toml",
  "wickra-core",
  "wickra-exchange",
+ "wickra-exchange-core",
 ]
 
 [[package]]
@@ -2643,6 +2644,15 @@ version = "0.1.0"
 dependencies = [
  "pyo3",
  "terminal-core",
+]
+
+[[package]]
+name = "wickra-terminal-wasm"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.2.17",
+ "terminal-core",
+ "wasm-bindgen",
 ]
 
 [[package]]

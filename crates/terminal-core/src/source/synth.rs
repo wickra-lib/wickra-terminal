@@ -13,7 +13,7 @@ use rust_decimal::Decimal;
 
 use super::{DataSource, SourceId, SourceKind, Symbol};
 use crate::error::Result;
-use wickra_exchange::{BookLevel, Event, OrderBookSnapshot, OrderSide, TradePrint};
+use wickra_exchange_core::{BookLevel, Event, OrderBookSnapshot, OrderSide, TradePrint};
 
 /// Per-symbol synthetic state: the market, its current price and the walk's RNG
 /// state. Keyed in an ordered map by the symbol's string form so iteration —
