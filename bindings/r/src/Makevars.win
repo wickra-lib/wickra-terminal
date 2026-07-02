@@ -1,0 +1,4 @@
+# On Windows the C ABI DLL is linked directly (mingw resolves the import stubs
+# from wickra_terminal.dll); the loader finds it via PATH at run time.
+PKG_CPPFLAGS = -I$(WKTERM_INC)
+PKG_LIBS = -L$(WKTERM_LIB) -l:wickra_terminal.dll

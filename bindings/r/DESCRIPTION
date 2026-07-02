@@ -1,0 +1,16 @@
+Package: wickraterminal
+Type: Package
+Title: Data-Driven Trading-Terminal Core
+Version: 0.1.0
+Authors@R: person("kingchenc", role = c("aut", "cre"), email = "support@wickra.org")
+Description: R bindings for wickra-terminal over its C ABI hub: build a Terminal
+    from a JSON config, drive it with command JSON and read back the frame JSON
+    - the same protocol as the native TUI and every other binding.
+License: MIT + file LICENSE | Apache License 2.0
+URL: https://github.com/wickra-lib/wickra-terminal
+BugReports: https://github.com/wickra-lib/wickra-terminal/issues
+Encoding: UTF-8
+NeedsCompilation: yes
+SystemRequirements: the wickra-terminal C ABI shared library (WKTERM_LIB) and its
+    header (WKTERM_INC).
+RoxygenNote: 7.3.2
