@@ -49,4 +49,21 @@ At runtime, sources and subscriptions are driven through the data-driven
 {"type":"RemoveSource","id":1}
 ```
 
+## The time-machine
+
+A `Replay` source records the whole feed, so it can be rewound. The `Seek`
+command moves a replay source to a recorded position and re-folds the state for
+its markets, then playback resumes forward from there:
+
+```json
+{"type":"Seek","source":0,"index":120}
+```
+
+State is rebuilt by **re-folding the feed** rather than restoring a snapshot: a
+market's streaming indicators are not cloneable, so a snapshot ring is not
+viable, and re-folding is deterministic and O(1) per event. `Seek` on a live or
+synthetic source (which keep no recorded history) is an error. Because it is just
+another command on the [data-driven boundary](RENDERERS.md), every binding and
+both renderers get the time-machine for free.
+
 See also: [PANELS.md](PANELS.md) · [STREAMING.md](STREAMING.md).
