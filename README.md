@@ -3,14 +3,10 @@
 </p>
 
 [![Built on Wickra](https://img.shields.io/badge/built%20on-wickra-3b82f6)](https://github.com/wickra-lib/wickra)
-[![Status](https://img.shields.io/badge/status-pre--alpha%20(scaffolding)-red)](https://github.com/wickra-lib/wickra-terminal)
+[![Status](https://img.shields.io/badge/status-pre--release-orange)](https://github.com/wickra-lib/wickra-terminal)
 [![CI](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/ci.svg)](https://github.com/wickra-lib/wickra-terminal/actions/workflows/ci.yml)
 [![CodeQL](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/codeql.svg)](https://github.com/wickra-lib/wickra-terminal/actions/workflows/codeql.yml)
 [![codecov](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/codecov.svg)](https://codecov.io/gh/wickra-lib/wickra-terminal)
-[![GitHub release](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/release.svg)](https://github.com/wickra-lib/wickra-terminal/releases/latest)
-[![crates.io](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/crates.svg)](https://crates.io/crates/wickra-terminal)
-[![PyPI](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/pypi.svg)](https://pypi.org/project/wickra-terminal/)
-[![npm](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/npm.svg)](https://www.npmjs.com/package/wickra-terminal)
 [![License: MIT OR Apache-2.0](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/license.svg)](#license)
 [![OpenSSF Scorecard](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/scorecard.svg)](https://scorecard.dev/viewer/?uri=github.com/wickra-lib/wickra-terminal)
 [![OpenSSF Best Practices](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/best-practices.svg)](https://www.bestpractices.dev/)
@@ -44,12 +40,12 @@ any language builds their own front-end on the same core.
 
 ## Status
 
-**Pre-alpha — scaffolding.** This repository is being built out from the
-[`wickra-exchange`](https://github.com/wickra-lib/wickra-exchange) template. The
-workspace and project governance are in place; the core, the renderers and the
-language bindings are landing incrementally. **The API shown below is the target
-surface, not yet shippable.** Track progress in [ROADMAP.md](ROADMAP.md). Not
-released to any registry.
+**Pre-release — functionally complete, CI-verified, not yet published.** The core,
+both renderers (TUI + Web), all ten language bindings, the runtime source/symbol
+toggle, the panel set, the byte-exact golden corpus, property + fuzz tests,
+benchmarks and one runnable example per language are in place and green across
+the full CI matrix (10 languages × 3 OS). Not yet released to any registry —
+track progress in [ROADMAP.md](ROADMAP.md).
 
 > ⚠️ **Real orders move real money.** Live execution is opt-in, testnet-first, and
 > keys stay server-side (native renderer only). Both renderers default to
