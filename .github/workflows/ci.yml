@@ -20,13 +20,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    # The ui-tui binary (wickra-terminal) and the C ABI cdylib (wickra_terminal)
-    # both emit wickra_terminal.pdb on Windows, so the --all-features debug link
-    # races two writers into one PDB and trips LNK1201 under runner disk pressure.
-    # Tests do not need debug info. RUSTFLAGS applies to every rustc invocation
-    # (and is part of the build cache key, unlike a CARGO_PROFILE_* override which
-    # a restored cache can shadow), so it reliably suppresses PDBs. Harmless on
-    # Linux/macOS.
+    # The ui-tui binary and the C ABI cdylib are both named wickra_terminal on
+    # Windows, so building both in one --workspace pass makes two units write the
+    # same wickra_terminal.pdb concurrently and intermittently trips LNK1201. The
+    # fix is to not build both together: wickra-terminal-c is compiled and tested
+    # by the dedicated `c-abi` job, so exclude it here — that removes the
+    # collision entirely. Debug info is also dropped (tests do not need it, and it
+    # keeps runner disk use down); RUSTFLAGS is part of the cache key.
     env:
       RUSTFLAGS: "-C debuginfo=0"
     steps:
@@ -36,9 +36,10 @@ jobs:
       - uses: ./.github/actions/setup-rust
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       # The PyO3 extension cdylib is built and tested by the `python` job via
-      # maturin (which supplies the platform link flags); exclude it here.
-      - run: cargo build --workspace --all-features --exclude wickra-terminal-python
-      - run: cargo test --workspace --all-features --exclude wickra-terminal-python
+      # maturin; the C ABI cdylib by the `c-abi` job. Exclude both here — the
+      # latter also avoids the wickra_terminal.pdb output-filename collision.
+      - run: cargo build --workspace --all-features --exclude wickra-terminal-python --exclude wickra-terminal-c
+      - run: cargo test --workspace --all-features --exclude wickra-terminal-python --exclude wickra-terminal-c
 
   lint:
     name: Format & Clippy

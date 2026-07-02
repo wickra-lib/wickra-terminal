@@ -1,0 +1,24 @@
+{
+  "name": "wickra-terminal-linux-arm64-gnu",
+  "version": "0.1.0",
+  "description": "Native binding for wickra-terminal (Linux arm64 GNU). Installed automatically as an optional dependency of wickra-terminal on matching platforms.",
+  "main": "wickra-terminal.linux-arm64-gnu.node",
+  "files": [
+    "wickra-terminal.linux-arm64-gnu.node"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "node": ">= 22"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wickra-lib/wickra-terminal"
+  },
+  "homepage": "https://github.com/wickra-lib/wickra-terminal"
+}

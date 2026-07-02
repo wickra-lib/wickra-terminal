@@ -1,0 +1,24 @@
+{
+  "name": "wickra-terminal-win32-x64-msvc",
+  "version": "0.1.0",
+  "description": "Native binding for wickra-terminal (Windows x64 MSVC). Installed automatically as an optional dependency of wickra-terminal on matching platforms.",
+  "main": "wickra-terminal.win32-x64-msvc.node",
+  "files": [
+    "wickra-terminal.win32-x64-msvc.node"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "node": ">= 22"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wickra-lib/wickra-terminal"
+  },
+  "homepage": "https://github.com/wickra-lib/wickra-terminal"
+}
