@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "wickra-terminal"
+abstract: >-
+  A streaming trading terminal built on the Wickra core: one data-driven core
+  exposed in ten languages, with a native TUI and a Web front-end as a selectable
+  renderer. Panels emit view-models, so one core logic drives every front-end.
+type: software
+authors:
+  - alias: kingchenc
+    website: "https://wickra.org"
+repository-code: "https://github.com/wickra-lib/wickra-terminal"
+url: "https://wickra.org"
+license:
+  - MIT
+  - Apache-2.0
+keywords:
+  - trading
+  - terminal
+  - tui
+  - streaming
+  - charts

@@ -1,0 +1,54 @@
+/target
+# cargo-fuzz builds in a detached workspace under fuzz/; its build dir and
+# resolved lockfile are local artifacts, never committed.
+/fuzz/target
+/fuzz/Cargo.lock
+**/*.rs.bk
+Cargo.lock.bak
+.DS_Store
+.idea/
+.vscode/
+*.pdb
+
+# Python build artifacts
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.so
+*.pyd
+*.egg-info/
+dist/
+.venv/
+build/
+
+# Node build artifacts (index.js / index.d.ts ARE committed)
+node_modules/
+*.node
+
+# WASM / web build artifacts
+bindings/wasm/pkg/
+web/node_modules/
+web/dist/
+
+# Go: the C ABI library is staged per-platform by CI, never committed here.
+bindings/go/lib/*/
+
+# .NET build artifacts
+bin/
+obj/
+
+# Java / Maven build artifacts
+bindings/java/target/
+
+# R build artifacts
+bindings/r/.rlib/
+bindings/r/src/*.o
+bindings/r/src/*.so
+bindings/r/src/*.dll
+bindings/r/..Rcheck/
+
+# Local secrets — exchange API keys must never be committed.
+.env
+.env.*
+*.key
+secrets/

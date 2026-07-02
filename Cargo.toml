@@ -1,0 +1,80 @@
+# Wickra Terminal — workspace.
+# A streaming trading terminal built as one data-driven core (`terminal-core`)
+# with two reference renderers: a native TUI (ratatui) and a Web front-end
+# (WASM + Vue). The core is exposed as a JSON-over-C-ABI data API in ten
+# languages, mirroring the Wickra tiering: Rust core -> native Python/Node/WASM
+# + a C ABI hub for C/C++/C#/Go/Java/R. Panels emit view-models (never renderer
+# commands), so one core logic drives every front-end.
+#
+# The `members` list grows as crates are added, phase by phase; the final set is:
+#   crates/terminal-core, crates/ui-tui, crates/terminal-bench,
+#   bindings/python, bindings/node, bindings/wasm, bindings/c, examples/rust
+
+[workspace]
+resolver = "2"
+members = []
+# The fuzz crate is its own (detached) workspace — cargo-fuzz builds it on its
+# own with sanitizer flags on a nightly toolchain.
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.86"
+license = "MIT OR Apache-2.0"
+authors = ["kingchenc"]
+repository = "https://github.com/wickra-lib/wickra-terminal"
+homepage = "https://wickra.org"
+readme = "README.md"
+keywords = ["trading", "terminal", "tui", "streaming", "charts"]
+categories = ["visualization", "finance", "command-line-utilities"]
+
+[workspace.dependencies]
+# Wickra ecosystem. wickra-core ships on crates.io; the exchange and backtester
+# are consumed from git until their first crates.io release (their tags are
+# USER-GO gated), which lets the terminal build against the real crates in CI.
+wickra-core = "0.9"
+wickra-exchange = { git = "https://github.com/wickra-lib/wickra-exchange" }
+wickra-backtest = { git = "https://github.com/wickra-lib/wickra-backtest" }
+terminal-core = { version = "0.1.0", path = "crates/terminal-core" }
+# Serialization — the data-driven boundary (config/command/view-models as JSON).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Exact decimal arithmetic for price/qty (never f64 in the market layer).
+rust_decimal = { version = "1", features = ["serde"] }
+rust_decimal_macros = "1"
+thiserror = "2"
+# TUI renderer.
+ratatui = "0.29"
+crossterm = "0.28"
+clap = { version = "4", features = ["derive"] }
+# Async runtime for feed threads (driven internally; the public API stays pull-based).
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+# WASM renderer bridge.
+wasm-bindgen = "0.2"
+# C ABI header generation.
+cbindgen = "0.27"
+# Test/dev.
+criterion = "0.5"
+proptest = "1"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Allowed pedantic lints (same precedent as the wickra core).
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+cast_possible_truncation = "allow"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+too_many_lines = "allow"
+similar_names = "allow"
+many_single_char_names = "allow"
+
+[profile.release]
+# Panics must never unwind across the C ABI boundary (undefined behaviour):
+# abort instead. Applies to the distributed cdylib/staticlib release builds;
+# `cargo test` uses the dev/test profile, which keeps unwinding.
+panic = "abort"
