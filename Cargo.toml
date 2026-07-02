@@ -14,6 +14,7 @@
 resolver = "2"
 members = [
     "crates/terminal-core",
+    "crates/ui-tui",
 ]
 # The fuzz crate is its own (detached) workspace — cargo-fuzz builds it on its
 # own with sanitizer flags on a nightly toolchain.

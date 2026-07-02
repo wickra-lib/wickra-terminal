@@ -1,0 +1,25 @@
+[package]
+name = "wickra-terminal"
+description = "The native TUI renderer for the Wickra trading terminal (ratatui)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "wickra-terminal"
+path = "src/main.rs"
+
+[dependencies]
+terminal-core.workspace = true
+wickra-exchange.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+clap.workspace = true
