@@ -150,13 +150,16 @@ pub struct Footprint {
 }
 
 impl Footprint {
-    /// Add a print's quantity to the (buy, sell) volume at its price.
+    /// Add a print's quantity to the (buy, sell) volume at its price. Saturating:
+    /// an accumulated volume that would overflow `Decimal` (only reachable with
+    /// adversarial fuzz input) keeps the previous total instead of panicking.
     pub fn add(&mut self, print: &TradePrint) {
         let entry = self.levels.entry(print.price).or_default();
-        match print.aggressor {
-            OrderSide::Buy => entry.0 += print.quantity,
-            OrderSide::Sell => entry.1 += print.quantity,
-        }
+        let side = match print.aggressor {
+            OrderSide::Buy => &mut entry.0,
+            OrderSide::Sell => &mut entry.1,
+        };
+        *side = side.checked_add(print.quantity).unwrap_or(*side);
     }
 
     /// The (buy, sell) volume at `price`, if any has traded there.
@@ -443,6 +446,23 @@ mod tests {
         let recent = ring.recent(3);
         assert_eq!(recent[0].price, dec!(4));
         assert_eq!(recent[2].price, dec!(2));
+    }
+
+    #[test]
+    fn footprint_add_saturates_on_overflow() {
+        let sym = Symbol::new("BTC", "USDT");
+        let mut footprint = Footprint::default();
+        let huge = |quantity: Decimal| TradePrint {
+            symbol: sym.clone(),
+            price: dec!(100),
+            quantity,
+            aggressor: OrderSide::Buy,
+            timestamp: 0,
+        };
+        footprint.add(&huge(Decimal::MAX));
+        // A second near-max add would overflow Decimal; it saturates instead.
+        footprint.add(&huge(Decimal::MAX));
+        assert_eq!(footprint.at(dec!(100)), Some((Decimal::MAX, Decimal::ZERO)));
     }
 
     #[test]
