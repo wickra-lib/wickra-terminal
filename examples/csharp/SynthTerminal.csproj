@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>WickraTerminal.Example</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../bindings/csharp/WickraTerminal/WickraTerminal.csproj" />
+  </ItemGroup>
+
+  <!-- Copy the native C ABI library next to the example so P/Invoke finds it. -->
+  <ItemGroup>
+    <Content Include="../../target/release/wickra_terminal.dll" Condition="Exists('../../target/release/wickra_terminal.dll')">
+      <Link>wickra_terminal.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="../../target/release/libwickra_terminal.so" Condition="Exists('../../target/release/libwickra_terminal.so')">
+      <Link>libwickra_terminal.so</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

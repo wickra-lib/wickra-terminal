@@ -20,6 +20,7 @@ members = [
     "bindings/python",
     "bindings/node",
     "bindings/wasm",
+    "examples/rust",
 ]
 # The fuzz crate is its own (detached) workspace — cargo-fuzz builds it on its
 # own with sanitizer flags on a nightly toolchain.

@@ -1,0 +1,18 @@
+[package]
+name = "wickra-terminal-example"
+description = "A runnable Rust example for the Wickra terminal core."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "synth"
+path = "src/main.rs"
+
+[dependencies]
+terminal-core = { workspace = true }
