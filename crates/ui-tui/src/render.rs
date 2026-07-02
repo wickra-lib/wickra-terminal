@@ -21,22 +21,36 @@ pub fn rect_from_spec(area: Rect, spec: RectSpec) -> Rect {
     }
 }
 
-/// Draw a frame of view-models. With no subscription (an empty frame) it draws a
-/// short hint instead.
-pub fn draw(frame: &mut TuiFrame, view: &Frame, config: &Config) {
-    let area = frame.area();
+/// Draw a frame of view-models plus a one-line footer (the open prompt or the
+/// last status message). With no subscription (an empty frame) it draws a short
+/// hint instead of panels.
+pub fn draw(frame: &mut TuiFrame, view: &Frame, config: &Config, footer: &str) {
+    let full = frame.area();
+    let footer_height = 1;
+    let area = Rect {
+        height: full.height.saturating_sub(footer_height),
+        ..full
+    };
+    let footer_area = Rect {
+        y: full.y + full.height.saturating_sub(footer_height),
+        height: footer_height.min(full.height),
+        ..full
+    };
+
     if view.panels.is_empty() {
         let hint = Paragraph::new(vec![
             Line::from("wickra-terminal"),
             Line::from("no market subscribed — press s to add a source, or pass --source"),
         ]);
         frame.render_widget(hint, area);
-        return;
+    } else {
+        for (spec, panel) in config.layout.panels.iter().zip(&view.panels) {
+            let rect = rect_from_spec(area, spec.rect);
+            widgets::render_panel(frame, rect, panel);
+        }
     }
-    for (spec, panel) in config.layout.panels.iter().zip(&view.panels) {
-        let rect = rect_from_spec(area, spec.rect);
-        widgets::render_panel(frame, rect, panel);
-    }
+
+    frame.render_widget(Paragraph::new(footer.to_string()), footer_area);
 }
 
 #[cfg(test)]

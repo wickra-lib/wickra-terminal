@@ -32,8 +32,78 @@ const symbol = ref('BTC/USDT')
 const frame = ref<Frame>({ panels: [] })
 const chartCanvas = ref<HTMLCanvasElement | null>(null)
 
+// Runtime module toggle: add sources, subscribe/unsubscribe symbols live.
+const sourceShorthand = ref('')
+const subSource = ref(0)
+const subSymbol = ref('ETH/USDT')
+const status = ref('')
+
 let terminal: Terminal | null = null
 let timer: number | undefined
+// The core assigns source ids sequentially; the config's source is 0.
+let nextSourceId = 0
+
+function parseSourceSpec(shorthand: string): Record<string, unknown> | null {
+  const idx = shorthand.indexOf(':')
+  if (idx < 0) {
+    return null
+  }
+  const kind = shorthand.slice(0, idx)
+  const rest = shorthand.slice(idx + 1)
+  if (kind === 'synth') {
+    const seedValue = Number(rest)
+    return Number.isFinite(seedValue) ? { Synth: { seed: seedValue } } : null
+  }
+  if (kind === 'live') {
+    const j = rest.indexOf(':')
+    if (j < 0) {
+      return null
+    }
+    return { Live: { venue: rest.slice(0, j), symbol: rest.slice(j + 1), testnet: false } }
+  }
+  if (kind === 'replay') {
+    return { Replay: { dataset: rest } }
+  }
+  return null
+}
+
+function addSource(): void {
+  if (!terminal) {
+    return
+  }
+  const spec = parseSourceSpec(sourceShorthand.value)
+  if (!spec) {
+    status.value = 'bad source (synth:N | live:venue:SYM | replay:JSON)'
+    return
+  }
+  terminal.command(JSON.stringify({ type: 'AddSource', spec }))
+  const id = nextSourceId
+  nextSourceId += 1
+  const live = spec['Live'] as { symbol: string } | undefined
+  if (live) {
+    terminal.command(JSON.stringify({ type: 'Subscribe', source: id, symbol: live.symbol }))
+  }
+  status.value = `added source ${id}`
+  sourceShorthand.value = ''
+}
+
+function subscribe(): void {
+  if (!terminal) {
+    return
+  }
+  terminal.command(
+    JSON.stringify({ type: 'Subscribe', source: subSource.value, symbol: subSymbol.value }),
+  )
+  status.value = `subscribed ${subSymbol.value} on source ${subSource.value}`
+}
+
+function unsubscribe(source: number, sym: string): void {
+  if (!terminal) {
+    return
+  }
+  terminal.command(JSON.stringify({ type: 'Unsubscribe', source, symbol: sym }))
+  status.value = `unsubscribed ${sym}`
+}
 
 function findPanel<T extends PanelView['panel']>(
   name: T,
@@ -70,6 +140,8 @@ function start(): void {
   terminal.command(
     JSON.stringify({ type: 'Subscribe', source: 0, symbol: symbol.value }),
   )
+  // The config opened one source (id 0); the next runtime source is id 1.
+  nextSourceId = 1
   timer = window.setInterval(() => {
     if (!terminal) {
       return
@@ -104,6 +176,17 @@ onBeforeUnmount(stop)
       <label>symbol <input type="text" v-model="symbol" /></label>
       <button @click="restart">restart</button>
     </header>
+
+    <div class="bar controls">
+      <label>add source
+        <input type="text" v-model="sourceShorthand" placeholder="synth:2 | live:binance:ETH/USDT" />
+      </label>
+      <button @click="addSource">add</button>
+      <label>subscribe src <input type="number" v-model.number="subSource" min="0" /></label>
+      <input type="text" v-model="subSymbol" />
+      <button @click="subscribe">go</button>
+      <span class="muted">{{ status }}</span>
+    </div>
 
     <main class="grid">
       <section class="panel chart">
@@ -143,6 +226,7 @@ onBeforeUnmount(stop)
         <table>
           <tr v-for="(row, i) in watchlist?.rows ?? []" :key="i">
             <td>[{{ row.source }}]</td><td>{{ row.symbol }}</td><td>{{ row.last.toFixed(2) }}</td>
+            <td><button class="x" @click="unsubscribe(row.source, row.symbol)">×</button></td>
           </tr>
         </table>
       </section>

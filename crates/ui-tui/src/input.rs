@@ -16,8 +16,14 @@ pub enum Action {
     NextPanel,
     /// Focus the previous panel.
     PrevPanel,
-    /// Open the source menu (add/remove a source).
+    /// Open the source menu (add a source).
     SourceMenu,
+    /// Prompt for a symbol to subscribe on the focused source.
+    AddSymbol,
+    /// Unsubscribe the focused symbol.
+    RemoveSymbol,
+    /// Remove the focused source and everything it owns.
+    RemoveSource,
     /// Focus the next watched symbol.
     NextSymbol,
     /// Focus the previous watched symbol.
@@ -59,6 +65,9 @@ pub fn map_key(key: KeyEvent, binds: &Keybinds) -> Action {
         Some("next_panel") => Action::NextPanel,
         Some("prev_panel") => Action::PrevPanel,
         Some("source_menu") => Action::SourceMenu,
+        Some("add_symbol") => Action::AddSymbol,
+        Some("remove_symbol") => Action::RemoveSymbol,
+        Some("remove_source") => Action::RemoveSource,
         Some("next_symbol") => Action::NextSymbol,
         Some("prev_symbol") => Action::PrevSymbol,
         _ => Action::None,
