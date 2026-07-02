@@ -3,6 +3,8 @@
 # not affecting wickra-terminal; this mirrors the cargo-deny `ignore` list in
 # deny.toml at the OSV layer.
 #
-# There are currently no suppressed advisories. Add an [[IgnoredVulns]] entry
-# here (with an `id` and a `reason`) only after assessing that the advisory does
-# not affect this project, and keep it in lock-step with deny.toml.
+# Keep in lock-step with deny.toml's [advisories].ignore.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0436"
+reason = "paste is unmaintained (not a vulnerability): a build-time proc-macro helper pulled transitively by ratatui, which has not yet migrated off it. No runtime code path, no known security impact."

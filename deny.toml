@@ -3,10 +3,14 @@
 [advisories]
 version = 2
 yanked = "deny"
-# No suppressed advisories yet. Add an entry here (with a justification comment)
-# only after assessing that the advisory does not affect wickra-terminal, and
-# keep it in lock-step with osv-scanner.toml.
-ignore = []
+# Suppressed advisories (assessed as not affecting wickra-terminal). Keep in
+# lock-step with osv-scanner.toml.
+ignore = [
+    # paste — unmaintained (not a vulnerability). A build-time proc-macro helper
+    # pulled transitively by ratatui (the TUI renderer); ratatui has not yet
+    # migrated off it. No runtime code path, no known security impact.
+    "RUSTSEC-2024-0436",
+]
 
 [licenses]
 version = 2
