@@ -3,14 +3,10 @@
 </p>
 
 [![Built on Wickra](https://img.shields.io/badge/built%20on-wickra-3b82f6)](https://github.com/wickra-lib/wickra)
-[![Status](https://img.shields.io/badge/status-pre--alpha%20(scaffolding)-red)](https://github.com/wickra-lib/wickra-terminal)
+[![Status](https://img.shields.io/badge/status-pre--release-orange)](https://github.com/wickra-lib/wickra-terminal)
 [![CI](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/ci.svg)](https://github.com/wickra-lib/wickra-terminal/actions/workflows/ci.yml)
 [![CodeQL](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/codeql.svg)](https://github.com/wickra-lib/wickra-terminal/actions/workflows/codeql.yml)
 [![codecov](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/codecov.svg)](https://codecov.io/gh/wickra-lib/wickra-terminal)
-[![GitHub release](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/release.svg)](https://github.com/wickra-lib/wickra-terminal/releases/latest)
-[![crates.io](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/crates.svg)](https://crates.io/crates/wickra-terminal)
-[![PyPI](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/pypi.svg)](https://pypi.org/project/wickra-terminal/)
-[![npm](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/npm.svg)](https://www.npmjs.com/package/wickra-terminal)
 [![License: MIT OR Apache-2.0](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/license.svg)](#license)
 [![OpenSSF Scorecard](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/scorecard.svg)](https://scorecard.dev/viewer/?uri=github.com/wickra-lib/wickra-terminal)
 [![OpenSSF Best Practices](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/best-practices.svg)](https://www.bestpractices.dev/)
