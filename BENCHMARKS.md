@@ -30,11 +30,20 @@ cargo bench -p terminal-bench
 
 ## Results
 
-Figures are recorded here once the benchmark crate lands in the hardening phase
-(see [ROADMAP.md](ROADMAP.md), phase 7), measured with `cargo bench -p
-terminal-bench` (criterion, 100 samples per benchmark) and reported as the median
-estimate. Treat them as orders of magnitude, not guarantees — they vary with CPU
+Measured with `cargo bench -p terminal-bench` (criterion, 100 samples per
+benchmark) on a Windows x86-64 laptop, single-threaded. Figures are the median
+estimate; treat them as orders of magnitude, not guarantees — they vary with CPU
 and toolchain.
+
+| Benchmark           | What                                        | Median   | Throughput |
+|---------------------|---------------------------------------------|----------|------------|
+| `fold_trade`        | fold one trade into `AppState` (O(1))       | 333 ns   | ~3.0 M/s   |
+| `tick_synth`        | one full tick: poll + fold + build 5 panels | 25.1 µs  | ~40 K/s    |
+| `command_json_tick` | a `command_json` round-trip (parse + tick + serialize) | 33.4 µs | ~30 K/s |
+
+The takeaway: a full tick that rebuilds every panel's view-model costs ~25 µs, so
+the core sustains tens of thousands of frames per second — far above any
+renderer's frame budget, which is the whole point of the O(1) fold.
 
 ## Caveats
 

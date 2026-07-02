@@ -37,3 +37,6 @@ thiserror.workspace = true
 
 [dev-dependencies]
 rust_decimal_macros.workspace = true
+proptest.workspace = true
+# The market event types (TradePrint, OrderSide, …) for building test feeds.
+wickra-exchange-core.workspace = true

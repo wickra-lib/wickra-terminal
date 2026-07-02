@@ -1,0 +1,25 @@
+[package]
+name = "terminal-bench"
+description = "Criterion benchmarks for the Wickra terminal core (fold, tick, view-model build, command round-trip)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+terminal-core = { workspace = true }
+
+[dev-dependencies]
+criterion.workspace = true
+rust_decimal.workspace = true
+wickra-exchange-core.workspace = true
+
+[[bench]]
+name = "terminal"
+harness = false
