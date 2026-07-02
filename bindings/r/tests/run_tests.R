@@ -30,4 +30,40 @@ stopifnot(inherits(
   "try-error"
 ))
 
+## cross-language golden parity: build the terminal from the committed
+## golden/config.json, replay the feed, and assert the frame equals
+## golden/expected/basic.min.json byte-for-byte. The binding returns the core's
+## compact command output verbatim, so byte equality against that one file is the
+## exact cross-language parity check.
+golden_dir <- function() {
+  d <- normalizePath(getwd(), mustWork = FALSE)
+  for (i in seq_len(8)) {
+    g <- file.path(d, "golden")
+    if (file.exists(file.path(g, "config.json"))) {
+      return(g)
+    }
+    d <- dirname(d)
+  }
+  stop("golden/ not found")
+}
+
+g <- golden_dir()
+golden_config <- paste(
+  readLines(file.path(g, "config.json"), warn = FALSE),
+  collapse = "\n"
+)
+golden_expected <- trimws(paste(
+  readLines(file.path(g, "expected", "basic.min.json"), warn = FALSE),
+  collapse = "\n"
+))
+gterm <- wkterm_new(golden_config)
+invisible(wkterm_command(
+  gterm, '{"type":"Subscribe","source":0,"symbol":"BTC/USDT"}'
+))
+golden_frame <- ""
+for (i in seq_len(32)) {
+  golden_frame <- wkterm_command(gterm, '{"type":"Tick"}')
+}
+stopifnot(identical(trimws(golden_frame), golden_expected))
+
 cat("wickra-terminal R tests passed\n")

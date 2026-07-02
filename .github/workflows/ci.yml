@@ -20,6 +20,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    # The ui-tui binary (wickra-terminal) and the C ABI cdylib (wickra_terminal)
+    # both normalize to wickra_terminal.pdb on Windows, so an --all-features debug
+    # build races two writers into one huge PDB and trips LNK1201 under runner
+    # disk pressure. Debug info is irrelevant to running the tests, so drop it:
+    # no PDBs, no collision, no disk blow-up. Harmless on Linux/macOS.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
