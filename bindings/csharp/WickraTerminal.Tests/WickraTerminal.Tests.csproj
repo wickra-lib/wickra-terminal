@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../WickraTerminal/WickraTerminal.csproj" />
+  </ItemGroup>
+
+  <!--
+    Copy the native C ABI library next to the test assembly so the default
+    P/Invoke resolver finds it. CI builds `cargo build -p wickra-terminal-c`
+    (debug profile) before running the tests.
+  -->
+  <ItemGroup>
+    <Content Include="../../../target/debug/wickra_terminal.dll" Condition="Exists('../../../target/debug/wickra_terminal.dll')">
+      <Link>wickra_terminal.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="../../../target/debug/libwickra_terminal.so" Condition="Exists('../../../target/debug/libwickra_terminal.so')">
+      <Link>libwickra_terminal.so</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="../../../target/debug/libwickra_terminal.dylib" Condition="Exists('../../../target/debug/libwickra_terminal.dylib')">
+      <Link>libwickra_terminal.dylib</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>
