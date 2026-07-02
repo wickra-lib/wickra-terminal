@@ -1,0 +1,30 @@
+[package]
+name = "terminal-core"
+description = "Data-driven core of the Wickra trading terminal: sources, O(1) state and panels that emit view-models."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Market types and the ten-venue Live connectivity come from the exchange layer.
+wickra-exchange.workspace = true
+# Streaming indicators for the chart panel's indicator set.
+wickra-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+rust_decimal.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rust_decimal_macros.workspace = true
