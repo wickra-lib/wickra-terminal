@@ -15,6 +15,7 @@ resolver = "2"
 members = [
     "crates/terminal-core",
     "crates/ui-tui",
+    "crates/terminal-bench",
     "bindings/c",
     "bindings/python",
     "bindings/node",
