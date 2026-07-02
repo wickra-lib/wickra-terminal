@@ -12,7 +12,9 @@
 
 [workspace]
 resolver = "2"
-members = []
+members = [
+    "crates/terminal-core",
+]
 # The fuzz crate is its own (detached) workspace — cargo-fuzz builds it on its
 # own with sanitizer flags on a nightly toolchain.
 exclude = ["fuzz"]
@@ -34,12 +36,17 @@ categories = ["visualization", "finance", "command-line-utilities"]
 # are consumed from git until their first crates.io release (their tags are
 # USER-GO gated), which lets the terminal build against the real crates in CI.
 wickra-core = "0.9"
-wickra-exchange = { git = "https://github.com/wickra-lib/wickra-exchange" }
-wickra-backtest = { git = "https://github.com/wickra-lib/wickra-backtest" }
+# A `version` is pinned alongside `git` so the dependency is not a wildcard
+# (cargo-deny's `bans.wildcards = deny`); cargo checks it against each repo's
+# crate version. Move these to plain crates.io versions after their releases.
+wickra-exchange = { git = "https://github.com/wickra-lib/wickra-exchange", version = "0.1" }
+wickra-backtest = { git = "https://github.com/wickra-lib/wickra-backtest", version = "0.1" }
 terminal-core = { version = "0.1.0", path = "crates/terminal-core" }
 # Serialization — the data-driven boundary (config/command/view-models as JSON).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# TOML config parsing (the on-disk `--config` form).
+toml = "0.8"
 # Exact decimal arithmetic for price/qty (never f64 in the market layer).
 rust_decimal = { version = "1", features = ["serde"] }
 rust_decimal_macros = "1"
