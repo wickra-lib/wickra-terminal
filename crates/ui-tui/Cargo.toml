@@ -3,7 +3,10 @@ name = "wickra-terminal"
 description = "The native TUI renderer for the Wickra trading terminal (ratatui)."
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
+# ratatui 0.29 pulls `instability`/`darling`, which require Rust 1.88 (newer than
+# the workspace 1.86 minimum). The library (terminal-core) stays 1.86; this TUI
+# application needs 1.88, and is checked by the 1.88 MSRV job.
+rust-version = "1.88"
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
