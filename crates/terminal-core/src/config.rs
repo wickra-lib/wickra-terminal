@@ -151,7 +151,11 @@ impl Config {
             },
             PanelSpec {
                 kind: PanelKind::Book,
-                rect: RectSpec::new(70, 0, 30, 70),
+                rect: RectSpec::new(70, 0, 30, 35),
+            },
+            PanelSpec {
+                kind: PanelKind::Footprint,
+                rect: RectSpec::new(70, 35, 30, 35),
             },
             PanelSpec {
                 kind: PanelKind::Tape,
@@ -177,9 +181,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_layout_has_four_panels_and_default_keybinds() {
+    fn default_layout_has_five_panels_and_default_keybinds() {
         let cfg = Config::default_layout();
-        assert_eq!(cfg.layout.panels.len(), 4);
+        assert_eq!(cfg.layout.panels.len(), 5);
         assert!(cfg.sources.is_empty());
         assert_eq!(cfg.layout.keybinds.bindings.get("quit").unwrap(), "q");
     }

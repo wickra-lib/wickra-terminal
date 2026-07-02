@@ -4,6 +4,7 @@ import { Terminal } from 'wickra-terminal-wasm'
 import type {
   BookView,
   ChartView,
+  FootprintView,
   Frame,
   PanelView,
   TapeView,
@@ -19,7 +20,8 @@ function defaultConfig(seed: number): string {
     layout: {
       panels: [
         { kind: 'Chart', rect: { x: 0, y: 0, w: 70, h: 70 } },
-        { kind: 'Book', rect: { x: 70, y: 0, w: 30, h: 70 } },
+        { kind: 'Book', rect: { x: 70, y: 0, w: 30, h: 35 } },
+        { kind: 'Footprint', rect: { x: 70, y: 35, w: 30, h: 35 } },
         { kind: 'Tape', rect: { x: 70, y: 70, w: 30, h: 30 } },
         { kind: 'Watchlist', rect: { x: 0, y: 70, w: 70, h: 30 } },
       ],
@@ -117,6 +119,7 @@ const chart = computed<ChartView | undefined>(() => findPanel('chart'))
 const book = computed<BookView | undefined>(() => findPanel('book'))
 const tape = computed<TapeView | undefined>(() => findPanel('tape'))
 const watchlist = computed<WatchlistView | undefined>(() => findPanel('watchlist'))
+const footprint = computed<FootprintView | undefined>(() => findPanel('footprint'))
 
 function stop(): void {
   if (timer !== undefined) {
@@ -208,6 +211,22 @@ onBeforeUnmount(stop)
           <tr class="spread"><td colspan="2">spread {{ book?.spread?.toFixed(2) ?? '—' }}</td></tr>
           <tr v-for="(lvl, i) in book?.bids ?? []" :key="'b' + i" class="bid">
             <td>{{ lvl.price.toFixed(2) }}</td><td>{{ lvl.quantity.toFixed(3) }}</td>
+          </tr>
+        </table>
+      </section>
+
+      <section class="panel footprint">
+        <h2>Footprint {{ footprint?.symbol }}</h2>
+        <table>
+          <tr
+            v-for="(lvl, i) in footprint?.levels ?? []"
+            :key="i"
+            :class="lvl.buy >= lvl.sell ? 'bid' : 'ask'"
+          >
+            <td>{{ lvl.price.toFixed(2) }}</td>
+            <td>{{ lvl.buy.toFixed(3) }}</td>
+            <td>×</td>
+            <td>{{ lvl.sell.toFixed(3) }}</td>
           </tr>
         </table>
       </section>

@@ -54,10 +54,30 @@ body {
   flex: 1;
   display: grid;
   grid-template-columns: 70% 30%;
-  grid-template-rows: 70% 30%;
+  grid-template-rows: 35% 35% 30%;
+  grid-template-areas:
+    "chart book"
+    "chart footprint"
+    "watchlist tape";
   gap: 1px;
   background: #1f2937;
   overflow: hidden;
+}
+
+.chart {
+  grid-area: chart;
+}
+.book {
+  grid-area: book;
+}
+.footprint {
+  grid-area: footprint;
+}
+.tape {
+  grid-area: tape;
+}
+.watchlist {
+  grid-area: watchlist;
 }
 
 .panel {

@@ -253,9 +253,9 @@ mod tests {
         // Nothing subscribed yet: an empty frame.
         assert!(term.tick().panels.is_empty());
         term.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
-        // Now the four panels render.
+        // Now the default layout's panels render.
         let frame = term.tick();
-        assert_eq!(frame.panels.len(), 4);
+        assert_eq!(frame.panels.len(), 5);
     }
 
     #[test]

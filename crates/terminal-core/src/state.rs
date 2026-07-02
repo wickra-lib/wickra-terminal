@@ -165,6 +165,17 @@ impl Footprint {
         self.levels.get(&price).copied()
     }
 
+    /// The top `n` price levels, highest price first, as `(price, buy, sell)`.
+    #[must_use]
+    pub fn top(&self, n: usize) -> Vec<(Decimal, Decimal, Decimal)> {
+        self.levels
+            .iter()
+            .rev()
+            .take(n)
+            .map(|(price, &(buy, sell))| (*price, buy, sell))
+            .collect()
+    }
+
     /// The number of price levels with recorded volume.
     #[must_use]
     pub fn len(&self) -> usize {
