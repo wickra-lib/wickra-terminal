@@ -44,9 +44,13 @@ fn sources_are_object_safe_and_report_their_kind() {
     )
     .unwrap();
 
-    let sources: Vec<Box<dyn DataSource>> = vec![synth, replay];
+    let manual = build_source(2, &SourceSpec::Manual).unwrap();
+
+    let sources: Vec<Box<dyn DataSource>> = vec![synth, replay, manual];
     assert_eq!(sources[0].id(), 0);
     assert_eq!(sources[0].kind(), SourceKind::Synth);
     assert_eq!(sources[1].id(), 1);
     assert_eq!(sources[1].kind(), SourceKind::Replay);
+    assert_eq!(sources[2].id(), 2);
+    assert_eq!(sources[2].kind(), SourceKind::Manual);
 }

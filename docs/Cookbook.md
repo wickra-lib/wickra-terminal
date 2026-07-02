@@ -64,6 +64,49 @@ see [RENDERERS.md](RENDERERS.md).
 
 Multiple sources coexist and hot-swap while the terminal runs.
 
+## Rewind a recorded feed (the time-machine)
+
+A `Replay` source records the whole feed, so `Seek` can rewind it and re-fold
+state; playback then resumes forward:
+
+```json
+{"type":"Subscribe","source":0,"symbol":"BTC/USDT"}
+{"type":"Tick"}
+{"type":"Seek","source":0,"index":50}
+```
+
+`Seek` re-folds deterministically from the recorded feed (a market's streaming
+indicators are not cloneable, so there is no state snapshot to restore). Seeking
+a live or synthetic source is an error.
+
+## Drive a source from your own feed (`Manual` + `Feed`)
+
+Add a host-fed `Manual` source and push events into it; each is folded on the
+next `Tick`:
+
+```json
+{"type":"AddSource","spec":"Manual"}
+{"type":"Subscribe","source":1,"symbol":"BTC/USDT"}
+{"type":"Feed","source":1,"event":{"type":"trade","symbol":{"base":"BTC","quote":"USDT"},"price":"64000","quantity":"0.1","aggressor":"Buy","timestamp":1}}
+{"type":"Tick"}
+```
+
+This is how any embedder drives the terminal from a feed it already has — the
+same commands in every language.
+
+## Run a live feed in the browser
+
+The WASM core cannot open sockets, so the browser opens the exchange WebSocket
+itself and bridges it into a `Manual` source through `Feed`. The web renderer
+ships a Binance bridge; type into the "add source" box:
+
+```
+live:binance:BTC/USDT
+```
+
+Public market data only — no API keys. See
+[`web/src/binance.ts`](../web/src/binance.ts) and [SOURCES.md](SOURCES.md).
+
 ## Build the browser renderer
 
 ```bash
