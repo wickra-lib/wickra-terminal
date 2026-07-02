@@ -48,11 +48,23 @@ export interface WatchlistView {
   rows: WatchRow[]
 }
 
+export interface FootprintLevel {
+  price: number
+  buy: number
+  sell: number
+}
+
+export interface FootprintView {
+  symbol: string
+  levels: FootprintLevel[]
+}
+
 export type PanelView =
   | ({ panel: 'chart' } & ChartView)
   | ({ panel: 'book' } & BookView)
   | ({ panel: 'tape' } & TapeView)
   | ({ panel: 'watchlist' } & WatchlistView)
+  | ({ panel: 'footprint' } & FootprintView)
 
 export interface Frame {
   panels: PanelView[]

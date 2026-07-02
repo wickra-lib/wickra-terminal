@@ -6,6 +6,7 @@
 
 pub mod book;
 pub mod chart;
+pub mod footprint;
 pub mod tape;
 pub mod watchlist;
 
@@ -20,5 +21,6 @@ pub fn render_panel(frame: &mut Frame, area: Rect, panel: &PanelView) {
         PanelView::Book(view) => book::render(frame, area, view),
         PanelView::Tape(view) => tape::render(frame, area, view),
         PanelView::Watchlist(view) => watchlist::render(frame, area, view),
+        PanelView::Footprint(view) => footprint::render(frame, area, view),
     }
 }

@@ -96,6 +96,26 @@ pub struct WatchlistView {
     pub rows: Vec<WatchRow>,
 }
 
+/// One footprint level: volume traded at a price, split by aggressor side.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FootprintLevel {
+    /// The price level.
+    pub price: f64,
+    /// Buy-aggressor volume at this price.
+    pub buy: f64,
+    /// Sell-aggressor volume at this price.
+    pub sell: f64,
+}
+
+/// The footprint (volume-profile) panel's view-model.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FootprintView {
+    /// The market shown.
+    pub symbol: String,
+    /// Price levels, highest price first.
+    pub levels: Vec<FootprintLevel>,
+}
+
 /// One panel's view-model, tagged by kind.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "panel", rename_all = "snake_case")]
@@ -108,6 +128,8 @@ pub enum PanelView {
     Tape(TapeView),
     /// A multi-market watchlist.
     Watchlist(WatchlistView),
+    /// A footprint / volume profile.
+    Footprint(FootprintView),
 }
 
 /// The output of one `tick`: every active panel's view-model.

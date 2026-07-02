@@ -25,7 +25,7 @@
 //! let mut term = Terminal::new(&cfg).unwrap();
 //! term.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
 //! let frame = term.tick();
-//! assert_eq!(frame.panels.len(), 4);
+//! assert_eq!(frame.panels.len(), 5);
 //! ```
 
 pub mod config;

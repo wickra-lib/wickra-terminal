@@ -7,6 +7,7 @@
 
 pub mod book;
 pub mod chart;
+pub mod footprint;
 pub mod tape;
 pub mod watchlist;
 
@@ -19,6 +20,7 @@ use crate::view::PanelView;
 
 pub use book::BookPanel;
 pub use chart::ChartPanel;
+pub use footprint::FootprintPanel;
 pub use tape::TapePanel;
 pub use watchlist::WatchlistPanel;
 
@@ -33,6 +35,8 @@ pub enum PanelKind {
     Tape,
     /// A multi-market watchlist.
     Watchlist,
+    /// A footprint / volume profile.
+    Footprint,
 }
 
 /// A panel: a pure mapping from state to a view-model.
@@ -52,6 +56,7 @@ pub fn build_panel(spec: &PanelSpec) -> Box<dyn Panel> {
         PanelKind::Book => Box::new(BookPanel),
         PanelKind::Tape => Box::new(TapePanel),
         PanelKind::Watchlist => Box::new(WatchlistPanel),
+        PanelKind::Footprint => Box::new(FootprintPanel),
     }
 }
 
@@ -70,6 +75,7 @@ mod tests {
             PanelKind::Book,
             PanelKind::Tape,
             PanelKind::Watchlist,
+            PanelKind::Footprint,
         ] {
             let spec = PanelSpec {
                 kind,
