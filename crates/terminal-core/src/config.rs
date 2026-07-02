@@ -40,6 +40,11 @@ pub enum SourceSpec {
         /// The RNG-free deterministic seed.
         seed: u64,
     },
+    /// A host-fed source: the core opens no connection; the host pushes events in
+    /// through the `Feed` command. This is how the browser renderer bridges an
+    /// exchange WebSocket into the WASM core (which cannot open native sockets),
+    /// and how any embedder drives the terminal from its own feed.
+    Manual,
 }
 
 /// A rectangle in grid units (percent of the screen), `0..=100` on each axis.
@@ -201,6 +206,13 @@ mod tests {
         let cfg = Config::from_json(r#"{"sources":[{"Synth":{"seed":7}}],"layout":{"panels":[]}}"#)
             .unwrap();
         assert_eq!(cfg.sources, vec![SourceSpec::Synth { seed: 7 }]);
+    }
+
+    #[test]
+    fn source_spec_manual_parses_from_json() {
+        // The host-fed source is a unit variant: a bare string in the array.
+        let cfg = Config::from_json(r#"{"sources":["Manual"],"layout":{"panels":[]}}"#).unwrap();
+        assert_eq!(cfg.sources, vec![SourceSpec::Manual]);
     }
 
     #[test]

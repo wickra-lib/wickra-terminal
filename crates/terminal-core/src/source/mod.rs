@@ -11,6 +11,7 @@
 // gated behind the `live` feature and excluded from wasm builds.
 #[cfg(feature = "live")]
 pub mod live;
+pub mod manual;
 pub mod replay;
 pub mod synth;
 
@@ -23,6 +24,7 @@ pub use wickra_exchange_core::{Event, Symbol};
 
 #[cfg(feature = "live")]
 pub use live::LiveSource;
+pub use manual::ManualSource;
 pub use replay::ReplaySource;
 pub use synth::SynthSource;
 
@@ -38,6 +40,8 @@ pub enum SourceKind {
     Replay,
     /// A deterministic synthetic feed.
     Synth,
+    /// A host-fed source driven by the `Feed` command.
+    Manual,
 }
 
 /// A feed the terminal can subscribe to and drain.
@@ -87,6 +91,15 @@ pub trait DataSource {
     fn event_count(&self) -> usize {
         0
     }
+
+    /// Push an externally sourced event into a host-fed source, to be folded on
+    /// the next tick. Returns `true` if the source accepted it — a manual source
+    /// accepts events for its subscribed markets. Sources that own their feed
+    /// (live, replay, synthetic) return `false` and ignore it.
+    fn feed(&mut self, sym: Symbol, event: Event) -> bool {
+        let _ = (sym, event);
+        false
+    }
 }
 
 /// The market an event concerns, if it is a market (not a lifecycle) event.
@@ -121,6 +134,7 @@ pub fn build_source(id: SourceId, spec: &SourceSpec) -> Result<Box<dyn DataSourc
         } => build_live(id, venue, symbol, *testnet),
         SourceSpec::Replay { dataset } => Ok(Box::new(ReplaySource::from_dataset(id, dataset)?)),
         SourceSpec::Synth { seed } => Ok(Box::new(SynthSource::new(id, *seed))),
+        SourceSpec::Manual => Ok(Box::new(ManualSource::new(id))),
     }
 }
 
