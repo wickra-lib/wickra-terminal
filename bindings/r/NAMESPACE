@@ -1,0 +1,4 @@
+useDynLib(wickraterminal, .registration = TRUE, .fixes = "C_")
+export(wkterm_version)
+export(wkterm_new)
+export(wkterm_command)

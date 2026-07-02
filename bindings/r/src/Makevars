@@ -1,0 +1,6 @@
+# The wickra-terminal C ABI header and library are provided out-of-tree via the
+# WKTERM_INC (include dir) and WKTERM_LIB (library dir) environment variables,
+# set by CI / the installer. The Makevars do not bake an rpath; the loader must
+# find the shared library via LD_LIBRARY_PATH / DYLD_LIBRARY_PATH at run time.
+PKG_CPPFLAGS = -I$(WKTERM_INC)
+PKG_LIBS = -L$(WKTERM_LIB) -lwickra_terminal
