@@ -13,9 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`deny.toml`, `osv-scanner.toml`), lint configuration, `repo-metadata.toml`,
   and dual `MIT OR Apache-2.0` licensing.
 - `terminal-core`: the data-driven core — the `DataSource` trait (Live, Replay,
-  Synth), an O(1) `AppState` fold, panels (chart, book, tape, footprint,
+  Synth, Manual), an O(1) `AppState` fold, panels (chart, book, tape, footprint,
   watchlist) that emit view-models, and the `Terminal` handle with the
   `command_json` boundary.
+- Host-fed sources: a `Manual` source plus the `Feed` command let a host push
+  events into the core. The web renderer uses this to bridge a Binance market
+  WebSocket into the WASM core (which cannot open native sockets).
 - Time-machine: the `Seek` command rewinds a `Replay` source to a recorded
   position and deterministically re-folds state, so every binding and both
   renderers can scrub through a recorded feed.

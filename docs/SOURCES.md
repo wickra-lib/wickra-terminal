@@ -24,6 +24,7 @@ and never reach the state fold.
 | `Live` | `Live { venue, symbol, testnet }` | the ten-venue [wickra-exchange](https://github.com/wickra-lib/wickra-exchange) connectivity layer (native builds only — the `live` feature). |
 | `Replay` | `Replay { dataset }` | a recorded feed (a JSON array of events) with a movable cursor (the time-machine). Filesystem-free, so it runs in the browser too. |
 | `Synth` | `Synth { seed }` | a deterministic synthetic feed — no network, reproducible, the default demo source. |
+| `Manual` | `"Manual"` | a host-fed source: the core opens no connection; the host pushes events in through the `Feed` command. The browser bridges an exchange WebSocket into it. |
 
 Sources are **activatable modules**: multiple run at once, they can be added,
 removed and hot-swapped at runtime, and every symbol is keyed by
@@ -34,8 +35,10 @@ removed and hot-swapped at runtime, and every symbol is keyed by
 `Live` wraps the native exchange client, which needs raw sockets and cannot run
 in a browser sandbox. It is gated behind the `live` feature (on by default for
 native builds). The WASM binding builds `terminal-core` without `live`, so the
-core compiles to `wasm32`; the browser feeds a live source over its own
-WebSocket instead.
+core compiles to `wasm32`. In the browser, live data instead comes through a
+`Manual` source: the page opens the exchange WebSocket itself and pushes each
+message in with the `Feed` command. The web renderer ships a Binance bridge
+(`web/src/binance.ts`) that does exactly this — public market data only, no keys.
 
 ## The command surface
 
@@ -44,10 +47,16 @@ At runtime, sources and subscriptions are driven through the data-driven
 
 ```json
 {"type":"AddSource","spec":{"Synth":{"seed":2}}}
+{"type":"AddSource","spec":"Manual"}
 {"type":"Subscribe","source":0,"symbol":"BTC/USDT"}
+{"type":"Feed","source":1,"event":{"type":"trade","symbol":{"base":"BTC","quote":"USDT"},"price":"64000","quantity":"0.1","aggressor":"Buy","timestamp":1}}
 {"type":"Unsubscribe","source":0,"symbol":"BTC/USDT"}
 {"type":"RemoveSource","id":1}
 ```
+
+`Feed` pushes an external market event into a `Manual` source; it is folded on
+the next `Tick`, exactly like a pulled event. The event must be for a market
+subscribed on that source.
 
 ## The time-machine
 

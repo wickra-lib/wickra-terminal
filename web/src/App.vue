@@ -11,6 +11,7 @@ import type {
   WatchlistView,
 } from './types'
 import { drawChart } from './render/chart'
+import { openBinanceFeed } from './binance'
 
 const CONFIG_KEY = 'wickra-terminal-config'
 
@@ -44,6 +45,8 @@ let terminal: Terminal | null = null
 let timer: number | undefined
 // The core assigns source ids sequentially; the config's source is 0.
 let nextSourceId = 0
+// Cleanup functions for open browser-side exchange WebSocket bridges.
+const feedBridges: Array<() => void> = []
 
 function parseSourceSpec(shorthand: string): Record<string, unknown> | null {
   const idx = shorthand.indexOf(':')
@@ -56,35 +59,65 @@ function parseSourceSpec(shorthand: string): Record<string, unknown> | null {
     const seedValue = Number(rest)
     return Number.isFinite(seedValue) ? { Synth: { seed: seedValue } } : null
   }
-  if (kind === 'live') {
-    const j = rest.indexOf(':')
-    if (j < 0) {
-      return null
-    }
-    return { Live: { venue: rest.slice(0, j), symbol: rest.slice(j + 1), testnet: false } }
-  }
   if (kind === 'replay') {
     return { Replay: { dataset: rest } }
   }
   return null
 }
 
+// `live:binance:BASE/QUOTE` — the WASM core cannot open sockets, so the browser
+// opens the Binance stream itself and bridges it into a `Manual` source through
+// the `Feed` command. Returns true if it handled the shorthand.
+function addLiveBridge(shorthand: string): boolean {
+  if (!terminal || !shorthand.startsWith('live:')) {
+    return false
+  }
+  const rest = shorthand.slice('live:'.length)
+  const j = rest.indexOf(':')
+  const venue = j < 0 ? rest : rest.slice(0, j)
+  const market = j < 0 ? '' : rest.slice(j + 1)
+  if (venue !== 'binance' || !market) {
+    status.value = 'browser live supports only live:binance:BASE/QUOTE'
+    return true
+  }
+  const id = nextSourceId
+  nextSourceId += 1
+  terminal.command(JSON.stringify({ type: 'AddSource', spec: 'Manual' }))
+  terminal.command(JSON.stringify({ type: 'Subscribe', source: id, symbol: market }))
+  try {
+    const close = openBinanceFeed(market, (event) => {
+      // Late messages can arrive after the terminal is torn down; ignore them.
+      try {
+        terminal?.command(JSON.stringify({ type: 'Feed', source: id, event }))
+      } catch {
+        /* terminal gone */
+      }
+    })
+    feedBridges.push(close)
+    status.value = `live binance ${market} on source ${id}`
+  } catch (err) {
+    status.value = `live failed: ${String(err)}`
+  }
+  sourceShorthand.value = ''
+  return true
+}
+
 function addSource(): void {
   if (!terminal) {
     return
   }
-  const spec = parseSourceSpec(sourceShorthand.value)
+  const shorthand = sourceShorthand.value.trim()
+  if (addLiveBridge(shorthand)) {
+    return
+  }
+  const spec = parseSourceSpec(shorthand)
   if (!spec) {
-    status.value = 'bad source (synth:N | live:venue:SYM | replay:JSON)'
+    status.value = 'bad source (synth:N | live:binance:BASE/QUOTE | replay:JSON)'
     return
   }
   terminal.command(JSON.stringify({ type: 'AddSource', spec }))
   const id = nextSourceId
   nextSourceId += 1
-  const live = spec['Live'] as { symbol: string } | undefined
-  if (live) {
-    terminal.command(JSON.stringify({ type: 'Subscribe', source: id, symbol: live.symbol }))
-  }
   status.value = `added source ${id}`
   sourceShorthand.value = ''
 }
@@ -125,6 +158,9 @@ function stop(): void {
   if (timer !== undefined) {
     clearInterval(timer)
     timer = undefined
+  }
+  while (feedBridges.length > 0) {
+    feedBridges.pop()?.()
   }
   if (terminal) {
     ;(terminal as { free?: () => void }).free?.()
@@ -182,7 +218,11 @@ onBeforeUnmount(stop)
 
     <div class="bar controls">
       <label>add source
-        <input type="text" v-model="sourceShorthand" placeholder="synth:2 | live:binance:ETH/USDT" />
+        <input
+          type="text"
+          v-model="sourceShorthand"
+          placeholder="synth:2 | live:binance:ETH/USDT | replay:[…]"
+        />
       </label>
       <button @click="addSource">add</button>
       <label>subscribe src <input type="number" v-model.number="subSource" min="0" /></label>

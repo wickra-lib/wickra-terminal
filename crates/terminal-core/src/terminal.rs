@@ -14,7 +14,7 @@ use serde::Deserialize;
 use crate::config::{Config, SourceSpec};
 use crate::error::{Error, Result};
 use crate::panels::{build_panel, Panel};
-use crate::source::{build_source, SourceId, Symbol};
+use crate::source::{build_source, event_symbol, Event, SourceId, Symbol};
 use crate::state::{AppState, SymbolState};
 use crate::view::Frame;
 
@@ -62,6 +62,14 @@ enum Command {
         source: SourceId,
         /// The recorded position to rewind to (clamped to the feed length).
         index: usize,
+    },
+    /// Push an externally sourced market event into a host-fed (`Manual`) source,
+    /// to be folded on the next tick. The event carries its own market.
+    Feed {
+        /// The source id.
+        source: SourceId,
+        /// The market event to fold (a trade, ticker, book snapshot or diff).
+        event: Event,
     },
 }
 
@@ -161,6 +169,30 @@ impl Terminal {
         Ok(())
     }
 
+    /// Push an externally sourced market event into a host-fed (`Manual`) source;
+    /// it is folded on the next tick. The event carries its own market, which
+    /// must be subscribed on the source.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::UnknownSource`] if `id` is not open, or [`Error::Command`]
+    /// if the event has no market or the source does not accept fed events (it is
+    /// not a manual source, or the market is not subscribed on it).
+    pub fn feed(&mut self, id: SourceId, event: Event) -> Result<()> {
+        let Some(sym) = event_symbol(&event) else {
+            return Err(Error::Command(
+                "a fed event must carry a market symbol".to_string(),
+            ));
+        };
+        let source = self.state.source_mut(id).ok_or(Error::UnknownSource(id))?;
+        if !source.feed(sym, event) {
+            return Err(Error::Command(format!(
+                "source {id} does not accept fed events (subscribe the market on a manual source first)"
+            )));
+        }
+        Ok(())
+    }
+
     /// Subscribe a market on a source, tracking it and focusing it if nothing is
     /// focused yet.
     ///
@@ -252,6 +284,9 @@ impl Terminal {
             }
             Command::Seek { source, index } => {
                 self.seek(source, index)?;
+            }
+            Command::Feed { source, event } => {
+                self.feed(source, event)?;
             }
         }
         Ok(serde_json::to_string(&self.frame())?)
@@ -461,6 +496,83 @@ mod tests {
         let frame = term
             .command_json(r#"{"type":"Seek","source":0,"index":1}"#)
             .unwrap();
+        assert!(frame.contains("\"last\":100.0"));
+    }
+
+    fn manual_config() -> Config {
+        let mut cfg = Config::default_layout();
+        cfg.sources = vec![SourceSpec::Manual];
+        cfg
+    }
+
+    fn a_trade(sym: &Symbol, price: Decimal) -> Event {
+        Event::Trade(TradePrint {
+            symbol: sym.clone(),
+            price,
+            quantity: dec!(1),
+            aggressor: OrderSide::Buy,
+            timestamp: 1,
+        })
+    }
+
+    #[test]
+    fn feed_pushes_events_into_a_manual_source_folded_on_tick() {
+        let sym = Symbol::new("BTC", "USDT");
+        let mut term = Terminal::new(&manual_config()).unwrap();
+        term.subscribe(0, &sym).unwrap();
+        term.feed(0, a_trade(&sym, dec!(100))).unwrap();
+        // Fed events fold on the next tick, not immediately.
+        assert_eq!(
+            term.state().get(&(0, sym.clone())).unwrap().last,
+            Decimal::ZERO
+        );
+        term.tick();
+        assert_eq!(term.state().get(&(0, sym.clone())).unwrap().last, dec!(100));
+    }
+
+    #[test]
+    fn feed_to_a_non_manual_source_errors() {
+        let (sym, cfg) = replay_config();
+        let mut term = Terminal::new(&cfg).unwrap();
+        term.subscribe(0, &sym).unwrap();
+        assert!(matches!(
+            term.feed(0, a_trade(&sym, dec!(1))).unwrap_err(),
+            Error::Command(_)
+        ));
+    }
+
+    #[test]
+    fn feed_unknown_source_errors() {
+        let mut term = Terminal::new(&manual_config()).unwrap();
+        assert!(matches!(
+            term.feed(99, a_trade(&Symbol::new("BTC", "USDT"), dec!(1)))
+                .unwrap_err(),
+            Error::UnknownSource(99)
+        ));
+    }
+
+    #[test]
+    fn feed_event_without_a_market_errors() {
+        let mut term = Terminal::new(&manual_config()).unwrap();
+        assert!(matches!(
+            term.feed(0, Event::Disconnected).unwrap_err(),
+            Error::Command(_)
+        ));
+    }
+
+    #[test]
+    fn command_json_feed_then_tick_folds() {
+        let mut term = Terminal::from_json(
+            r#"{"sources":["Manual"],"layout":{"panels":[{"kind":"Chart","rect":{"x":0,"y":0,"w":100,"h":100}}]}}"#,
+        )
+        .unwrap();
+        term.command_json(r#"{"type":"Subscribe","source":0,"symbol":"BTC/USDT"}"#)
+            .unwrap();
+        term.command_json(
+            r#"{"type":"Feed","source":0,"event":{"type":"trade","symbol":{"base":"BTC","quote":"USDT"},"price":"100","quantity":"1","aggressor":"Buy","timestamp":1}}"#,
+        )
+        .unwrap();
+        let frame = term.command_json(r#"{"type":"Tick"}"#).unwrap();
         assert!(frame.contains("\"last\":100.0"));
     }
 }
