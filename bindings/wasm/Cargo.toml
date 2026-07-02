@@ -1,0 +1,31 @@
+[package]
+name = "wickra-terminal-wasm"
+description = "WebAssembly bindings for wickra-terminal — the data-driven core in the browser, feeding the web renderer."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+# The core without the `live` feature: no native networking, so it compiles to
+# wasm32 (the browser feeds Live over its own WebSocket, not the native client).
+# Declared as a direct path dep, not `workspace = true`, because cargo silently
+# ignores `default-features = false` on an inherited workspace dependency.
+terminal-core = { path = "../../crates/terminal-core", version = "0.1.0", default-features = false }
+wasm-bindgen = { workspace = true }
+
+# `wickra-exchange-core` (a transitive dependency via the terminal core, for the
+# market types) pulls `p256`/`getrandom`; getrandom needs its `js` backend to
+# compile for the browser. This applies only to wasm32 builds.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }

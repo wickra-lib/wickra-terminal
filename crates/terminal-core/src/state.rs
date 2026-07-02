@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use wickra_core::{Ema, Indicator, Sma};
-use wickra_exchange::{BookDelta, BookLevel, Event, OrderBookSnapshot, OrderSide, TradePrint};
+use wickra_exchange_core::{BookDelta, BookLevel, Event, OrderBookSnapshot, OrderSide, TradePrint};
 
 use crate::source::{DataSource, SourceId, Symbol};
 
@@ -357,7 +357,7 @@ impl AppState {
 mod tests {
     use super::*;
     use rust_decimal_macros::dec;
-    use wickra_exchange::Symbol;
+    use wickra_exchange_core::Symbol;
 
     fn trade(sym: &Symbol, price: Decimal, side: OrderSide) -> Event {
         Event::Trade(TradePrint {

@@ -11,7 +11,7 @@ use std::collections::HashSet;
 
 use super::{event_symbol, DataSource, SourceId, SourceKind, Symbol};
 use crate::error::{Error, Result};
-use wickra_exchange::Event;
+use wickra_exchange_core::Event;
 
 /// A deterministic replay of a recorded event list.
 pub struct ReplaySource {
@@ -113,7 +113,7 @@ impl DataSource for ReplaySource {
 mod tests {
     use super::*;
     use rust_decimal_macros::dec;
-    use wickra_exchange::{OrderSide, TradePrint};
+    use wickra_exchange_core::{OrderSide, TradePrint};
 
     fn trade(sym: &Symbol, price: rust_decimal::Decimal, ts: i64) -> Event {
         Event::Trade(TradePrint {

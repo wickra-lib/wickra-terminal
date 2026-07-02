@@ -15,9 +15,18 @@ categories.workspace = true
 [lints]
 workspace = true
 
+[features]
+# `live` pulls the native exchange facade (tokio/reqwest) for the Live source.
+# It is on by default for native builds; the wasm binding disables it so the
+# core compiles for wasm32 (the browser feeds Live over its own WebSocket).
+default = ["live"]
+live = ["dep:wickra-exchange"]
+
 [dependencies]
-# Market types and the ten-venue Live connectivity come from the exchange layer.
-wickra-exchange.workspace = true
+# Market types (Symbol/Event/…) — no networking, so this compiles on wasm32.
+wickra-exchange-core.workspace = true
+# The native connectivity facade (Live source); optional, native-only.
+wickra-exchange = { workspace = true, optional = true }
 # Streaming indicators for the chart panel's indicator set.
 wickra-core.workspace = true
 serde.workspace = true
