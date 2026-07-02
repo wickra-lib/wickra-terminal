@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Synth), an O(1) `AppState` fold, panels (chart, book, tape, footprint,
   watchlist) that emit view-models, and the `Terminal` handle with the
   `command_json` boundary.
+- Time-machine: the `Seek` command rewinds a `Replay` source to a recorded
+  position and deterministically re-folds state, so every binding and both
+  renderers can scrub through a recorded feed.
 - `ui-tui`: the native TUI renderer (ratatui) with a runtime source/symbol menu.
 - `web/`: the browser renderer (Vue + Vite over the WASM binding).
 - Ten language bindings — Rust, Python (PyO3), Node.js (napi), WASM

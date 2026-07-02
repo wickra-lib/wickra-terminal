@@ -60,6 +60,33 @@ pub trait DataSource {
 
     /// Drain the buffered events, each tagged with its market.
     fn poll(&mut self) -> Vec<(Symbol, Event)>;
+
+    /// Rewind a replayable source to `index` (clamped to its length) and return
+    /// every *subscribed* event up to that point, so the terminal can re-fold
+    /// deterministic state — the time-machine. After the seek, `poll()` resumes
+    /// from `index`. Sources that cannot be replayed (live, synthetic) return
+    /// `None` and are left untouched.
+    ///
+    /// Re-folding from the recorded feed — rather than restoring a cloned state
+    /// snapshot — is deliberate: a `SymbolState` owns boxed streaming indicators
+    /// that are not `Clone`, so a snapshot ring is not viable; a deterministic
+    /// re-fold rebuilds identical state (the fold is O(1) per event).
+    fn seek(&mut self, index: usize) -> Option<Vec<(Symbol, Event)>> {
+        let _ = index;
+        None
+    }
+
+    /// A replayable source's current cursor position (0 for non-replayable
+    /// sources), so a renderer can show a time-machine scrubber.
+    fn cursor(&self) -> usize {
+        0
+    }
+
+    /// The number of recorded events in a replayable source (0 if not
+    /// replayable).
+    fn event_count(&self) -> usize {
+        0
+    }
 }
 
 /// The market an event concerns, if it is a market (not a lifecycle) event.

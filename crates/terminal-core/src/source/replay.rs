@@ -63,19 +63,6 @@ impl ReplaySource {
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
     }
-
-    /// Move the cursor to `index` (clamped to the feed length) — the time-machine
-    /// seek. The caller re-folds state from a fresh `AppState` after seeking
-    /// backward; this source only owns the cursor.
-    pub fn seek(&mut self, index: usize) {
-        self.cursor = index.min(self.events.len());
-    }
-
-    /// The current cursor position.
-    #[must_use]
-    pub fn cursor(&self) -> usize {
-        self.cursor
-    }
 }
 
 impl DataSource for ReplaySource {
@@ -106,6 +93,27 @@ impl DataSource for ReplaySource {
             }
         }
         Vec::new()
+    }
+
+    fn seek(&mut self, index: usize) -> Option<Vec<(Symbol, Event)>> {
+        self.cursor = index.min(self.events.len());
+        // The subscribed events up to the cursor — exactly what forward play
+        // would have folded to reach this position — so the terminal can rebuild
+        // identical state. `poll()` then resumes from the cursor.
+        let history = self.events[..self.cursor]
+            .iter()
+            .filter(|(sym, _)| self.subscribed.contains(sym))
+            .cloned()
+            .collect();
+        Some(history)
+    }
+
+    fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    fn event_count(&self) -> usize {
+        self.events.len()
     }
 }
 
@@ -150,16 +158,39 @@ mod tests {
     }
 
     #[test]
-    fn seek_rewinds_the_cursor() {
+    fn seek_rewinds_the_cursor_and_returns_subscribed_history() {
         let sym = Symbol::new("BTC", "USDT");
         let mut r = ReplaySource::from_events(7, feed(&sym));
         r.subscribe(&sym).unwrap();
+        assert_eq!(r.event_count(), 3);
         r.poll();
         r.poll();
         assert_eq!(r.cursor(), 2);
-        r.seek(0);
+        // Rewind to the start: no history, cursor reset, replay resumes from 0.
+        assert_eq!(r.seek(0), Some(vec![]));
         assert_eq!(r.cursor(), 0);
         assert_eq!(r.poll().len(), 1);
+        // Seek forward returns the subscribed events up to the cursor.
+        let history = r.seek(2).unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(r.cursor(), 2);
+        // Clamped to the feed length.
+        assert_eq!(r.seek(99).unwrap().len(), 3);
+        assert_eq!(r.cursor(), 3);
+    }
+
+    #[test]
+    fn seek_history_excludes_unsubscribed_symbols() {
+        let btc = Symbol::new("BTC", "USDT");
+        let eth = Symbol::new("ETH", "USDT");
+        let mut events = feed(&btc);
+        events.push(trade(&eth, dec!(2000), 4));
+        let mut r = ReplaySource::from_events(1, events);
+        r.subscribe(&eth).unwrap();
+        // Only the ETH print is in the rebuilt history, though it sits last.
+        let history = r.seek(4).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].0, eth);
     }
 
     #[test]

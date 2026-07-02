@@ -15,7 +15,7 @@ use crate::config::{Config, SourceSpec};
 use crate::error::{Error, Result};
 use crate::panels::{build_panel, Panel};
 use crate::source::{build_source, SourceId, Symbol};
-use crate::state::AppState;
+use crate::state::{AppState, SymbolState};
 use crate::view::Frame;
 
 /// A command applied through the data-driven boundary.
@@ -54,6 +54,14 @@ enum Command {
     RemoveSource {
         /// The source id.
         id: SourceId,
+    },
+    /// Rewind a replayable source to a recorded position and re-fold state — the
+    /// time-machine.
+    Seek {
+        /// The source id.
+        source: SourceId,
+        /// The recorded position to rewind to (clamped to the feed length).
+        index: usize,
     },
 }
 
@@ -116,6 +124,41 @@ impl Terminal {
     /// Remove a source and every market it owned.
     pub fn remove_source(&mut self, id: SourceId) {
         self.state.remove_source(id);
+    }
+
+    /// Rewind a replayable source to recorded position `index` and re-fold its
+    /// markets' state from the start — the time-machine. The state for every other
+    /// source is untouched, and replay resumes forward from `index` on the next
+    /// tick.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::UnknownSource`] if `id` is not open, or
+    /// [`Error::Command`] if the source cannot be replayed (a live or synthetic
+    /// feed has no recorded history to seek).
+    pub fn seek(&mut self, id: SourceId, index: usize) -> Result<()> {
+        let history = self
+            .state
+            .source_mut(id)
+            .ok_or(Error::UnknownSource(id))?
+            .seek(index);
+        let Some(history) = history else {
+            return Err(Error::Command(format!(
+                "source {id} is not replayable and cannot be seeked"
+            )));
+        };
+        // Reset this source's per-market state, then re-fold deterministically.
+        // Other sources keep their state; subscribed markets with no events yet
+        // keep a fresh default entry so the layout still renders them.
+        for (key, symbol_state) in &mut self.state.symbols {
+            if key.0 == id {
+                *symbol_state = SymbolState::default();
+            }
+        }
+        for (sym, ev) in history {
+            self.state.fold(id, &sym, &ev);
+        }
+        Ok(())
     }
 
     /// Subscribe a market on a source, tracking it and focusing it if nothing is
@@ -207,6 +250,9 @@ impl Terminal {
             Command::RemoveSource { id } => {
                 self.remove_source(id);
             }
+            Command::Seek { source, index } => {
+                self.seek(source, index)?;
+            }
         }
         Ok(serde_json::to_string(&self.frame())?)
     }
@@ -240,11 +286,37 @@ fn parse_symbol(s: &str) -> Result<Symbol> {
 mod tests {
     use super::*;
     use crate::view::PanelView;
+    use rust_decimal::Decimal;
+    use rust_decimal_macros::dec;
+    use wickra_exchange_core::{Event, OrderSide, TradePrint};
 
     fn synth_config() -> Config {
         let mut cfg = Config::default_layout();
         cfg.sources = vec![SourceSpec::Synth { seed: 1 }];
         cfg
+    }
+
+    /// A three-trade BTC/USDT replay feed and its focused symbol.
+    fn replay_config() -> (Symbol, Config) {
+        let sym = Symbol::new("BTC", "USDT");
+        let trade = |price, ts| {
+            Event::Trade(TradePrint {
+                symbol: sym.clone(),
+                price,
+                quantity: dec!(1),
+                aggressor: OrderSide::Buy,
+                timestamp: ts,
+            })
+        };
+        let feed = vec![
+            trade(dec!(100), 1),
+            trade(dec!(101), 2),
+            trade(dec!(102), 3),
+        ];
+        let dataset = serde_json::to_string(&feed).unwrap();
+        let mut cfg = Config::default_layout();
+        cfg.sources = vec![SourceSpec::Replay { dataset }];
+        (sym, cfg)
     }
 
     #[test]
@@ -323,5 +395,72 @@ mod tests {
     #[test]
     fn version_is_the_crate_version() {
         assert_eq!(Terminal::version(), env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn seek_rewinds_replay_state_and_resumes_forward() {
+        let (sym, cfg) = replay_config();
+        let mut term = Terminal::new(&cfg).unwrap();
+        term.subscribe(0, &sym).unwrap();
+        for _ in 0..3 {
+            term.tick();
+        }
+        assert_eq!(term.state().get(&(0, sym.clone())).unwrap().last, dec!(102));
+
+        // Rewind to position 2: only the first two trades are folded.
+        term.seek(0, 2).unwrap();
+        let st = term.state().get(&(0, sym.clone())).unwrap();
+        assert_eq!(st.last, dec!(101));
+        assert_eq!(st.series(10), vec![100.0, 101.0]);
+
+        // Replay resumes forward: the next tick folds the third trade again.
+        term.tick();
+        assert_eq!(term.state().get(&(0, sym.clone())).unwrap().last, dec!(102));
+    }
+
+    #[test]
+    fn seek_to_zero_clears_market_state() {
+        let (sym, cfg) = replay_config();
+        let mut term = Terminal::new(&cfg).unwrap();
+        term.subscribe(0, &sym).unwrap();
+        for _ in 0..3 {
+            term.tick();
+        }
+        term.seek(0, 0).unwrap();
+        let st = term.state().get(&(0, sym.clone())).unwrap();
+        assert_eq!(st.last, Decimal::ZERO);
+        assert!(st.series(10).is_empty());
+    }
+
+    #[test]
+    fn seek_non_replayable_source_errors() {
+        let mut term = Terminal::new(&synth_config()).unwrap();
+        term.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
+        assert!(matches!(term.seek(0, 1).unwrap_err(), Error::Command(_)));
+    }
+
+    #[test]
+    fn seek_unknown_source_errors() {
+        let mut term = Terminal::new(&synth_config()).unwrap();
+        assert!(matches!(
+            term.seek(99, 0).unwrap_err(),
+            Error::UnknownSource(99)
+        ));
+    }
+
+    #[test]
+    fn command_json_seek_rewinds() {
+        let (_, cfg) = replay_config();
+        let mut term = Terminal::new(&cfg).unwrap();
+        term.command_json(r#"{"type":"Subscribe","source":0,"symbol":"BTC/USDT"}"#)
+            .unwrap();
+        for _ in 0..3 {
+            term.command_json(r#"{"type":"Tick"}"#).unwrap();
+        }
+        // Seek to index 1: only the first trade (price 100) remains folded.
+        let frame = term
+            .command_json(r#"{"type":"Seek","source":0,"index":1}"#)
+            .unwrap();
+        assert!(frame.contains("\"last\":100.0"));
     }
 }
