@@ -44,12 +44,12 @@ any language builds their own front-end on the same core.
 
 ## Status
 
-**Pre-alpha — scaffolding.** This repository is being built out from the
-[`wickra-exchange`](https://github.com/wickra-lib/wickra-exchange) template. The
-workspace and project governance are in place; the core, the renderers and the
-language bindings are landing incrementally. **The API shown below is the target
-surface, not yet shippable.** Track progress in [ROADMAP.md](ROADMAP.md). Not
-released to any registry.
+**Pre-release — functionally complete, CI-verified, not yet published.** The core,
+both renderers (TUI + Web), all ten language bindings, the runtime source/symbol
+toggle, the panel set, the byte-exact golden corpus, property + fuzz tests,
+benchmarks and one runnable example per language are in place and green across
+the full CI matrix (10 languages × 3 OS). Not yet released to any registry —
+track progress in [ROADMAP.md](ROADMAP.md).
 
 > ⚠️ **Real orders move real money.** Live execution is opt-in, testnet-first, and
 > keys stay server-side (native renderer only). Both renderers default to

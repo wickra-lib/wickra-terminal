@@ -4,7 +4,7 @@ Thanks for using `wickra-terminal`. Here is where to go for help.
 
 ## Questions and usage help
 
-- Read the [README](README.md), the [architecture guide](docs/ARCHITECTURE.md),
+- Read the [README](README.md), the [architecture guide](ARCHITECTURE.md),
   the [panels guide](docs/PANELS.md), the [sources guide](docs/SOURCES.md) and the
   [renderers guide](docs/RENDERERS.md).
 - Browse the runnable [`examples/`](examples/).
