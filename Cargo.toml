@@ -17,6 +17,7 @@ members = [
     "crates/ui-tui",
     "bindings/c",
     "bindings/python",
+    "bindings/node",
 ]
 # The fuzz crate is its own (detached) workspace — cargo-fuzz builds it on its
 # own with sanitizer flags on a nightly toolchain.
