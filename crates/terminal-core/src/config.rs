@@ -86,6 +86,9 @@ impl Default for Keybinds {
             ("next_panel", "tab"),
             ("prev_panel", "backtab"),
             ("source_menu", "s"),
+            ("add_symbol", "a"),
+            ("remove_symbol", "d"),
+            ("remove_source", "x"),
             ("next_symbol", "right"),
             ("prev_symbol", "left"),
         ]

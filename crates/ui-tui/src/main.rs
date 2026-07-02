@@ -8,6 +8,7 @@
 mod app;
 mod input;
 mod render;
+mod spec;
 mod term;
 mod widgets;
 
@@ -17,11 +18,10 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::Parser;
-use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal as TuiTerminal;
-use terminal_core::source::live::parse_live_shorthand;
-use terminal_core::{Config, SourceSpec, Symbol, Terminal};
+use terminal_core::{Config, Symbol, Terminal};
 
 use app::App;
 use term::TermGuard;
@@ -44,30 +44,6 @@ struct Cli {
     config: Option<PathBuf>,
 }
 
-/// Parse a `--source` shorthand into a [`SourceSpec`].
-fn parse_source(spec: &str) -> Result<SourceSpec, Box<dyn Error>> {
-    let (kind, rest) = spec
-        .split_once(':')
-        .ok_or("source must be kind:… (synth:1 | live:venue:BASE/QUOTE | replay:JSON)")?;
-    match kind {
-        "synth" => Ok(SourceSpec::Synth {
-            seed: rest.parse()?,
-        }),
-        "live" => {
-            let (venue, symbol) = parse_live_shorthand(rest)?;
-            Ok(SourceSpec::Live {
-                venue,
-                symbol,
-                testnet: false,
-            })
-        }
-        "replay" => Ok(SourceSpec::Replay {
-            dataset: rest.to_string(),
-        }),
-        other => Err(format!("unknown source kind: {other}").into()),
-    }
-}
-
 /// Build the config from `--config` or `--source` (or the bare default layout).
 fn build_config(cli: &Cli) -> Result<Config, Box<dyn Error>> {
     if let Some(path) = &cli.config {
@@ -75,8 +51,10 @@ fn build_config(cli: &Cli) -> Result<Config, Box<dyn Error>> {
         return Ok(Config::from_toml(&text)?);
     }
     let mut config = Config::default_layout();
-    if let Some(spec) = &cli.source {
-        config.sources.push(parse_source(spec)?);
+    if let Some(shorthand) = &cli.source {
+        config
+            .sources
+            .push(spec::parse_source(shorthand).map_err(|e| -> Box<dyn Error> { e.into() })?);
     }
     Ok(config)
 }
@@ -97,12 +75,23 @@ fn run(mut app: App) -> Result<(), Box<dyn Error>> {
     let mut tui = TuiTerminal::new(backend)?;
     loop {
         app.update();
-        tui.draw(|frame| render::draw(frame, &app.frame, app.terminal.config()))?;
+        let footer = app.footer();
+        tui.draw(|frame| render::draw(frame, &app.frame, app.terminal.config(), &footer))?;
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
-                    let action = input::map_key(key, &app.terminal.config().layout.keybinds);
-                    app.on_action(action);
+                    if app.is_input() {
+                        match key.code {
+                            KeyCode::Enter => app.input_submit(),
+                            KeyCode::Esc => app.input_cancel(),
+                            KeyCode::Backspace => app.input_backspace(),
+                            KeyCode::Char(ch) => app.input_push(ch),
+                            _ => {}
+                        }
+                    } else {
+                        let action = input::map_key(key, &app.terminal.config().layout.keybinds);
+                        app.on_action(action);
+                    }
                 }
             }
         }
@@ -133,42 +122,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_source_synth() {
-        assert_eq!(
-            parse_source("synth:7").unwrap(),
-            SourceSpec::Synth { seed: 7 }
-        );
-    }
-
-    #[test]
-    fn parse_source_live() {
-        assert_eq!(
-            parse_source("live:binance:BTC/USDT").unwrap(),
-            SourceSpec::Live {
-                venue: "binance".to_string(),
-                symbol: "BTC/USDT".to_string(),
-                testnet: false,
-            }
-        );
-    }
-
-    #[test]
-    fn parse_source_replay() {
-        assert_eq!(
-            parse_source("replay:[]").unwrap(),
-            SourceSpec::Replay {
-                dataset: "[]".to_string(),
-            }
-        );
-    }
-
-    #[test]
-    fn parse_source_rejects_unknown_kind() {
-        assert!(parse_source("nope:1").is_err());
-        assert!(parse_source("noseparator").is_err());
-    }
+    use terminal_core::SourceSpec;
 
     #[test]
     fn build_config_from_source_adds_the_source() {
