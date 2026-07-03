@@ -116,6 +116,21 @@ cargo run -p wickra-terminal -- --render tui --source synth:1
 - Renderer/binding toolchains as needed: Node ≥ 22, Python ≥ 3.9, a C toolchain,
   .NET 8, JDK 22+, Go 1.23, R — see each `bindings/<lang>/README.md`.
 
+## Ecosystem
+
+Part of the [Wickra](https://github.com/wickra-lib/wickra) family — each one a
+data-driven core with a CLI and the same ten-language binding surface:
+
+- [**wickra**](https://github.com/wickra-lib/wickra) — the core library: 514 O(1) streaming indicators across ten languages
+- [**wickra-exchange**](https://github.com/wickra-lib/wickra-exchange) — unified market-data + execution across ten crypto exchanges
+- [**wickra-backtest**](https://github.com/wickra-lib/wickra-backtest) — event-driven backtester over the Wickra core
+- [**wickra-screener**](https://github.com/wickra-lib/wickra-screener) — parallel multi-symbol screening over 514 streaming indicators
+- [**wickra-xray**](https://github.com/wickra-lib/wickra-xray) — market-microstructure explorer: footprint, order-book heatmap, liquidation map, funding/OI divergence
+- **wickra-radar**, **wickra-copilot**, **wickra-shazam** — *coming soon*
+
+Docs at [docs.wickra.org](https://docs.wickra.org); the marketing site and
+in-browser demo at [wickra.org](https://wickra.org).
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
