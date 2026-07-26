@@ -1,0 +1,6 @@
+# getrandom 0.3+ requires an explicit backend on wasm32-unknown-unknown. The
+# browser bindings pull getrandom 0.3/0.4 transitively (via market/crypto
+# types); select its JS backend so the wasm build resolves. getrandom 0.2 uses
+# its own `js` feature (see bindings/wasm/Cargo.toml) and ignores this cfg.
+[target.wasm32-unknown-unknown]
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"']

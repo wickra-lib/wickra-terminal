@@ -29,3 +29,7 @@ wasm-bindgen = { workspace = true }
 # compile for the browser. This applies only to wasm32 builds.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
+# getrandom 0.3/0.4 also enter the tree transitively; enable their `wasm_js`
+# backend feature (selected via .cargo/config.toml's getrandom_backend cfg).
+getrandom_v3 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+getrandom_v4 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
