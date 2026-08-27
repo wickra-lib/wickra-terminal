@@ -20,5 +20,3 @@ SystemRequirements: the wickra-terminal C ABI shared library, downloaded
     built C ABI instead (e.g. after `cargo build -p wickra-terminal-c --release`).
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.2
-Suggests: testthat (>= 3.0.0)
-Config/testthat/edition: 3
