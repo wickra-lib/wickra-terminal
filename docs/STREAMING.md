@@ -2,7 +2,7 @@
 
 The terminal is streaming-native: it folds a feed of events into state one event
 at a time, in **O(1) per event**, and never recomputes over history. That is the
-whole moat — it is what lets the core sustain tens of thousands of frames per
+whole moat — it is what lets the core sustain a hundred thousand frames per
 second regardless of how long a session has run.
 
 ## The fold
@@ -66,8 +66,8 @@ WICKRA_REGEN=1 cargo test -p terminal-core --test golden
 ## Performance
 
 Measured with `cargo bench -p terminal-bench` (see [../BENCHMARKS.md](../BENCHMARKS.md)):
-folding one trade ~157 ns, applying an L2 depth diff ~115 ns, a full tick (poll +
-fold + build every panel) ~10.7 µs.
+folding one trade ~142 ns, applying an L2 depth diff ~107 ns, a full tick (poll +
+fold + build every panel) ~9.7 µs.
 
 The split matters more than the totals: the fold is nanoseconds and building the
 view-models is microseconds, so the O(1) fold is not what a renderer waits on.

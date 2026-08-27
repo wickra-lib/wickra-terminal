@@ -42,25 +42,31 @@ Figures are the median estimate; treat them as orders of magnitude rather than
 guarantees — they move with the CPU, the toolchain and the number of indicators
 configured.
 
+Measured under `[profile.bench]`, which carries the same `lto = "fat"` and single
+codegen unit as `[profile.release]`. That matters: an earlier set of figures here
+was taken before those settings existed, so it described a binary nobody ships
+and understated the released one by roughly a tenth.
+
 | Benchmark           | What                                          | Median   | Throughput |
 |---------------------|-----------------------------------------------|----------|------------|
-| `fold_trade`        | fold one trade into `AppState`                | 157 ns   | ~6.4 M/s   |
-| `book_delta`        | apply an L2 depth diff (six levels, two removals) | 115 ns | ~8.7 M/s |
-| `frame_build`       | build all five panels' view-models            | 9.8 µs   | ~102 K/s   |
-| `tick_synth`        | poll + fold + build the frame                 | 10.7 µs  | ~94 K/s    |
-| `command_json_tick` | the same tick across the FFI boundary         | 19.9 µs  | ~50 K/s    |
+| `fold_trade`        | fold one trade into `AppState`                | 142 ns   | ~7.0 M/s   |
+| `book_delta`        | apply an L2 depth diff (six levels, two removals) | 107 ns | ~9.3 M/s |
+| `frame_build`       | build all five panels' view-models            | 8.9 µs   | ~113 K/s   |
+| `tick_synth`        | poll + fold + build the frame                 | 9.7 µs  | ~103 K/s    |
+| `command_json_tick` | the same tick across the FFI boundary         | 17.7 µs  | ~56 K/s    |
 
 The takeaway: a full tick that rebuilds every panel's view-model costs about ten
-microseconds, so the core sustains tens of thousands of frames per second — far
+microseconds, so the core sustains a hundred thousand frames per second — far
 above any renderer's frame budget, which is the whole point of the O(1) fold.
 
 Two readings are worth explaining rather than leaving to look odd.
 
-`frame_build` and `tick_synth` are within noise of each other, and a tick does
-strictly more work than a frame build. The polling and folding a tick adds are in
-the hundred-nanosecond range, which is under a percent of the ten microseconds
-the frame build costs, so the two are not separable at this sample size. That
-also says where the time actually goes: building view-models, not folding events.
+`tick_synth` sits just above `frame_build`, and the gap is small because a tick
+adds polling and folding to a frame build and those cost hundred-nanosecond
+amounts against a nine-microsecond baseline. Under the older, un-LTO'd figures
+the two were not separable at all; they are now, by about eight percent, which is
+roughly what the added work should cost. That is also where the time goes:
+building view-models, not folding events.
 
 `command_json_tick` costs roughly twice a bare tick. The extra is JSON — parsing
 the command and serialising a frame of five panels — not the terminal's work, and

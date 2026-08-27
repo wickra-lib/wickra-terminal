@@ -179,13 +179,13 @@ laptop, single-threaded, with the default two-indicator overlay:
 
 | Path | Median | Throughput |
 |------|--------|------------|
-| Fold one trade into state | 157 ns | ~6.4 M/s |
-| Apply an L2 depth diff | 115 ns | ~8.7 M/s |
-| Build all five panels' view-models | 9.8 µs | ~102 K/s |
-| One full tick (poll + fold + build) | 10.7 µs | ~94 K/s |
-| The same tick across the FFI boundary | 19.9 µs | ~50 K/s |
+| Fold one trade into state | 142 ns | ~7.0 M/s |
+| Apply an L2 depth diff | 107 ns | ~9.3 M/s |
+| Build all five panels' view-models | 8.9 µs | ~113 K/s |
+| One full tick (poll + fold + build) | 9.7 µs | ~103 K/s |
+| The same tick across the FFI boundary | 17.7 µs | ~56 K/s |
 
-A full tick costs about ten microseconds, so the core sustains tens of thousands
+A full tick costs about ten microseconds, so the core sustains a hundred thousand
 of frames per second — far above any renderer's budget, which is the point of the
 O(1) fold. The indicator count is a direct multiplier: those numbers are two
 indicators, and the registry offers <!--indicator-count-->460<!--/indicator-count-->. See [BENCHMARKS.md](BENCHMARKS.md).
