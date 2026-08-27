@@ -44,6 +44,9 @@ obj/
 bindings/java/target/
 
 # R build artifacts
+# Written by the wheel container-smoke job at run time.
+wheel-smoke.py
+
 bindings/r/.rlib/
 bindings/r/src/*.o
 bindings/r/src/*.so
