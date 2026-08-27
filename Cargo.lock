@@ -3807,7 +3807,6 @@ dependencies = [
  "crossterm",
  "ratatui",
  "terminal-core",
- "wickra-exchange",
 ]
 
 [[package]]
