@@ -799,4 +799,68 @@ mod tests {
         let labels = chart_indicator_labels(&terminal.command_json(TICK).unwrap());
         assert!(labels.contains(&"Rsi(14)".to_string()), "got {labels:?}");
     }
+
+    #[test]
+    fn a_multi_output_indicator_reports_its_named_fields() {
+        let mut terminal = synth_terminal();
+        terminal
+            .command_json(
+                r#"{"type":"AddIndicator","spec":{"kind":"MacdIndicator","params":[12,26,9]}}"#,
+            )
+            .unwrap();
+        // Enough ticks for the slow EMA and the signal line to warm up.
+        let mut raw = String::new();
+        for _ in 0..200 {
+            raw = terminal.command_json(TICK).unwrap();
+        }
+        let frame: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let chart = frame["panels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["panel"] == "chart")
+            .expect("a chart panel");
+        let macd = chart["indicators"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["name"] == "MacdIndicator(12,26,9)")
+            .expect("MACD in the chart panel");
+
+        let fields = macd["fields"].as_array().expect("named fields");
+        assert!(fields.len() > 1, "MACD should report more than one field");
+        let names: Vec<&str> = fields.iter().map(|f| f["name"].as_str().unwrap()).collect();
+        assert!(names.len() == fields.len(), "every field must be named");
+        // The primary value is the first field, so a renderer wanting one line
+        // does not have to know which field that is.
+        assert_eq!(macd["value"], fields[0]["value"]);
+    }
+
+    #[test]
+    fn a_single_output_indicator_omits_the_fields_key_entirely() {
+        // The wire shape a consumer written before multi-output existed sees.
+        let mut terminal = synth_terminal();
+        let mut raw = String::new();
+        for _ in 0..40 {
+            raw = terminal.command_json(TICK).unwrap();
+        }
+        let frame: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let chart = frame["panels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["panel"] == "chart")
+            .expect("a chart panel");
+        let sma = chart["indicators"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["name"] == "Sma(20)")
+            .expect("Sma in the chart panel");
+        assert!(
+            sma.get("fields").is_none(),
+            "an empty field list must not appear on the wire: {sma}"
+        );
+        assert!(sma.get("value").is_some());
+    }
 }

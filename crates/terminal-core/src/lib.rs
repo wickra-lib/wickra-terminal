@@ -44,9 +44,9 @@ pub use error::{Error, Result};
 pub use panels::{build_panel, Panel, PanelKind};
 pub use registry::{build as build_indicator, TickIndicator, TickInput, KINDS};
 pub use source::{build_source, DataSource, Event, SourceId, SourceKind, Symbol};
-pub use state::AppState;
+pub use state::{AppState, IndicatorReading, IndicatorSet};
 pub use terminal::Terminal;
-pub use view::{Frame, PanelView};
+pub use view::{Frame, IndicatorField, IndicatorValue, PanelView};
 
 /// The crate version (the same string [`Terminal::version`] returns).
 #[must_use]

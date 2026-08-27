@@ -203,6 +203,18 @@ struct IndicatorEntry {
     fields: Vec<(&'static str, f64)>,
 }
 
+/// One indicator's latest reading: its label, its primary value and, for a
+/// multi-output indicator, its named fields.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndicatorReading {
+    /// The display label, derived from the spec.
+    pub label: String,
+    /// The primary value, or `None` while warming up.
+    pub value: Option<f64>,
+    /// Named outputs in declaration order; empty for a single-output indicator.
+    pub fields: Vec<(&'static str, f64)>,
+}
+
 /// The set of indicators tracked for a symbol.
 pub struct IndicatorSet {
     entries: Vec<IndicatorEntry>,
@@ -272,13 +284,20 @@ impl IndicatorSet {
             .collect()
     }
 
-    /// The latest named output fields of each indicator, for the multi-output
-    /// ones. Single-output indicators contribute an empty slice.
+    /// The latest reading of every indicator, in one pass.
+    ///
+    /// One call rather than a `values` and a `fields` the caller has to zip: two
+    /// parallel lists is one refactor away from a chart showing one indicator's
+    /// value under another's name.
     #[must_use]
-    pub fn fields(&self) -> Vec<(String, Vec<(&'static str, f64)>)> {
+    pub fn snapshot(&self) -> Vec<IndicatorReading> {
         self.entries
             .iter()
-            .map(|entry| (entry.label.clone(), entry.fields.clone()))
+            .map(|entry| IndicatorReading {
+                label: entry.label.clone(),
+                value: entry.last,
+                fields: entry.fields.clone(),
+            })
             .collect()
     }
 }
