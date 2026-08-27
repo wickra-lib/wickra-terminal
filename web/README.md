@@ -48,3 +48,12 @@ npm run preview
 - A live source runs over the browser's own WebSocket (the native exchange
   client cannot run in a sandbox); real order execution needs a backend and is
   gated separately.
+- `package.json` carries one `overrides` entry, forcing `uuid` to `^11.1.1`.
+  `vite-plugin-top-level-await` depends on exactly `uuid@10.0.0` and has no
+  release that does otherwise, so the advisory against uuid 10 (GHSA-w5hq-g745-h8pq)
+  cannot be cleared by upgrading the plugin. The plugin is not actually affected
+  -- its only call is `v5(seed, namespace)` and the advisory needs the optional
+  `buf` argument -- so the override exists to satisfy the scanners rather than to
+  fix a live bug, and the plugin's identifier generator was checked under uuid 11.
+  Drop the override once the plugin ships a release that depends on a patched
+  uuid; keeping it after that point only pins a version nothing asks for.
