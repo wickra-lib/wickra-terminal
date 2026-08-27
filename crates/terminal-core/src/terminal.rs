@@ -9,11 +9,12 @@
 
 use std::str::FromStr;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use crate::config::{Config, SourceSpec};
+use crate::config::{Config, IndicatorSpec, SourceSpec};
 use crate::error::{Error, Result};
 use crate::panels::{build_panel, Panel};
+use crate::registry;
 use crate::source::{build_source, event_symbol, Event, SourceId, Symbol};
 use crate::state::{AppState, IndicatorSet, SymbolState};
 use crate::view::Frame;
@@ -63,6 +64,20 @@ enum Command {
         /// The recorded position to rewind to (clamped to the feed length).
         index: usize,
     },
+    /// Track one more indicator on every market. It starts cold and warms up
+    /// from the next tick.
+    AddIndicator {
+        /// The indicator to add.
+        spec: IndicatorSpec,
+    },
+    /// Stop tracking the indicator with this label (`Sma(20)`, `Rsi(14)`).
+    RemoveIndicator {
+        /// The label as the chart panel shows it.
+        label: String,
+    },
+    /// Answer with the registry catalogue instead of a frame: every indicator
+    /// name this build accepts, with the parameters wickra itself uses.
+    ListIndicators,
     /// Push an externally sourced market event into a host-fed (`Manual`) source,
     /// to be folded on the next tick. The event carries its own market.
     Feed {
@@ -71,6 +86,42 @@ enum Command {
         /// The market event to fold (a trade, ticker, book snapshot or diff).
         event: Event,
     },
+}
+
+/// The registry catalogue: what `ListIndicators` answers with.
+///
+/// Carrying the parameters alongside each name means a caller can construct any
+/// entry without a second lookup — the values are the ones wickra pins its own
+/// reference outputs with.
+#[derive(Debug, Serialize)]
+pub struct Catalogue {
+    /// Every indicator this build accepts.
+    pub indicators: Vec<CatalogueEntry>,
+}
+
+/// One catalogue row.
+#[derive(Debug, Serialize)]
+pub struct CatalogueEntry {
+    /// The registry name, as `IndicatorSpec::kind`.
+    pub kind: String,
+    /// The parameters wickra uses for it.
+    pub params: Vec<f64>,
+}
+
+impl Catalogue {
+    /// The catalogue of this build.
+    #[must_use]
+    pub fn current() -> Self {
+        Self {
+            indicators: registry::DEFAULTS
+                .iter()
+                .map(|(kind, params)| CatalogueEntry {
+                    kind: (*kind).to_string(),
+                    params: params.to_vec(),
+                })
+                .collect(),
+        }
+    }
 }
 
 /// The trading terminal: state, panels and the data-driven command boundary.
@@ -166,10 +217,16 @@ impl Terminal {
         };
         // Reset this source's per-market state, then re-fold deterministically.
         // Other sources keep their state; subscribed markets with no events yet
-        // keep a fresh default entry so the layout still renders them.
+        // keep a fresh entry so the layout still renders them.
+        //
+        // The specs are cloned out first because `fresh_market` borrows the state
+        // that the loop below is already borrowing mutably.
+        let specs = self.state.indicators.clone();
+        let timeframe = self.state.timeframe;
         for (key, symbol_state) in &mut self.state.symbols {
             if key.0 == id {
-                *symbol_state = SymbolState::default();
+                *symbol_state = SymbolState::new(&specs, timeframe)
+                    .expect("indicator specs are validated before they reach the state");
             }
         }
         for (sym, ev) in history {
@@ -216,7 +273,10 @@ impl Terminal {
         if !self.state.watchlist.contains(&key) {
             self.state.watchlist.push(key.clone());
         }
-        self.state.symbols.entry(key.clone()).or_default();
+        if !self.state.symbols.contains_key(&key) {
+            let fresh = self.state.fresh_market();
+            self.state.symbols.insert(key.clone(), fresh);
+        }
         if self.state.focus.is_none() {
             self.state.focus = Some(key);
         }
@@ -297,6 +357,22 @@ impl Terminal {
             Command::Feed { source, event } => {
                 self.feed(source, event)?;
             }
+            Command::AddIndicator { spec } => {
+                self.state.add_indicator(&spec)?;
+                self.config.indicators.push(spec);
+            }
+            Command::RemoveIndicator { label } => {
+                if !self.state.remove_indicator(&label) {
+                    return Err(Error::Command(format!("no such indicator: {label}")));
+                }
+                self.config.indicators.retain(|s| s.label() != label);
+            }
+            // The one command that answers rather than renders: every other
+            // command changes state and gets the new frame back, so returning a
+            // frame here would mean the catalogue had nowhere to go.
+            Command::ListIndicators => {
+                return Ok(serde_json::to_string(&Catalogue::current())?);
+            }
         }
         Ok(serde_json::to_string(&self.frame())?)
     }
@@ -328,6 +404,7 @@ fn parse_symbol(s: &str) -> Result<Symbol> {
 
 #[cfg(test)]
 mod tests {
+    const TICK: &str = r#"{"type":"Tick"}"#;
     use super::*;
     use crate::view::PanelView;
     use rust_decimal::Decimal;
@@ -583,5 +660,143 @@ mod tests {
         .unwrap();
         let frame = term.command_json(r#"{"type":"Tick"}"#).unwrap();
         assert!(frame.contains("\"last\":100.0"));
+    }
+
+    fn synth_terminal() -> Terminal {
+        let mut config = Config::default_layout();
+        config.sources = vec![SourceSpec::Synth { seed: 1 }];
+        let mut terminal = Terminal::new(&config).unwrap();
+        terminal
+            .command_json(r#"{"type":"Subscribe","source":0,"symbol":"BTC/USDT"}"#)
+            .unwrap();
+        terminal
+    }
+
+    fn chart_indicator_labels(frame_json: &str) -> Vec<String> {
+        let frame: serde_json::Value = serde_json::from_str(frame_json).unwrap();
+        frame["panels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["panel"] == "chart")
+            .expect("a chart panel")["indicators"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["name"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn add_indicator_reaches_the_chart_panel() {
+        let mut terminal = synth_terminal();
+        let before = chart_indicator_labels(&terminal.command_json(TICK).unwrap());
+        assert!(!before.contains(&"Rsi(14)".to_string()));
+
+        terminal
+            .command_json(r#"{"type":"AddIndicator","spec":{"kind":"Rsi","params":[14]}}"#)
+            .unwrap();
+        let after = chart_indicator_labels(&terminal.command_json(TICK).unwrap());
+        assert!(after.contains(&"Rsi(14)".to_string()), "got {after:?}");
+        assert_eq!(after.len(), before.len() + 1);
+    }
+
+    #[test]
+    fn remove_indicator_drops_it_from_the_panel() {
+        let mut terminal = synth_terminal();
+        terminal
+            .command_json(r#"{"type":"RemoveIndicator","label":"Ema(50)"}"#)
+            .unwrap();
+        let labels = chart_indicator_labels(&terminal.command_json(TICK).unwrap());
+        assert!(!labels.contains(&"Ema(50)".to_string()), "got {labels:?}");
+        assert!(labels.contains(&"Sma(20)".to_string()));
+    }
+
+    #[test]
+    fn removing_an_unknown_indicator_is_an_error() {
+        let mut terminal = synth_terminal();
+        let Err(err) = terminal.command_json(r#"{"type":"RemoveIndicator","label":"Nope(1)"}"#)
+        else {
+            panic!("removing an untracked indicator should fail");
+        };
+        assert!(err.to_string().contains("Nope(1)"), "{err}");
+    }
+
+    #[test]
+    fn adding_the_same_indicator_twice_is_an_error() {
+        let mut terminal = synth_terminal();
+        let Err(err) =
+            terminal.command_json(r#"{"type":"AddIndicator","spec":{"kind":"Sma","params":[20]}}"#)
+        else {
+            panic!("a duplicate label should be rejected");
+        };
+        assert!(err.to_string().contains("already tracked"), "{err}");
+    }
+
+    #[test]
+    fn adding_an_unknown_indicator_is_an_error_and_changes_nothing() {
+        let mut terminal = synth_terminal();
+        let before = chart_indicator_labels(&terminal.command_json(TICK).unwrap());
+        assert!(terminal
+            .command_json(r#"{"type":"AddIndicator","spec":{"kind":"NotReal","params":[]}}"#)
+            .is_err());
+        let after = chart_indicator_labels(&terminal.command_json(TICK).unwrap());
+        assert_eq!(
+            before, after,
+            "a rejected spec must leave the set untouched"
+        );
+    }
+
+    #[test]
+    fn list_indicators_answers_with_the_catalogue() {
+        let mut terminal = synth_terminal();
+        let json = terminal
+            .command_json(r#"{"type":"ListIndicators"}"#)
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let rows = value["indicators"].as_array().expect("an indicators array");
+        assert_eq!(rows.len(), registry::DEFAULTS.len());
+        assert!(
+            value.get("panels").is_none(),
+            "the catalogue is not a frame"
+        );
+
+        // Every row must be directly constructible, which is the point of
+        // carrying the parameters alongside the name.
+        let sma = rows
+            .iter()
+            .find(|r| r["kind"] == "Sma")
+            .expect("Sma in the catalogue");
+        assert_eq!(sma["params"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn an_added_indicator_survives_into_the_config() {
+        let mut terminal = synth_terminal();
+        terminal
+            .command_json(r#"{"type":"AddIndicator","spec":{"kind":"Rsi","params":[14]}}"#)
+            .unwrap();
+        assert!(terminal.config().indicators.iter().any(|s| s.kind == "Rsi"));
+        terminal
+            .command_json(r#"{"type":"RemoveIndicator","label":"Rsi(14)"}"#)
+            .unwrap();
+        assert!(!terminal.config().indicators.iter().any(|s| s.kind == "Rsi"));
+    }
+
+    #[test]
+    fn an_indicator_added_before_a_market_opens_reaches_it() {
+        let mut config = Config::default_layout();
+        config.sources = vec![SourceSpec::Synth { seed: 1 }];
+        let mut terminal = Terminal::new(&config).unwrap();
+        // Added while no market is subscribed, so it can only reach the market
+        // through the config set rather than through an existing SymbolState.
+        terminal
+            .command_json(r#"{"type":"AddIndicator","spec":{"kind":"Rsi","params":[14]}}"#)
+            .unwrap();
+        terminal
+            .command_json(r#"{"type":"Subscribe","source":0,"symbol":"BTC/USDT"}"#)
+            .unwrap();
+        let labels = chart_indicator_labels(&terminal.command_json(TICK).unwrap());
+        assert!(labels.contains(&"Rsi(14)".to_string()), "got {labels:?}");
     }
 }

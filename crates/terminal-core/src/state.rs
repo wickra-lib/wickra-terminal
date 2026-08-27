@@ -15,7 +15,7 @@ use wickra_exchange_core::{BookDelta, BookLevel, Event, OrderBookSnapshot, Order
 
 use crate::candle::{CandleBuilder, Timeframe};
 use crate::config::IndicatorSpec;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::registry::{self, TickIndicator, TickInput};
 use crate::source::{DataSource, SourceId, Symbol};
 
@@ -230,6 +230,28 @@ impl IndicatorSet {
         Ok(Self { entries })
     }
 
+    /// Add one indicator, which starts cold and warms up from the next tick.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Config`] naming the spec if the registry rejects it.
+    pub fn push(&mut self, spec: &IndicatorSpec) -> Result<()> {
+        self.entries.push(IndicatorEntry {
+            label: spec.label(),
+            indicator: registry::build(&spec.kind, &spec.params)?,
+            last: None,
+            fields: Vec::new(),
+        });
+        Ok(())
+    }
+
+    /// Drop the indicator with this label. Returns whether one was removed.
+    pub fn remove(&mut self, label: &str) -> bool {
+        let before = self.entries.len();
+        self.entries.retain(|entry| entry.label != label);
+        self.entries.len() != before
+    }
+
     /// Feed one tick into every indicator.
     pub fn update(&mut self, input: &TickInput) {
         for entry in &mut self.entries {
@@ -400,6 +422,58 @@ impl AppState {
             | Event::Disconnected
             | Event::Reconnected => {}
         }
+    }
+
+    /// Fresh state for a market, carrying the indicator set and bar size this
+    /// terminal was configured with.
+    ///
+    /// `expect` rather than a fallback, for the same reason `fold` does: every
+    /// spec in `self.indicators` was accepted by the registry before it got
+    /// there, so this cannot fail, and a silent default would open a market with
+    /// the wrong indicators rather than none at all.
+    #[must_use]
+    pub fn fresh_market(&self) -> SymbolState {
+        SymbolState::new(&self.indicators, self.timeframe)
+            .expect("indicator specs are validated before they reach the state")
+    }
+
+    /// Track one more indicator on every market, now and for markets opened later.
+    ///
+    /// It starts cold: a market that has been running keeps its history, but the
+    /// new indicator warms up from the next tick, because the inputs it missed
+    /// are gone. Re-adding a label that is already tracked is rejected rather
+    /// than silently duplicating a row in the chart panel.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Config`] if the registry rejects the spec, or if this
+    /// label is already tracked.
+    pub fn add_indicator(&mut self, spec: &IndicatorSpec) -> Result<()> {
+        let label = spec.label();
+        if self.indicators.iter().any(|s| s.label() == label) {
+            return Err(Error::Config(format!("indicator already tracked: {label}")));
+        }
+        // Build once before mutating anything, so a rejected spec cannot leave
+        // some markets updated and others not.
+        registry::build(&spec.kind, &spec.params)?;
+        for state in self.symbols.values_mut() {
+            state.indicators.push(spec)?;
+        }
+        self.indicators.push(spec.clone());
+        Ok(())
+    }
+
+    /// Stop tracking the indicator with this label. Returns whether one matched.
+    pub fn remove_indicator(&mut self, label: &str) -> bool {
+        let known = self.indicators.iter().any(|s| s.label() == label);
+        if !known {
+            return false;
+        }
+        self.indicators.retain(|s| s.label() != label);
+        for state in self.symbols.values_mut() {
+            state.indicators.remove(label);
+        }
+        true
     }
 
     /// Poll every source and fold what they yield. Returns the number of events
