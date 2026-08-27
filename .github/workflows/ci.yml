@@ -519,6 +519,11 @@ jobs:
     name: Coverage
     runs-on: ubuntu-latest
     timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
+    env:
+      # Lifted to job level so the upload step can test for it. A repository
+      # without the secret must not report a green coverage job that uploaded
+      # nothing.
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -550,12 +555,18 @@ jobs:
           -p terminal-core -p wickra-terminal
           --lcov --output-path lcov.info
       - name: Upload to Codecov
+        if: env.CODECOV_TOKEN != ''
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           files: lcov.info
           fail_ci_if_error: false
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Report a missing Codecov token
+        if: env.CODECOV_TOKEN == ''
+        run: >
+          echo "::warning::CODECOV_TOKEN is not set for this repository, so the
+          coverage report was generated but never uploaded. The README badge and
+          the codecov/patch status stay empty until the secret is added."
 
   fuzz-smoke:
     name: Fuzz (smoke)
