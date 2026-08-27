@@ -726,7 +726,20 @@ jobs:
   github-release:
     name: Attach assets to the draft GitHub Release
     timeout-minutes: 45
-    needs: [cargo-publish, python-publish, node-publish, wasm-publish, tui-binaries, c-abi-build]
+    # Every publish job gates the release. A release that appeared while NuGet,
+    # Maven Central or the Go mirror had failed would claim ten language surfaces
+    # while shipping seven, and the missing three would be the quiet kind of
+    # missing: no red check on the release itself, just absent artifacts.
+    needs:
+      - cargo-publish
+      - python-publish
+      - node-publish
+      - wasm-publish
+      - tui-binaries
+      - c-abi-build
+      - csharp-publish
+      - java-publish
+      - go-mirror
     runs-on: ubuntu-latest
     permissions:
       contents: write
