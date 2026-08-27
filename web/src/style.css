@@ -50,40 +50,29 @@ body {
   cursor: pointer;
 }
 
+/*
+ * The layout is data: every panel carries a RectSpec in percent, and the config
+ * can place them anywhere. A grid template can only express a layout that
+ * decomposes into rows and columns, so the previous fixed template made four of
+ * the five panels unmovable and the fifth impossible to remove -- the rects were
+ * sent to the core and then ignored by the DOM. Absolute percentages map the
+ * spec directly, the same way the TUI maps it onto a Rect.
+ */
 .grid {
   flex: 1;
-  display: grid;
-  grid-template-columns: 70% 30%;
-  grid-template-rows: 35% 35% 30%;
-  grid-template-areas:
-    "chart book"
-    "chart footprint"
-    "watchlist tape";
-  gap: 1px;
+  position: relative;
   background: #1f2937;
   overflow: hidden;
 }
 
-.chart {
-  grid-area: chart;
-}
-.book {
-  grid-area: book;
-}
-.footprint {
-  grid-area: footprint;
-}
-.tape {
-  grid-area: tape;
-}
-.watchlist {
-  grid-area: watchlist;
-}
-
 .panel {
+  position: absolute;
   background: #0b0e14;
   padding: 8px;
   overflow: auto;
+  /* The 1px inset is what the grid gap used to draw. */
+  border: 1px solid #1f2937;
+  box-sizing: border-box;
 }
 
 .panel h2 {

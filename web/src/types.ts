@@ -2,9 +2,20 @@
 // enum is internally tagged by `panel`, with the variant's struct fields
 // flattened alongside the tag.
 
+export interface IndicatorField {
+  name: string
+  value: number
+}
+
 export interface IndicatorValue {
   name: string
+  /** The primary value, or null while warming up. For a multi-output indicator
+   *  this is its first field. */
   value: number | null
+  /** Named outputs of a multi-output indicator, in declaration order. Absent
+   *  entirely for single-output ones -- the core omits an empty list from the
+   *  JSON, so this is optional rather than an empty array. */
+  fields?: IndicatorField[]
 }
 
 export interface ChartView {
@@ -68,4 +79,23 @@ export type PanelView =
 
 export interface Frame {
   panels: PanelView[]
+}
+
+// The config side of the boundary. These mirror terminal-core's `RectSpec` and
+// `PanelSpec`: the layout is data, and this renderer reads it rather than
+// hard-coding a shape the config cannot change.
+
+/** A panel rectangle in percent of the viewport. */
+export interface RectSpec {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+export type PanelKind = 'Chart' | 'Book' | 'Tape' | 'Watchlist' | 'Footprint'
+
+export interface PanelSpec {
+  kind: PanelKind
+  rect: RectSpec
 }
