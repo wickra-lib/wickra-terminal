@@ -85,7 +85,22 @@ similar_names = "allow"
 many_single_char_names = "allow"
 
 [profile.release]
-# Panics must never unwind across the C ABI boundary (undefined behaviour):
-# abort instead. Applies to the distributed cdylib/staticlib release builds;
-# `cargo test` uses the dev/test profile, which keeps unwinding.
-panic = "abort"
+# Unwind, not abort. Half of the old reasoning here was right -- unwinding out of
+# an `extern "C"` function is undefined behaviour -- but abort is the wrong answer
+# to it, because the fix is to catch the panic before it reaches the boundary, and
+# aborting is what stops that from being possible.
+#
+# The bindings are workspace members, and Cargo refuses `panic` in a per-package
+# profile override ("`panic` may not be specified in a `package` profile"), so
+# whatever is set here is what the Python, Node, WASM and C ABI cdylibs are built
+# with. `bindings/c/src/lib.rs` wraps every entry point in `catch_unwind` and
+# turns a panic into a null handle or `WICKRA_TERMINAL_ERR`; pyo3 and napi do the
+# same thing to raise a language-level exception. Under `abort` none of that
+# machinery can run: a panic anywhere in the core kills the host process -- the
+# Python interpreter, the Node process, the C caller -- instead of surfacing as an
+# error the caller can handle.
+#
+# The old setting was invisible in CI as well: `cargo test -p wickra-terminal-c`
+# uses the test profile, which unwinds, so those guards were exercised in a
+# configuration that was never shipped.
+panic = "unwind"
