@@ -33,7 +33,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # The Live source's #[ignore] test opens a real HTTP + WebSocket connection
       # to a public venue and folds a few streamed events; run it here, not on
       # every push.
