@@ -34,12 +34,18 @@ add_executable(terminal terminal.cpp)
 target_include_directories(terminal PRIVATE "${WICKRA_TERMINAL_INCLUDE}")
 target_link_libraries(terminal PRIVATE "${WICKRA_TERMINAL_LIB}")
 
+# Cross-language golden parity, so the C ABI hub is held to the same corpus as
+# the eight language surfaces that sit on it.
+add_executable(golden golden.c)
+target_include_directories(golden PRIVATE "${WICKRA_TERMINAL_INCLUDE}")
+target_link_libraries(golden PRIVATE "${WICKRA_TERMINAL_LIB}")
+
 # On Windows the runtime DLL must sit next to the executable (there is no
 # rpath); without it the loader pops a modal "DLL not found" dialog that hangs
 # ctest. Copy it next to each example after build. (Unix resolves the .so/.dylib
 # via the linker's embedded path, so this is Windows-only.)
 if(WIN32)
-    foreach(example synth terminal)
+    foreach(example synth terminal golden)
         add_custom_command(TARGET ${example} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${WICKRA_TERMINAL_LIB_DIR}/wickra_terminal.dll"
@@ -51,5 +57,8 @@ endif()
 enable_testing()
 add_test(NAME synth COMMAND synth)
 add_test(NAME terminal COMMAND terminal)
+# The golden test walks up from its working directory to find golden/, so run it
+# from the repository root rather than the build tree.
+add_test(NAME golden COMMAND golden WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 # A missing runtime dependency must fail fast, never block the runner for hours.
-set_tests_properties(synth terminal PROPERTIES TIMEOUT 60)
+set_tests_properties(synth terminal golden PROPERTIES TIMEOUT 60)
