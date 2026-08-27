@@ -38,6 +38,39 @@ updates:
       node-binding:
         patterns: ["*"]
 
+  # The Node example has its own package.json + package-lock.json, so it needs
+  # its own entry — a lock file nothing watches is a lock file that rots.
+  - package-ecosystem: npm
+    directory: "/examples/node"
+    schedule:
+      interval: monthly
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 10
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "deps(npm)"
+    groups:
+      node-example:
+        patterns: ["*"]
+
+  # The Go example carries its own go.mod, separate from the binding's.
+  - package-ecosystem: gomod
+    directory: "/examples/go"
+    schedule:
+      interval: monthly
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 10
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "deps(gomod)"
+    groups:
+      go-example:
+        patterns: ["*"]
+
   # Web renderer (Vue/Vite) npm dependencies.
   - package-ecosystem: npm
     directory: "/web"
