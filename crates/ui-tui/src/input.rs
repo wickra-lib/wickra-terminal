@@ -9,7 +9,7 @@ use terminal_core::Keybinds;
 
 /// A resolved user intent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Action {
+pub(crate) enum Action {
     /// Quit the terminal.
     Quit,
     /// Focus the next panel.
@@ -35,7 +35,7 @@ pub enum Action {
 /// The config key-name for a physical key code (the spelling used in
 /// [`Keybinds`]), or `None` for keys with no name.
 #[must_use]
-pub fn key_name(code: KeyCode) -> Option<String> {
+pub(crate) fn key_name(code: KeyCode) -> Option<String> {
     match code {
         KeyCode::Char(c) => Some(c.to_ascii_lowercase().to_string()),
         KeyCode::Tab => Some("tab".to_string()),
@@ -52,7 +52,7 @@ pub fn key_name(code: KeyCode) -> Option<String> {
 
 /// Resolve a key event to an action using the config keymap.
 #[must_use]
-pub fn map_key(key: KeyEvent, binds: &Keybinds) -> Action {
+pub(crate) fn map_key(key: KeyEvent, binds: &Keybinds) -> Action {
     let Some(name) = key_name(key.code) else {
         return Action::None;
     };

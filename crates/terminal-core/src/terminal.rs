@@ -147,6 +147,18 @@ pub struct Terminal {
     next_source_id: SourceId,
 }
 
+impl std::fmt::Debug for Terminal {
+    /// `panels` is a vector of trait objects, so it is reported by count.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Terminal")
+            .field("state", &self.state)
+            .field("config", &self.config)
+            .field("panels", &self.panels.len())
+            .field("next_source_id", &self.next_source_id)
+            .finish()
+    }
+}
+
 impl Terminal {
     /// Build a terminal from a config: open its sources, auto-subscribe each
     /// `Live` source's configured market, and build the panel layout.

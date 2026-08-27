@@ -14,7 +14,7 @@ const LEVELS: [char; 8] = [
 /// Render a price series as a single-line block sparkline, using at most `width`
 /// of the most recent points.
 #[must_use]
-pub fn sparkline(series: &[f64], width: usize) -> String {
+pub(crate) fn sparkline(series: &[f64], width: usize) -> String {
     if series.is_empty() || width == 0 {
         return String::new();
     }
@@ -32,7 +32,7 @@ pub fn sparkline(series: &[f64], width: usize) -> String {
 }
 
 /// Render the chart panel.
-pub fn render(frame: &mut Frame, area: Rect, view: &ChartView, focused: bool) {
+pub(crate) fn render(frame: &mut Frame, area: Rect, view: &ChartView, focused: bool) {
     let inner_width = usize::from(area.width.saturating_sub(2));
     let spark = sparkline(&view.series, inner_width);
     let indicators = view

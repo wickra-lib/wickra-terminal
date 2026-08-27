@@ -5,7 +5,9 @@
 //   javac -cp bindings/java/target/classes examples/java/SynthTerminal.java -d examples/java/out
 //   java --enable-native-access=ALL-UNNAMED \
 //        -Dnative.lib.dir=target/debug \
-//        -cp "bindings/java/target/classes;examples/java/out" SynthTerminal
+//        -cp "bindings/java/target/classes:examples/java/out" SynthTerminal
+//
+//   The classpath separator is `:` on Linux and macOS and `;` on Windows.
 import org.wickra.terminal.Terminal;
 
 public final class SynthTerminal {

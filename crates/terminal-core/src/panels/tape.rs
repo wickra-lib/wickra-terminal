@@ -12,6 +12,7 @@ use wickra_exchange_core::OrderSide;
 const TAPE_ROWS: usize = DEFAULT_DEPTH * 2;
 
 /// A rolling time-and-sales tape for the focused market.
+#[derive(Debug)]
 pub struct TapePanel;
 
 impl Panel for TapePanel {

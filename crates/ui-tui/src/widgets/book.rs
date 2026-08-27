@@ -12,7 +12,7 @@ fn level_line(level: &Level) -> String {
 }
 
 /// Render the order-book panel.
-pub fn render(frame: &mut Frame, area: Rect, view: &BookView, focused: bool) {
+pub(crate) fn render(frame: &mut Frame, area: Rect, view: &BookView, focused: bool) {
     let mut lines: Vec<Line> = Vec::new();
     // Asks worst-first so the best ask sits just above the spread line.
     for level in view.asks.iter().rev() {

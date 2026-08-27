@@ -285,7 +285,22 @@ pub struct IndicatorReading {
     pub series: Vec<f64>,
 }
 
+impl std::fmt::Debug for IndicatorEntry {
+    /// The indicator itself is a trait object with no `Debug` bound, so the
+    /// label stands in for it -- it is what identifies the row everywhere else
+    /// -- and the series is reported by length rather than dumped.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IndicatorEntry")
+            .field("label", &self.label)
+            .field("last", &self.last)
+            .field("fields", &self.fields)
+            .field("series", &self.series.len())
+            .finish_non_exhaustive()
+    }
+}
+
 /// The set of indicators tracked for a symbol.
+#[derive(Debug)]
 pub struct IndicatorSet {
     entries: Vec<IndicatorEntry>,
 }
@@ -421,6 +436,7 @@ impl Default for IndicatorSet {
 }
 
 /// All state for a single market on a single source.
+#[derive(Debug)]
 pub struct SymbolState {
     /// The local L2 order book.
     pub book: BookState,
@@ -505,6 +521,21 @@ pub struct AppState {
     pub indicators: Vec<IndicatorSpec>,
     /// The bar size the candle-input indicators are fed at.
     pub timeframe: Timeframe,
+}
+
+impl std::fmt::Debug for AppState {
+    /// `sources` is a vector of trait objects, so it is reported by count; the
+    /// rest of the state is what a reader is actually after.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppState")
+            .field("sources", &self.sources.len())
+            .field("symbols", &self.symbols)
+            .field("focus", &self.focus)
+            .field("watchlist", &self.watchlist)
+            .field("indicators", &self.indicators)
+            .field("timeframe", &self.timeframe)
+            .finish()
+    }
 }
 
 impl AppState {
@@ -895,8 +926,7 @@ mod tests {
     #[test]
     fn an_unknown_indicator_spec_is_rejected_by_name() {
         let err = IndicatorSet::from_specs(&[IndicatorSpec::new("NotReal", vec![])])
-            .err()
-            .expect("an unknown indicator must be rejected")
+            .expect_err("an unknown indicator must be rejected")
             .to_string();
         assert!(
             err.contains("NotReal"),

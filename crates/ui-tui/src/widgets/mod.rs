@@ -4,11 +4,11 @@
 //! renderer never inspects state; it only maps the core's view-models to
 //! ratatui, which is exactly what makes the TUI one interchangeable renderer.
 
-pub mod book;
-pub mod chart;
-pub mod footprint;
-pub mod tape;
-pub mod watchlist;
+pub(crate) mod book;
+pub(crate) mod chart;
+pub(crate) mod footprint;
+pub(crate) mod tape;
+pub(crate) mod watchlist;
 
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -22,7 +22,7 @@ use terminal_core::PanelView;
 /// keybinds that move it are indistinguishable from keybinds that do nothing —
 /// which is what `tab` and `backtab` were until now.
 #[must_use]
-pub fn panel_block(title: String, focused: bool) -> Block<'static> {
+pub(crate) fn panel_block(title: String, focused: bool) -> Block<'static> {
     let block = Block::bordered().title(title);
     if focused {
         block.border_style(Style::new().cyan().bold())
@@ -32,7 +32,7 @@ pub fn panel_block(title: String, focused: bool) -> Block<'static> {
 }
 
 /// Render one panel's view-model into `area`.
-pub fn render_panel(frame: &mut Frame, area: Rect, panel: &PanelView, focused: bool) {
+pub(crate) fn render_panel(frame: &mut Frame, area: Rect, panel: &PanelView, focused: bool) {
     match panel {
         PanelView::Chart(view) => chart::render(frame, area, view, focused),
         PanelView::Book(view) => book::render(frame, area, view, focused),

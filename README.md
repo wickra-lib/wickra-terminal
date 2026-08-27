@@ -56,7 +56,7 @@ is actually about.
   a canvas and some tables, and neither can diverge in behaviour because neither
   has any.
 - **The boundary is data, not an API.** A config JSON in, a command JSON in, a
-  frame JSON out. That is why 460 indicators became reachable from ten languages
+  frame JSON out. That is why <!--indicator-count-->460<!--/indicator-count--> indicators became reachable from ten languages
   without a line of binding code, and why a third renderer needs no core change.
 - **One core, checked across ten languages.** Not "ports that should agree" — one
   Rust core behind a C ABI, with every binding asserting the same recorded feed
@@ -100,7 +100,20 @@ cargo run -p wickra-terminal -- --source live:binance:BTC/USDT
 
 # Or a deterministic synthetic feed (no network):
 cargo run -p wickra-terminal -- --source synth:1
+
+# Or replay a recorded feed. `replay:` takes the JSON itself, not a path, so
+# a recorded file is passed through the shell:
+cargo run -p wickra-terminal -- --source "replay:$(cat golden/replay/basic.json)"
+
+# Anything beyond one source -- panels, indicators, timeframe -- comes from a
+# config file, which overrides `--source`:
+cargo run -p wickra-terminal -- --config my-terminal.toml
 ```
+
+The three `--source` shorthands are `synth:<seed>`, `live:<venue>:<BASE/QUOTE>`
+and `replay:<json>` — the last one taking the recorded events inline rather than
+a filename. See [docs/SOURCES.md](docs/SOURCES.md) for what each one does and
+[docs/Cookbook.md](docs/Cookbook.md) for worked config files.
 
 ## Renderers
 
@@ -119,7 +132,7 @@ Both consume the identical `Frame` of view-models from `terminal-core`.
 > commands here are what they will be.
 
 ```bash
-cargo add wickra-terminal                    # Rust
+cargo install wickra-terminal                # Rust (the TUI binary)
 pip install wickra-terminal                  # Python
 npm install wickra-terminal                  # Node.js
 dotnet add package WickraTerminal            # C# / .NET
@@ -175,7 +188,7 @@ laptop, single-threaded, with the default two-indicator overlay:
 A full tick costs about ten microseconds, so the core sustains tens of thousands
 of frames per second — far above any renderer's budget, which is the point of the
 O(1) fold. The indicator count is a direct multiplier: those numbers are two
-indicators, and the registry offers 460. See [BENCHMARKS.md](BENCHMARKS.md).
+indicators, and the registry offers <!--indicator-count-->460<!--/indicator-count-->. See [BENCHMARKS.md](BENCHMARKS.md).
 
 ## Project layout
 
@@ -242,7 +255,7 @@ run it through the C ABI under ctest. Ten languages, one file: that is what make
 
 Alongside it: property tests over the fold invariants, four `cargo-fuzz` targets
 across the parsing paths, a conformance suite pinning the trait shapes, a
-registry suite that constructs and drives all 460 indicators, and a test that
+registry suite that constructs and drives all <!--indicator-count-->460<!--/indicator-count--> indicators, and a test that
 extracts every example from this README and the docs and runs it.
 
 ```bash
@@ -252,7 +265,9 @@ python scripts/check_binding_surface.py     # every binding matches the C ABI he
 
 ## Requirements
 
-- **Rust** ≥ 1.86 (workspace MSRV; the Node binding needs ≥ 1.88).
+- **Rust** ≥ 1.88 to build the `wickra-terminal` TUI (ratatui pulls
+  `instability`/`darling`), and to build the Node binding. The library crate
+  `terminal-core` keeps the workspace MSRV of ≥ 1.86.
 - Renderer/binding toolchains as needed: Node ≥ 22, Python ≥ 3.9, a C toolchain,
   .NET 8, JDK 22+, Go 1.23, R — see each `bindings/<lang>/README.md`.
 

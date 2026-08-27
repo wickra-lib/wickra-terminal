@@ -9,6 +9,7 @@ use crate::view::{PanelView, WatchRow, WatchlistView};
 
 /// A multi-market watchlist. Unlike the other panels it spans every tracked
 /// market, not just the focused one, so it ignores `focus`.
+#[derive(Debug)]
 pub struct WatchlistPanel;
 
 impl Panel for WatchlistPanel {
