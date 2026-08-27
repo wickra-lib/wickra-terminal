@@ -1,6 +1,6 @@
 # Architecture
 
-`wickra-terminal` is **one product with a selectable renderer**. A single
+`wickra-terminal` is **one core with two renderers**. A single
 data-driven core (`terminal-core`) folds market events into state and emits
 view-models; two reference front-ends render those view-models — a native TUI
 (ratatui) and a Web app (WASM + Vue). They are separate programs over one

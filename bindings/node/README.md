@@ -11,7 +11,7 @@
 
 ---
 
-> **▶ Web renderer:** the same core drives a browser front-end (WASM + Vue) as a selectable renderer — see [`web/`](https://github.com/wickra-lib/wickra-terminal/tree/main/web).
+> **▶ Web renderer:** the same core drives a browser front-end (WASM + Vue) as a second renderer — see [`web/`](https://github.com/wickra-lib/wickra-terminal/tree/main/web).
 
 Node.js bindings for the [wickra-terminal](https://github.com/wickra-lib/wickra-terminal) data-driven core, built with
 napi-rs. Build a `Terminal` from a JSON config, drive it with command JSON, read
@@ -75,7 +75,7 @@ the Rust surface must be rebuilt and committed with it.
 
 ## The command protocol
 
-Every binding drives the same eight commands, and the frame that comes back is
+Every binding drives the same twelve commands, and the frame that comes back is
 the same JSON in all of them:
 
 | Command | Effect |
@@ -86,6 +86,13 @@ the same JSON in all of them:
 | `AddSource` / `RemoveSource` | Attach or detach a feed at run time |
 | `Seek` | Rewind or fast-forward a replay source (the time machine) |
 | `Feed` | Hand an event to a `Manual` source from the host |
+| `AddIndicator` / `RemoveIndicator` | Track or drop an indicator on every market |
+| `SetTimeframe` | Set the bar size the candle-input indicators are fed at |
+| `ListIndicators` | The catalogue: every registry name with its default parameters |
+
+`ListIndicators` is the one command that answers rather than renders, and each
+row carries `needs_reference`, which marks the pairwise indicators that compare
+two markets and so require a `reference` symbol in their spec.
 
 A frame is `{"panels": [...]}`, one entry per configured panel, each tagged with
 its `panel` kind — `chart`, `book`, `tape`, `watchlist`, `footprint`. See
