@@ -1,0 +1,13 @@
+# Build and test tooling for the Python binding's CI job.
+#
+# Pinned rather than installed unversioned, so a CI run is reproducible and a
+# tool release cannot change what the job does without a commit saying so.
+# It lives here rather than inline in the workflow because dependabot watches
+# pip in this directory and does not read workflow files, so an inline pin would
+# quietly rot while looking maintained.
+maturin==1.15.0
+# pytest 8.4.x, not 9.x: the CI matrix includes Python 3.9 (the abi3 floor the
+# wheel is built against) and pytest 9 requires >= 3.10. 8.4.2 covers 3.9 through
+# 3.14, so every cell of the matrix runs the identical test runner. Raise it only
+# when the matrix floor moves off 3.9.
+pytest==8.4.2

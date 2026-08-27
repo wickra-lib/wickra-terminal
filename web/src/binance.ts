@@ -10,26 +10,60 @@ export interface FeedEvent {
   [field: string]: unknown
 }
 
-interface BinanceTrade {
+export interface BinanceTrade {
   p: string
   q: string
   m: boolean
   T: number
 }
 
-interface BinanceDepth {
+export interface BinanceDepth {
   lastUpdateId: number
   bids: [string, string][]
   asks: [string, string][]
 }
 
-interface StreamMessage {
+export interface StreamMessage {
   stream: string
   data: BinanceTrade | BinanceDepth
 }
 
 function level(pair: [string, string]): { price: string; quantity: string } {
   return { price: pair[0], quantity: pair[1] }
+}
+
+/**
+ * Map one Binance stream message onto the core's `Event` JSON.
+ *
+ * Pure, and separate from the socket, so the mapping can be tested without
+ * opening one. That matters most for `aggressor`: Binance reports whether the
+ * *buyer* was the maker, so a true flag means the taker was the seller. Getting
+ * that backwards inverts every buy and sell in the tape and the footprint, and
+ * nothing about the resulting chart looks wrong.
+ */
+export function binanceEvent(
+  message: StreamMessage,
+  symbol: { base: string; quote: string },
+): FeedEvent {
+  if (message.stream.endsWith('@trade')) {
+    const trade = message.data as BinanceTrade
+    return {
+      type: 'trade',
+      symbol,
+      price: trade.p,
+      quantity: trade.q,
+      aggressor: trade.m ? 'Sell' : 'Buy',
+      timestamp: trade.T,
+    }
+  }
+  const depth = message.data as BinanceDepth
+  return {
+    type: 'book_snapshot',
+    symbol,
+    last_update_id: depth.lastUpdateId,
+    bids: depth.bids.map(level),
+    asks: depth.asks.map(level),
+  }
 }
 
 // Open a Binance trade + partial-book stream for `symbol` (in BASE/QUOTE form)
@@ -45,29 +79,7 @@ export function openBinanceFeed(symbol: string, feed: (event: FeedEvent) => void
   const ws = new WebSocket(url)
 
   ws.onmessage = (msg: MessageEvent<string>) => {
-    const parsed = JSON.parse(msg.data) as StreamMessage
-    if (parsed.stream.endsWith('@trade')) {
-      const trade = parsed.data as BinanceTrade
-      feed({
-        type: 'trade',
-        symbol: sym,
-        price: trade.p,
-        quantity: trade.q,
-        // Binance flags whether the buyer is the maker; if so the aggressor is
-        // the seller, otherwise the buyer.
-        aggressor: trade.m ? 'Sell' : 'Buy',
-        timestamp: trade.T,
-      })
-    } else {
-      const depth = parsed.data as BinanceDepth
-      feed({
-        type: 'book_snapshot',
-        symbol: sym,
-        last_update_id: depth.lastUpdateId,
-        bids: depth.bids.map(level),
-        asks: depth.asks.map(level),
-      })
-    }
+    feed(binanceEvent(JSON.parse(msg.data) as StreamMessage, sym))
   }
 
   return () => {

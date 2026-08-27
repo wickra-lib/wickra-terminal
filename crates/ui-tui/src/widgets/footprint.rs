@@ -3,12 +3,12 @@
 use ratatui::layout::Rect;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use terminal_core::view::FootprintView;
 
 /// Render the footprint panel.
-pub fn render(frame: &mut Frame, area: Rect, view: &FootprintView) {
+pub fn render(frame: &mut Frame, area: Rect, view: &FootprintView, focused: bool) {
     let lines: Vec<Line> = view
         .levels
         .iter()
@@ -26,7 +26,10 @@ pub fn render(frame: &mut Frame, area: Rect, view: &FootprintView) {
         })
         .collect();
     frame.render_widget(
-        Paragraph::new(lines).block(Block::bordered().title(format!("Footprint {}", view.symbol))),
+        Paragraph::new(lines).block(super::panel_block(
+            format!("Footprint {}", view.symbol),
+            focused,
+        )),
         area,
     );
 }

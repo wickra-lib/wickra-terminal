@@ -3,12 +3,12 @@
 use ratatui::layout::Rect;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use terminal_core::view::TapeView;
 
 /// Render the tape panel.
-pub fn render(frame: &mut Frame, area: Rect, view: &TapeView) {
+pub fn render(frame: &mut Frame, area: Rect, view: &TapeView, focused: bool) {
     let lines: Vec<Line> = view
         .prints
         .iter()
@@ -25,7 +25,7 @@ pub fn render(frame: &mut Frame, area: Rect, view: &TapeView) {
         })
         .collect();
     frame.render_widget(
-        Paragraph::new(lines).block(Block::bordered().title(format!("Tape {}", view.symbol))),
+        Paragraph::new(lines).block(super::panel_block(format!("Tape {}", view.symbol), focused)),
         area,
     );
 }

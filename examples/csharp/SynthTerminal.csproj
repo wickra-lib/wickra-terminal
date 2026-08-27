@@ -12,14 +12,33 @@
     <ProjectReference Include="../../bindings/csharp/WickraTerminal/WickraTerminal.csproj" />
   </ItemGroup>
 
+  <!--
+    Prefer a release build of the C ABI and fall back to debug, so the example
+    runs after either the release build examples/README.md documents or a plain
+    debug `cargo build` of the wickra-terminal-c package. Picking one directory
+    rather than globbing both also keeps two copies of the same library from
+    claiming the same Link name.
+
+    (XML comments cannot contain a double hyphen, which is why the cargo
+    invocations are described rather than quoted.)
+  -->
+  <PropertyGroup>
+    <WickraNativeDir>../../target/release</WickraNativeDir>
+    <WickraNativeDir Condition="!Exists('../../target/release/wickra_terminal.dll') And !Exists('../../target/release/libwickra_terminal.so') And !Exists('../../target/release/libwickra_terminal.dylib')">../../target/debug</WickraNativeDir>
+  </PropertyGroup>
+
   <!-- Copy the native C ABI library next to the example so P/Invoke finds it. -->
   <ItemGroup>
-    <Content Include="../../target/release/wickra_terminal.dll" Condition="Exists('../../target/release/wickra_terminal.dll')">
+    <Content Include="$(WickraNativeDir)/wickra_terminal.dll" Condition="Exists('$(WickraNativeDir)/wickra_terminal.dll')">
       <Link>wickra_terminal.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="../../target/release/libwickra_terminal.so" Condition="Exists('../../target/release/libwickra_terminal.so')">
+    <Content Include="$(WickraNativeDir)/libwickra_terminal.so" Condition="Exists('$(WickraNativeDir)/libwickra_terminal.so')">
       <Link>libwickra_terminal.so</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="$(WickraNativeDir)/libwickra_terminal.dylib" Condition="Exists('$(WickraNativeDir)/libwickra_terminal.dylib')">
+      <Link>libwickra_terminal.dylib</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

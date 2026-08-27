@@ -45,6 +45,8 @@ pub struct App {
     pub mode: Mode,
     /// The last status/feedback message.
     pub status: String,
+    /// Which panel of the configured layout is focused, by index.
+    pub focused_panel: usize,
 }
 
 impl App {
@@ -56,8 +58,9 @@ impl App {
             should_quit: false,
             frame: Frame { panels: Vec::new() },
             mode: Mode::Normal,
-            status: "s add source · a add symbol · d unsub · x remove source · ←/→ symbol · q quit"
+            status: "s add source · a add symbol · d unsub · x remove source · ←/→ symbol · tab panel · q quit"
                 .to_string(),
+            focused_panel: 0,
         }
     }
 
@@ -76,8 +79,9 @@ impl App {
             Action::AddSymbol => self.begin_input(InputKind::AddSymbol),
             Action::RemoveSymbol => self.remove_focused_symbol(),
             Action::RemoveSource => self.remove_focused_source(),
-            // Panel focus lands in a later phase; recognised but not yet actioned.
-            Action::NextPanel | Action::PrevPanel | Action::None => {}
+            Action::NextPanel => self.cycle_panel(true),
+            Action::PrevPanel => self.cycle_panel(false),
+            Action::None => {}
         }
     }
 
@@ -210,6 +214,26 @@ impl App {
         }
     }
 
+    /// Move focus to the next/previous panel of the layout.
+    ///
+    /// Panel focus is a renderer concern, not a core one: the core has no notion
+    /// of a focused panel, because every renderer decides for itself what focus
+    /// means to it. Here it is the highlighted border, and which panel a future
+    /// panel-local key would act on.
+    fn cycle_panel(&mut self, forward: bool) {
+        let len = self.terminal.config().layout.panels.len();
+        if len == 0 {
+            return;
+        }
+        self.focused_panel = if forward {
+            (self.focused_panel + 1) % len
+        } else {
+            (self.focused_panel + len - 1) % len
+        };
+        let kind = self.terminal.config().layout.panels[self.focused_panel].kind;
+        self.status = format!("panel {kind:?}");
+    }
+
     /// Move focus to the next/previous watched market.
     fn cycle_symbol(&mut self, forward: bool) {
         let watchlist = self.terminal.state().watchlist.clone();
@@ -314,5 +338,60 @@ mod tests {
         assert_eq!(app.terminal.state().focus, Some((0, eth)));
         app.on_action(Action::PrevSymbol);
         assert_eq!(app.terminal.state().focus, Some((0, btc)));
+    }
+
+    #[test]
+    fn tab_cycles_panel_focus_and_wraps() {
+        let mut app = synth_app();
+        let panels = app.terminal.config().layout.panels.len();
+        assert_eq!(panels, 5, "the default layout should have five panels");
+        assert_eq!(app.focused_panel, 0);
+
+        for expected in 1..panels {
+            app.on_action(Action::NextPanel);
+            assert_eq!(app.focused_panel, expected);
+        }
+        // One more wraps back to the first rather than running off the end.
+        app.on_action(Action::NextPanel);
+        assert_eq!(app.focused_panel, 0);
+    }
+
+    #[test]
+    fn backtab_cycles_the_other_way_and_wraps() {
+        let mut app = synth_app();
+        let panels = app.terminal.config().layout.panels.len();
+        app.on_action(Action::PrevPanel);
+        assert_eq!(
+            app.focused_panel,
+            panels - 1,
+            "backtab from the first wraps"
+        );
+        app.on_action(Action::PrevPanel);
+        assert_eq!(app.focused_panel, panels - 2);
+    }
+
+    #[test]
+    fn cycling_panels_names_the_one_now_focused() {
+        // The status line is the only place a user reads which panel they are on
+        // besides the border, so it has to move with the focus.
+        let mut app = synth_app();
+        app.on_action(Action::NextPanel);
+        let kind = app.terminal.config().layout.panels[app.focused_panel].kind;
+        assert!(
+            app.status.contains(&format!("{kind:?}")),
+            "status {:?} does not name {kind:?}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn cycling_panels_is_a_no_op_with_an_empty_layout() {
+        let mut config = Config::default_layout();
+        config.layout.panels.clear();
+        config.sources = vec![SourceSpec::Synth { seed: 1 }];
+        let mut app = App::new(Terminal::new(&config).unwrap());
+        app.on_action(Action::NextPanel);
+        app.on_action(Action::PrevPanel);
+        assert_eq!(app.focused_panel, 0, "no panels means nothing to focus");
     }
 }

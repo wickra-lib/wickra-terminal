@@ -1,0 +1,46 @@
+{
+  "scenarios": [
+    {
+      "commands": "commands/basic.txt",
+      "config": "configs/basic.json",
+      "expected": "expected/basic.min.json",
+      "name": "basic"
+    },
+    {
+      "commands": "commands/book_deltas.txt",
+      "config": "configs/book_deltas.json",
+      "expected": "expected/book_deltas.min.json",
+      "name": "book_deltas"
+    },
+    {
+      "commands": "commands/footprint.txt",
+      "config": "configs/footprint.json",
+      "expected": "expected/footprint.min.json",
+      "name": "footprint"
+    },
+    {
+      "commands": "commands/indicators.txt",
+      "config": "configs/indicators.json",
+      "expected": "expected/indicators.min.json",
+      "name": "indicators"
+    },
+    {
+      "commands": "commands/pairwise.txt",
+      "config": "configs/pairwise.json",
+      "expected": "expected/pairwise.min.json",
+      "name": "pairwise"
+    },
+    {
+      "commands": "commands/seek.txt",
+      "config": "configs/seek.json",
+      "expected": "expected/seek.min.json",
+      "name": "seek"
+    },
+    {
+      "commands": "commands/multi_source.txt",
+      "config": "configs/multi_source.json",
+      "expected": "expected/multi_source.min.json",
+      "name": "multi_source"
+    }
+  ]
+}

@@ -11,16 +11,33 @@ pub mod tape;
 pub mod watchlist;
 
 use ratatui::layout::Rect;
+use ratatui::style::Style;
+use ratatui::widgets::Block;
 use ratatui::Frame;
 use terminal_core::PanelView;
 
+/// The bordered block every panel draws itself into.
+///
+/// The focused one is highlighted. Focus has to be visible somewhere or the
+/// keybinds that move it are indistinguishable from keybinds that do nothing —
+/// which is what `tab` and `backtab` were until now.
+#[must_use]
+pub fn panel_block(title: String, focused: bool) -> Block<'static> {
+    let block = Block::bordered().title(title);
+    if focused {
+        block.border_style(Style::new().cyan().bold())
+    } else {
+        block
+    }
+}
+
 /// Render one panel's view-model into `area`.
-pub fn render_panel(frame: &mut Frame, area: Rect, panel: &PanelView) {
+pub fn render_panel(frame: &mut Frame, area: Rect, panel: &PanelView, focused: bool) {
     match panel {
-        PanelView::Chart(view) => chart::render(frame, area, view),
-        PanelView::Book(view) => book::render(frame, area, view),
-        PanelView::Tape(view) => tape::render(frame, area, view),
-        PanelView::Watchlist(view) => watchlist::render(frame, area, view),
-        PanelView::Footprint(view) => footprint::render(frame, area, view),
+        PanelView::Chart(view) => chart::render(frame, area, view, focused),
+        PanelView::Book(view) => book::render(frame, area, view, focused),
+        PanelView::Tape(view) => tape::render(frame, area, view, focused),
+        PanelView::Watchlist(view) => watchlist::render(frame, area, view, focused),
+        PanelView::Footprint(view) => footprint::render(frame, area, view, focused),
     }
 }

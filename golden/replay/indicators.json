@@ -1,0 +1,442 @@
+[
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20000",
+    "quantity": "0.10",
+    "aggressor": "Sell",
+    "timestamp": 1
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20003",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 2
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20006",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 3
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20009",
+    "quantity": "0.10",
+    "aggressor": "Sell",
+    "timestamp": 4
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20012",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 5
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20015",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 6
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20018",
+    "quantity": "0.10",
+    "aggressor": "Sell",
+    "timestamp": 7
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20021",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 8
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20024",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 9
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20027",
+    "quantity": "0.10",
+    "aggressor": "Sell",
+    "timestamp": 10
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20030",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 11
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20033",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 12
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20036",
+    "quantity": "0.10",
+    "aggressor": "Sell",
+    "timestamp": 13
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20039",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 14
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20042",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 15
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20045",
+    "quantity": "0.10",
+    "aggressor": "Sell",
+    "timestamp": 16
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20048",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 17
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20051",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 18
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20054",
+    "quantity": "0.10",
+    "aggressor": "Sell",
+    "timestamp": 19
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20057",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 20
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20060",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 21
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20057",
+    "quantity": "0.10",
+    "aggressor": "Sell",
+    "timestamp": 22
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20054",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 23
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20051",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 24
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20048",
+    "quantity": "0.10",
+    "aggressor": "Sell",
+    "timestamp": 25
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20045",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 26
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20042",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 27
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20039",
+    "quantity": "0.10",
+    "aggressor": "Sell",
+    "timestamp": 28
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20036",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 29
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20033",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 30
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20030",
+    "quantity": "0.10",
+    "aggressor": "Sell",
+    "timestamp": 31
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20027",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 32
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20024",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 33
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20021",
+    "quantity": "0.10",
+    "aggressor": "Sell",
+    "timestamp": 34
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20018",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 35
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20015",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 36
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20012",
+    "quantity": "0.10",
+    "aggressor": "Sell",
+    "timestamp": 37
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20009",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 38
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20006",
+    "quantity": "0.10",
+    "aggressor": "Buy",
+    "timestamp": 39
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20003",
+    "quantity": "0.10",
+    "aggressor": "Sell",
+    "timestamp": 40
+  }
+]

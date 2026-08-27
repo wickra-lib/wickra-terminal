@@ -11,9 +11,13 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
-use wickra_core::{Ema, Indicator, Sma};
+use wickra_core as wc;
 use wickra_exchange_core::{BookDelta, BookLevel, Event, OrderBookSnapshot, OrderSide, TradePrint};
 
+use crate::candle::{CandleBuilder, Timeframe};
+use crate::config::IndicatorSpec;
+use crate::error::{Error, Result};
+use crate::registry::{self, TickIndicator, TickInput};
 use crate::source::{DataSource, SourceId, Symbol};
 
 /// A locally maintained L2 order book: price → resting quantity per side.
@@ -54,6 +58,23 @@ impl BookState {
         self.asks.iter().next().map(|(p, q)| (*p, *q))
     }
 
+    /// The book as wickra-core's [`wc::OrderBook`], for the indicators that read
+    /// it, or `None` if this book is not one the core will accept.
+    ///
+    /// `None` rather than an error because a book that is momentarily one-sided
+    /// or crossed is an ordinary thing to see on a live feed between a snapshot
+    /// and the diffs that follow it. The indicators that read the book simply do
+    /// not advance on such a tick, which is the same thing they do while warming
+    /// up; raising here would turn a normal feed hiccup into a dead terminal.
+    #[must_use]
+    pub fn to_core(&self) -> Option<wc::OrderBook> {
+        // Bids reversed: the core wants each side best-first, and a BTreeMap
+        // iterates ascending, which is best-first for asks but not for bids.
+        let bids = levels(self.bids.iter().rev())?;
+        let asks = levels(self.asks.iter())?;
+        wc::OrderBook::new(bids, asks).ok()
+    }
+
     /// The bid/ask spread, or `None` if either side is empty.
     #[must_use]
     pub fn spread(&self) -> Option<Decimal> {
@@ -82,6 +103,48 @@ impl BookState {
 }
 
 /// Insert/remove changed levels into one side of a book.
+/// Build the indicator a spec asks for, pairing it when it names a reference.
+///
+/// A pairwise kind with no reference is rejected by the registry rather than
+/// here, so the error names the indicator and says what it wants.
+fn build_spec(spec: &IndicatorSpec) -> Result<Box<dyn TickIndicator>> {
+    match &spec.reference {
+        Some(reference) => registry::build_paired(&spec.kind, &spec.params, reference),
+        None => registry::build(&spec.kind, &spec.params),
+    }
+}
+
+/// Convert a print into the core's [`wc::Trade`], for the tape indicator family.
+///
+/// `None` if the price or quantity does not survive the move from `Decimal` to
+/// `f64`, or if the core rejects them — a zero or negative print price, which
+/// the core refuses because the measures built on it are ratios.
+fn core_trade(print: &TradePrint) -> Option<wc::Trade> {
+    let side = match print.aggressor {
+        OrderSide::Buy => wc::Side::Buy,
+        OrderSide::Sell => wc::Side::Sell,
+    };
+    wc::Trade::new(
+        print.price.to_f64()?,
+        print.quantity.to_f64()?,
+        side,
+        print.timestamp,
+    )
+    .ok()
+}
+
+/// Convert one side of the book into the core's levels, in the order given.
+///
+/// `None` if any price or size does not survive the move from `Decimal` to
+/// `f64`, or if the core rejects a level. Dropping the whole side rather than
+/// the offending level keeps the book self-consistent: a book missing a level
+/// in the middle would still satisfy the core's ordering checks while quietly
+/// misstating the depth every book indicator reads.
+fn levels<'a>(side: impl Iterator<Item = (&'a Decimal, &'a Decimal)>) -> Option<Vec<wc::Level>> {
+    side.map(|(price, size)| wc::Level::new(price.to_f64()?, size.to_f64()?).ok())
+        .collect()
+}
+
 fn apply_levels(side: &mut BTreeMap<Decimal, Decimal>, changes: &[BookLevel]) {
     for level in changes {
         if level.quantity.is_zero() {
@@ -192,53 +255,168 @@ impl Footprint {
     }
 }
 
-/// One named streaming indicator plus its latest output.
+/// One named indicator plus its latest output.
 struct IndicatorEntry {
-    name: String,
-    indicator: Box<dyn Indicator<Input = f64, Output = f64>>,
+    label: String,
+    indicator: Box<dyn TickIndicator>,
     last: Option<f64>,
+    fields: Vec<(&'static str, f64)>,
+    /// A bounded recent series, for renderers that draw the indicator as a line
+    /// rather than a number.
+    series: VecDeque<f64>,
 }
 
-/// The set of streaming indicators tracked for a symbol's chart panel.
+/// How many recent points each indicator keeps for renderers that draw it as a
+/// line. Matches the chart panel's series length: a longer one would be trimmed
+/// on the way out, a shorter one would leave the overlay short of the price line.
+const INDICATOR_SERIES: usize = 120;
+
+/// One indicator's latest reading: its label, its primary value and, for a
+/// multi-output indicator, its named fields.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndicatorReading {
+    /// The display label, derived from the spec.
+    pub label: String,
+    /// The primary value, or `None` while warming up.
+    pub value: Option<f64>,
+    /// Named outputs in declaration order; empty for a single-output indicator.
+    pub fields: Vec<(&'static str, f64)>,
+    /// A bounded recent series, oldest first, ending at the current tick.
+    pub series: Vec<f64>,
+}
+
+/// The set of indicators tracked for a symbol.
 pub struct IndicatorSet {
     entries: Vec<IndicatorEntry>,
 }
 
 impl IndicatorSet {
-    /// Feed one price into every indicator, advancing their state by one input.
-    pub fn update(&mut self, price: f64) {
+    /// Build the set a config asks for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Config`] naming the indicator if a spec's kind is not in
+    /// the registry or its parameters are rejected.
+    pub fn from_specs(specs: &[IndicatorSpec]) -> Result<Self> {
+        let entries = specs
+            .iter()
+            .map(|spec| {
+                Ok(IndicatorEntry {
+                    label: spec.label(),
+                    indicator: build_spec(spec)?,
+                    last: None,
+                    fields: Vec::new(),
+                    series: VecDeque::with_capacity(INDICATOR_SERIES),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Self { entries })
+    }
+
+    /// Add one indicator, which starts cold and warms up from the next tick.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Config`] naming the spec if the registry rejects it.
+    pub fn push(&mut self, spec: &IndicatorSpec) -> Result<()> {
+        self.entries.push(IndicatorEntry {
+            label: spec.label(),
+            indicator: build_spec(spec)?,
+            last: None,
+            fields: Vec::new(),
+            series: VecDeque::with_capacity(INDICATOR_SERIES),
+        });
+        Ok(())
+    }
+
+    /// Whether any indicator in this set reads the order book.
+    ///
+    /// Scanned rather than cached: the set holds a handful of indicators and
+    /// this is asked once per tick, so the scan costs less than the bookkeeping
+    /// a cached flag would need on every add and remove — and it cannot go
+    /// stale, which a cached flag can.
+    #[must_use]
+    pub fn wants_book(&self) -> bool {
+        self.entries.iter().any(|e| e.indicator.wants_book())
+    }
+
+    /// Whether any indicator in this set reads another market's price.
+    ///
+    /// Scanned rather than cached, for the same reason as
+    /// [`IndicatorSet::wants_book`].
+    #[must_use]
+    pub fn wants_references(&self) -> bool {
+        self.entries.iter().any(|e| e.indicator.wants_reference())
+    }
+
+    /// Drop the indicator with this label. Returns whether one was removed.
+    pub fn remove(&mut self, label: &str) -> bool {
+        let before = self.entries.len();
+        self.entries.retain(|entry| entry.label != label);
+        self.entries.len() != before
+    }
+
+    /// Feed one tick into every indicator.
+    ///
+    /// Each indicator that has produced a value records one point per tick, not
+    /// one per update. A bar indicator only advances when a bar closes, so
+    /// recording only its updates would give it a series several times shorter
+    /// than the price series and an overlay drawn from it would sit at the wrong
+    /// place on the x-axis. Carrying the last value forward makes it a step line
+    /// over the same ticks, which is what it actually means.
+    ///
+    /// Indicators warm up at different lengths, so the series are not all the
+    /// same length. They all end at the current tick, so a renderer aligns them
+    /// to the right of the price series.
+    pub fn update(&mut self, input: &TickInput) {
         for entry in &mut self.entries {
-            entry.last = entry.indicator.update(price);
+            if let Some(value) = entry.indicator.update(input) {
+                entry.last = Some(value);
+                entry.fields = entry.indicator.fields();
+            }
+            if let Some(value) = entry.last {
+                if entry.series.len() == INDICATOR_SERIES {
+                    entry.series.pop_front();
+                }
+                entry.series.push_back(value);
+            }
         }
     }
 
-    /// The latest `(name, value)` of each indicator (`value` is `None` while
+    /// The latest `(label, value)` of each indicator (`value` is `None` while
     /// still warming up).
     #[must_use]
     pub fn values(&self) -> Vec<(String, Option<f64>)> {
         self.entries
             .iter()
-            .map(|entry| (entry.name.clone(), entry.last))
+            .map(|entry| (entry.label.clone(), entry.last))
+            .collect()
+    }
+
+    /// The latest reading of every indicator, in one pass.
+    ///
+    /// One call rather than a `values` and a `fields` the caller has to zip: two
+    /// parallel lists is one refactor away from a chart showing one indicator's
+    /// value under another's name.
+    #[must_use]
+    pub fn snapshot(&self) -> Vec<IndicatorReading> {
+        self.entries
+            .iter()
+            .map(|entry| IndicatorReading {
+                label: entry.label.clone(),
+                value: entry.last,
+                fields: entry.fields.clone(),
+                series: entry.series.iter().copied().collect(),
+            })
             .collect()
     }
 }
 
 impl Default for IndicatorSet {
-    /// A short and a long moving average — the default chart overlay.
+    /// The default overlay, which the registry is guaranteed to accept.
     fn default() -> Self {
-        let entries = vec![
-            IndicatorEntry {
-                name: "SMA(20)".to_string(),
-                indicator: Box::new(Sma::new(20).unwrap()),
-                last: None,
-            },
-            IndicatorEntry {
-                name: "EMA(50)".to_string(),
-                indicator: Box::new(Ema::new(50).unwrap()),
-                last: None,
-            },
-        ];
-        Self { entries }
+        Self::from_specs(&crate::config::default_indicators())
+            .expect("the default indicator overlay must be constructible")
     }
 }
 
@@ -256,6 +434,28 @@ pub struct SymbolState {
     pub last: Decimal,
     /// A bounded recent price history for the chart series.
     pub history: VecDeque<Decimal>,
+    /// Aggregates the trade stream into the bars the candle indicators read.
+    pub candles: CandleBuilder,
+}
+
+impl SymbolState {
+    /// Fresh state for one market, with the indicator set and bar size the
+    /// config asks for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Config`] if an indicator spec is not constructible.
+    pub fn new(specs: &[IndicatorSpec], timeframe: Timeframe) -> Result<Self> {
+        Ok(Self {
+            book: BookState::default(),
+            tape: TapeRing::default(),
+            footprint: Footprint::default(),
+            indicators: IndicatorSet::from_specs(specs)?,
+            last: Decimal::ZERO,
+            history: VecDeque::with_capacity(512),
+            candles: CandleBuilder::new(timeframe),
+        })
+    }
 }
 
 impl Default for SymbolState {
@@ -267,6 +467,7 @@ impl Default for SymbolState {
             indicators: IndicatorSet::default(),
             last: Decimal::ZERO,
             history: VecDeque::with_capacity(512),
+            candles: CandleBuilder::new(Timeframe::default()),
         }
     }
 }
@@ -298,19 +499,67 @@ pub struct AppState {
     pub focus: Option<Key>,
     /// The tracked markets, in display order.
     pub watchlist: Vec<Key>,
+    /// The indicator specs every market is tracked with. Validated once, when
+    /// the terminal is built or a spec is added, so building a market's set can
+    /// no longer fail.
+    pub indicators: Vec<IndicatorSpec>,
+    /// The bar size the candle-input indicators are fed at.
+    pub timeframe: Timeframe,
 }
 
 impl AppState {
     /// Fold one event for `(src, sym)` into state, in O(1) per event (bounded by
     /// the event's own size, never by history).
     pub fn fold(&mut self, src: SourceId, sym: &Symbol, event: &Event) {
-        let state = self.symbols.entry((src, sym.clone())).or_default();
+        // Collected before the market's own state is borrowed mutably, which is
+        // also the only order that gives the right answer: the reference markets
+        // are read as they stand now, while this market's last is still the
+        // previous print until this event is folded.
+        //
+        // Asked of the specs rather than of an indicator set because the sets
+        // all come from these specs, and this one is reachable without holding a
+        // borrow of any market.
+        let references = if self.indicators.iter().any(|s| s.reference.is_some()) {
+            self.reference_prices()
+        } else {
+            BTreeMap::new()
+        };
+        // `expect` rather than a fallback: every spec in `self.indicators` was
+        // accepted by the registry when it was set, so construction here cannot
+        // fail. A silent `unwrap_or_default` would hide a market quietly losing
+        // its indicators.
+        let state = self.symbols.entry((src, sym.clone())).or_insert_with(|| {
+            SymbolState::new(&self.indicators, self.timeframe)
+                .expect("indicator specs are validated before they reach the state")
+        });
         match event {
             Event::Trade(print) => {
+                let price = print.price.to_f64().unwrap_or(0.0);
                 state.last = print.price;
                 state.tape.push(print.clone());
                 state.footprint.add(print);
-                state.indicators.update(print.price.to_f64().unwrap_or(0.0));
+                // A trade both advances the price indicators and may close a bar
+                // for the candle ones; the builder decides which.
+                let closed = state.candles.update(
+                    price,
+                    print.quantity.to_f64().unwrap_or(0.0),
+                    print.timestamp,
+                );
+                // The book is converted only when something reads it: the
+                // default indicator set is all price and bar indicators, and a
+                // deep book would otherwise be walked on every print for
+                // nothing.
+                let book = if state.indicators.wants_book() {
+                    state.book.to_core()
+                } else {
+                    None
+                };
+                let mut tick = TickInput::price(price);
+                tick.candle = closed;
+                tick.trade = core_trade(print);
+                tick.book = book;
+                tick.references = references;
+                state.indicators.update(&tick);
                 if state.history.len() == 512 {
                     state.history.pop_front();
                 }
@@ -326,6 +575,106 @@ impl AppState {
             | Event::Disconnected
             | Event::Reconnected => {}
         }
+    }
+
+    /// The last price of every tracked market, keyed by symbol.
+    ///
+    /// A market that has not printed yet is left out rather than entered at
+    /// zero, so a pairwise indicator waits for a real price instead of being
+    /// warmed up on a placeholder.
+    ///
+    /// Keyed by symbol alone, not by `(source, symbol)`: a reference is written
+    /// as `ETH/USDT` in a config, and the same market on two feeds is the same
+    /// price. When both carry it, the later one in iteration order wins, which
+    /// is arbitrary but not wrong -- they are quotes for the same thing.
+    #[must_use]
+    fn reference_prices(&self) -> BTreeMap<String, f64> {
+        self.symbols
+            .iter()
+            .filter_map(|((_, symbol), state)| {
+                state.last.to_f64().map(|price| (symbol.to_string(), price))
+            })
+            .filter(|(_, price)| *price > 0.0)
+            .collect()
+    }
+
+    /// Fresh state for a market, carrying the indicator set and bar size this
+    /// terminal was configured with.
+    ///
+    /// `expect` rather than a fallback, for the same reason `fold` does: every
+    /// spec in `self.indicators` was accepted by the registry before it got
+    /// there, so this cannot fail, and a silent default would open a market with
+    /// the wrong indicators rather than none at all.
+    #[must_use]
+    pub fn fresh_market(&self) -> SymbolState {
+        SymbolState::new(&self.indicators, self.timeframe)
+            .expect("indicator specs are validated before they reach the state")
+    }
+
+    /// Track one more indicator on every market, now and for markets opened later.
+    ///
+    /// It starts cold: a market that has been running keeps its history, but the
+    /// new indicator warms up from the next tick, because the inputs it missed
+    /// are gone. Re-adding a label that is already tracked is rejected rather
+    /// than silently duplicating a row in the chart panel.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Config`] if the registry rejects the spec, or if this
+    /// label is already tracked.
+    pub fn add_indicator(&mut self, spec: &IndicatorSpec) -> Result<()> {
+        let label = spec.label();
+        if self.indicators.iter().any(|s| s.label() == label) {
+            return Err(Error::Config(format!("indicator already tracked: {label}")));
+        }
+        // Build once before mutating anything, so a rejected spec cannot leave
+        // some markets updated and others not.
+        build_spec(spec)?;
+        for state in self.symbols.values_mut() {
+            state.indicators.push(spec)?;
+        }
+        self.indicators.push(spec.clone());
+        Ok(())
+    }
+
+    /// Change the bar size every market is aggregated at.
+    ///
+    /// Restarts the bar-derived state: each market's candle builder starts a new
+    /// bar, and the indicator set is rebuilt. Rebuilding the whole set rather
+    /// than only the bar indicators is deliberate — an indicator's history is a
+    /// sequence of readings at one bar size, and continuing it across a change
+    /// would blend two, which is not a smaller bar or a larger one but a
+    /// meaningless mixture. Nothing in the registry marks which indicators read
+    /// bars, so the choice is between rebuilding all of them and knowingly
+    /// corrupting some.
+    ///
+    /// Price history, the tape, the book and the footprint are untouched: none
+    /// of them is derived from bars.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Config`] if an indicator spec is not constructible,
+    /// which cannot happen for specs already accepted.
+    pub fn set_timeframe(&mut self, timeframe: Timeframe) -> Result<()> {
+        self.timeframe = timeframe;
+        for state in self.symbols.values_mut() {
+            state.candles = CandleBuilder::new(timeframe);
+            state.indicators = IndicatorSet::from_specs(&self.indicators)?;
+        }
+        Ok(())
+    }
+
+    /// Stop tracking the indicator with this label. Returns whether one matched.
+    pub fn remove_indicator(&mut self, label: &str) -> bool {
+        let known = self.indicators.iter().any(|s| s.label() == label);
+        if !known {
+            return false;
+        }
+        self.indicators.retain(|s| s.label() != label);
+        for state in self.symbols.values_mut() {
+            state.indicators.remove(label);
+        }
+        true
     }
 
     /// Poll every source and fold what they yield. Returns the number of events
@@ -467,14 +816,128 @@ mod tests {
 
     #[test]
     fn indicator_set_warms_up_then_reports() {
+        let price = TickInput::price;
         let mut set = IndicatorSet::default();
         for _ in 0..19 {
-            set.update(100.0);
+            set.update(&price(100.0));
         }
-        // SMA(20) is still warming up after 19 inputs.
+        // Sma(20) is still warming up after 19 inputs.
         assert_eq!(set.values()[0].1, None);
-        set.update(100.0);
+        set.update(&price(100.0));
         assert_eq!(set.values()[0].1, Some(100.0));
+    }
+
+    #[test]
+    fn an_indicator_series_records_one_point_per_tick_after_warmup() {
+        let price = TickInput::price;
+        let mut set = IndicatorSet::from_specs(&[IndicatorSpec::new("Sma", vec![3.0])]).unwrap();
+        for step in 0..10 {
+            set.update(&price(100.0 + f64::from(step)));
+        }
+        // Sma(3) is silent for the first two ticks, so eight of the ten recorded.
+        assert_eq!(set.snapshot()[0].series.len(), 8);
+    }
+
+    #[test]
+    fn a_bar_indicator_series_carries_its_value_forward_between_bars() {
+        // Atr only advances when a bar closes. Recording only its updates would
+        // give it a series several times shorter than the price series, and an
+        // overlay drawn from it would sit at the wrong place on the x-axis.
+        let mut set = IndicatorSet::from_specs(&[IndicatorSpec::new("Atr", vec![2.0])]).unwrap();
+        let mut builder = CandleBuilder::new(Timeframe::parse("1s").unwrap());
+        let mut ticks = 0;
+        for step in 0..40_i64 {
+            // Four trades per bar, so only one tick in four closes one.
+            let price = 100.0 + (step % 4) as f64;
+            let closed = builder.update(price, 1.0, step * 250);
+            let mut tick = TickInput::price(price);
+            tick.candle = closed;
+            set.update(&tick);
+            ticks += 1;
+        }
+        let series = &set.snapshot()[0].series;
+        assert!(!series.is_empty(), "Atr recorded nothing over ten bars");
+        assert!(
+            series.len() > ticks / 4,
+            "series of {} is barely longer than the {} bars, so it is not carrying forward",
+            series.len(),
+            ticks / 4
+        );
+    }
+
+    #[test]
+    fn an_indicator_series_is_bounded() {
+        let price = TickInput::price;
+        let mut set = IndicatorSet::from_specs(&[IndicatorSpec::new("Sma", vec![2.0])]).unwrap();
+        for step in 0..500 {
+            set.update(&price(100.0 + f64::from(step)));
+        }
+        assert_eq!(set.snapshot()[0].series.len(), INDICATOR_SERIES);
+    }
+
+    #[test]
+    fn a_warming_up_indicator_has_no_series_yet() {
+        let price = TickInput::price;
+        let mut set = IndicatorSet::from_specs(&[IndicatorSpec::new("Sma", vec![50.0])]).unwrap();
+        for _ in 0..10 {
+            set.update(&price(100.0));
+        }
+        assert!(set.snapshot()[0].series.is_empty());
+    }
+
+    #[test]
+    fn indicator_labels_come_from_the_spec() {
+        let set = IndicatorSet::default();
+        let labels: Vec<String> = set.values().into_iter().map(|(l, _)| l).collect();
+        assert_eq!(labels, vec!["Sma(20)".to_string(), "Ema(50)".to_string()]);
+    }
+
+    #[test]
+    fn an_unknown_indicator_spec_is_rejected_by_name() {
+        let err = IndicatorSet::from_specs(&[IndicatorSpec::new("NotReal", vec![])])
+            .err()
+            .expect("an unknown indicator must be rejected")
+            .to_string();
+        assert!(
+            err.contains("NotReal"),
+            "error does not name the spec: {err}"
+        );
+    }
+
+    #[test]
+    fn a_configured_indicator_set_replaces_the_default() {
+        let set = IndicatorSet::from_specs(&[IndicatorSpec::new("Rsi", vec![14.0])]).unwrap();
+        let labels: Vec<String> = set.values().into_iter().map(|(l, _)| l).collect();
+        assert_eq!(labels, vec!["Rsi(14)".to_string()]);
+    }
+
+    #[test]
+    fn a_candle_indicator_advances_only_when_a_bar_closes() {
+        // Atr reads bars. Feeding one-second trades under a one-minute bar size
+        // must leave it silent until the minute rolls over.
+        let sym = Symbol::new("BTC", "USDT");
+        let mut state = AppState {
+            indicators: vec![IndicatorSpec::new("Atr", vec![2.0])],
+            timeframe: Timeframe::parse("1m").unwrap(),
+            ..AppState::default()
+        };
+        for step in 0..30_i64 {
+            let Event::Trade(mut print) = trade(&sym, dec!(100), OrderSide::Buy) else {
+                panic!("the trade helper must produce a trade event");
+            };
+            print.timestamp = step * 1_000;
+            state.fold(0, &sym, &Event::Trade(print));
+        }
+        let market = state.get(&(0, sym.clone())).unwrap();
+        assert_eq!(
+            market.indicators.values()[0].1,
+            None,
+            "Atr reported before a bar closed"
+        );
+        assert!(
+            market.candles.partial().is_some(),
+            "the builder should hold a bar in progress"
+        );
     }
 
     #[test]

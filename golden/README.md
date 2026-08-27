@@ -1,27 +1,70 @@
 # Golden fixtures
 
-Byte-exact fixtures pinning the deterministic feed-to-frame pipeline.
+Byte-exact fixtures pinning the deterministic feed-to-frame pipeline, and the
+cross-language parity corpus for all ten language surfaces.
 
-- `replay/<name>.json` — a recorded feed: a JSON array of market events.
-- `expected/<name>.json` — the frame view-models the terminal produces after
-  replaying that feed through the default layout (pretty, for human diffing).
-- `expected/<name>.min.json` — the same frame exactly as `command_json` emits it
-  (compact `serde_json::to_string`).
-- `config.json` — the complete `Terminal::new` config: a `Replay` source with the
-  feed embedded plus the default layout, so a binding builds the identical
-  terminal from one file with no JSON assembly.
+## The manifest
 
-`crates/terminal-core/tests/golden.rs` drives the feed through a `Terminal` and
-asserts the produced frame equals `expected/<name>.json` byte-for-byte, so the
-state fold and the panel view-models can never drift silently.
+`manifest.json` is the index, and it is what makes the corpus extensible. Each
+entry names a scenario:
 
-Because the same command protocol crosses every binding, these fixtures are also
-the cross-language parity corpus. Every binding ships a golden test that loads
-`config.json`, subscribes `BTC/USDT` on source 0, ticks past the feed, and asserts
-its frame equals `expected/basic.min.json` byte-for-byte. Since each binding
-returns the core's compact `command_json` string verbatim, byte equality against
-that one file is the exact cross-language parity check — no per-language JSON
-deep-equal is required.
+```json
+{
+  "name": "basic",
+  "config": "configs/basic.json",
+  "commands": "commands/basic.txt",
+  "expected": "expected/basic.min.json"
+}
+```
+
+A binding reads the manifest, and for each scenario builds a terminal from the
+config, replays the commands in order, and asserts the final frame equals the
+expected file. Adding a scenario is one entry in `SCENARIOS` in
+`crates/terminal-core/tests/golden.rs` plus a regeneration — no binding test
+changes, in any language.
+
+## The files
+
+- `configs/<name>.json` — the complete `Terminal::new` config, so a binding
+  builds the identical terminal from one file with no JSON assembly.
+- `commands/<name>.txt` — the command sequence, one per line.
+- `expected/<name>.min.json` — the frame exactly as `command_json` emits it
+  (compact `serde_json::to_string`). Because every binding returns that string
+  verbatim, byte equality against this one file is the exact parity check, with
+  no per-language JSON deep-equal needed.
+- `expected/<name>.json` — the same frame pretty-printed, for reading a diff.
+- `replay/<name>.json` — the recorded feed, for scenarios that have one.
+- `config.json` — a copy of the basic scenario's config, kept at the path the
+  first corpus shipped.
+
+The commands live in a file rather than an array inside the manifest so that
+every manifest value stays a plain path. A command is a JSON string full of
+quotes; embedding one would fill the manifest with escapes, and the two bindings
+that deliberately carry no JSON dependency — Java and R — would have to unpick
+them by hand. As it is, both read the manifest by splitting on the quote
+character, which needs no parser and no regular expression.
+
+## The scenarios
+
+| Scenario | Pins |
+|----------|------|
+| `basic` | trades and a book snapshot through the default layout |
+| `book_deltas` | an L2 diff stream including level removals and new levels outside the previous range |
+| `footprint` | repeated prices on both sides, so the per-price volume accumulates rather than recording one entry per price |
+| `indicators` | a non-default indicator set (`Sma`, `Rsi`, `MacdIndicator`) driven far enough to produce real values, including the multi-output fields and the per-indicator series |
+| `pairwise` | a pairwise indicator across two markets: the reference price reaches it through the tick, and the label carries which market it is against |
+| `seek` | the time machine: drive to the end, rewind, drive forward again |
+| `multi_source` | two sources at once, with focus on the second |
+
+## Coverage
+
+Eight language surfaces run every scenario: Rust, Python, Node, WASM, Go, C#,
+Java and R.
+
+`examples/c/golden.c` runs the basic scenario only. It holds the C ABI hub — the
+one every other binding routes through — to the corpus without a JSON parser,
+which is the right trade for an example; the eight surfaces above already cover
+the hub across all six scenarios.
 
 ## Regenerating
 
@@ -31,4 +74,5 @@ After an intentional change to the state fold or the view-model schema:
 WICKRA_REGEN=1 cargo test -p terminal-core --test golden
 ```
 
-Review the diff, then commit the updated fixtures.
+Review the diff, then commit the updated fixtures. A frame that changed without
+a deliberate schema change is the corpus doing its job.

@@ -6,10 +6,12 @@ import type {
   ChartView,
   FootprintView,
   Frame,
+  PanelSpec,
   PanelView,
   TapeView,
   WatchlistView,
 } from './types'
+import { placementsFor, readLayout } from './layout'
 import { drawChart } from './render/chart'
 import { openBinanceFeed } from './binance'
 
@@ -148,6 +150,16 @@ function findPanel<T extends PanelView['panel']>(
     | undefined
 }
 
+// The layout the core was configured with. The TUI honours these rects; so does
+// this renderer, which is the whole point of the panels being data rather than
+// markup -- one config drives both front-ends, and a layout the config can
+// express but a renderer cannot is a layout the terminal does not really have.
+//
+// The mapping itself lives in ./layout so it can be tested without mounting a
+// component.
+const layout = ref<PanelSpec[]>([])
+const placements = computed(() => placementsFor(layout.value))
+
 const chart = computed<ChartView | undefined>(() => findPanel('chart'))
 const book = computed<BookView | undefined>(() => findPanel('book'))
 const tape = computed<TapeView | undefined>(() => findPanel('tape'))
@@ -175,6 +187,7 @@ function start(): void {
     cfg = defaultConfig(seed.value)
     localStorage.setItem(CONFIG_KEY, cfg)
   }
+  layout.value = readLayout(cfg)
   terminal = new Terminal(cfg)
   terminal.command(
     JSON.stringify({ type: 'Subscribe', source: 0, symbol: symbol.value }),
@@ -232,7 +245,7 @@ onBeforeUnmount(stop)
     </div>
 
     <main class="grid">
-      <section class="panel chart">
+      <section class="panel chart" v-if="placements.Chart" :style="placements.Chart">
         <h2>Chart {{ chart?.symbol }} <span class="last">{{ chart?.last.toFixed(2) }}</span></h2>
         <canvas ref="chartCanvas" width="600" height="300"></canvas>
         <div class="indicators">
@@ -242,7 +255,7 @@ onBeforeUnmount(stop)
         </div>
       </section>
 
-      <section class="panel book">
+      <section class="panel book" v-if="placements.Book" :style="placements.Book">
         <h2>Book</h2>
         <table>
           <tr v-for="(lvl, i) in (book?.asks ?? []).slice().reverse()" :key="'a' + i" class="ask">
@@ -255,7 +268,7 @@ onBeforeUnmount(stop)
         </table>
       </section>
 
-      <section class="panel footprint">
+      <section class="panel footprint" v-if="placements.Footprint" :style="placements.Footprint">
         <h2>Footprint {{ footprint?.symbol }}</h2>
         <table>
           <tr
@@ -271,7 +284,7 @@ onBeforeUnmount(stop)
         </table>
       </section>
 
-      <section class="panel tape">
+      <section class="panel tape" v-if="placements.Tape" :style="placements.Tape">
         <h2>Tape</h2>
         <table>
           <tr v-for="(pr, i) in tape?.prints ?? []" :key="i" :class="pr.side">
@@ -280,7 +293,7 @@ onBeforeUnmount(stop)
         </table>
       </section>
 
-      <section class="panel watchlist">
+      <section class="panel watchlist" v-if="placements.Watchlist" :style="placements.Watchlist">
         <h2>Watchlist</h2>
         <table>
           <tr v-for="(row, i) in watchlist?.rows ?? []" :key="i">

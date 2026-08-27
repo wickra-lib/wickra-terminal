@@ -1,2 +1,11 @@
-# Default owner for everything in this repository.
+# Code owners for wickra-terminal.
+#
+# The owner listed here is requested for review automatically on every pull
+# request. See https://docs.github.com/articles/about-code-owners.
+#
+# This is the maintainer handle, not the org slug from repo-metadata.toml.
+# GitHub resolves a code owner to a user, a team (`@org/team`) or an email; a
+# bare org slug is reported as an unknown owner and no review is ever
+# requested. Verify any change with:
+#   gh api repos/wickra-lib/wickra-terminal/codeowners/errors
 *       @kingchenc

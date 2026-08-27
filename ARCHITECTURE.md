@@ -3,7 +3,8 @@
 `wickra-terminal` is **one product with a selectable renderer**. A single
 data-driven core (`terminal-core`) folds market events into state and emits
 view-models; two reference front-ends render those view-models — a native TUI
-(ratatui) and a Web app (WASM + Vue) — chosen with `--render tui|web`. The core
+(ratatui) and a Web app (WASM + Vue). They are separate programs over one
+core, not two modes of one binary. The core
 is exposed as a JSON-over-C-ABI data API in ten languages, so a developer in any
 language can build their own front-end on the same core.
 
@@ -16,7 +17,7 @@ CORE   crates/terminal-core
        DataSource(Live | Replay | Synth)  ·  AppState<(SourceId,Symbol), SymbolState> (O(1) fold)  ·  Panels → view-models
       ▼ exposed as a data API in ten languages (like wickra-backtest's run_json)
 BINDINGS   python · node · wasm · c (ABI hub → c/c++/c#/go/java/r)
-CORES   wickra-core (indicators) · wickra-exchange (Live) · wickra-backtest (Replay)
+CORES   wickra-core (<!--indicator-count-->460<!--/indicator-count--> of its indicators reached) · wickra-exchange (Live)
 ```
 
 ## The core is renderer-agnostic
@@ -37,7 +38,7 @@ Terminal::command_json(cmd_json)    apply a command, return the next frame as JS
 Terminal::version()                 the crate version
 ```
 
-Commands (subscribe, set-focus, add-source, set-timeframe…) and frames (the
+Commands (subscribe, set-focus, add-source, add-indicator, set-timeframe…) and frames (the
 active panels' view-models) are JSON. No callbacks cross the C ABI — every
 language drives its own loop and drains frames, so streaming is as trivial to
 carry as a synchronous call, R included.
@@ -48,8 +49,10 @@ The `DataSource` trait unifies three source kinds behind one symbol-tagged
 `poll()`:
 
 - **`Live`** — wraps `wickra-exchange` (the ten-venue connectivity layer).
-- **`Replay`** — wraps `wickra-backtest`, driving a recorded feed with a
-  time-machine `seek`.
+- **`Replay`** — a recorded feed with a time-machine `seek`. It keeps the whole
+  event list and re-folds from the start, so a rewind is deterministic. Nothing
+  is read from disk and no engine is involved, which is what lets it run in the
+  browser.
 - **`Synth`** — a deterministic synthetic feed for demos and tests.
 
 Multiple sources run at once, can be added/removed/hot-swapped at runtime, and
@@ -64,19 +67,27 @@ cross-language, so a refactor that corrupts the fold fails loudly everywhere.
 
 ## Where "real money" splits the form
 
-| Layer | TUI (native) | Web (browser) |
-|---|---|---|
-| Live charts + indicators | ✅ | ✅ core → WASM |
-| Live signals (backtest streaming) | ✅ | ⚠️ needs the backtest WASM streaming export |
-| Paper (sim fills + P&L) | ✅ `PaperExchange` | ✅ WASM + `localStorage` |
-| **Real orders** | ✅ native (keys server-side) | ❌ browser holds no secret → backend |
+| Layer | TUI (native) | Web (browser) | Status |
+|---|---|---|---|
+| Live charts + indicators | ✅ | ✅ core → WASM | shipped |
+| Recorded replay + seek | ✅ | ✅ | shipped |
+| Live market data | ✅ `wickra-exchange` | ✅ browser WebSocket → `Feed` | shipped |
+| Paper fills and P&L | — | — | not built |
+| Real orders | — | — | not built |
 
-Real execution is opt-in and USER-GO gated; both renderers default to
-read-only / paper. See [THREAT_MODEL.md](THREAT_MODEL.md).
+The terminal reads. It opens no orders, holds no credentials and has no position
+of any kind: `LiveSource` connects with empty credentials, and the exchange
+client it wraps is used only for public market data. Paper trading and execution
+are plausible next layers, not features behind a flag — there is no simulator and
+no order path to gate.
+
+That is also why [SECURITY.md](SECURITY.md) and [THREAT_MODEL.md](THREAT_MODEL.md)
+describe a read-only surface: the assets an execution-capable terminal would have
+to protect do not exist here yet.
 
 ## Integration with the rest of Wickra
 
-A Rust build depends on `wickra-core`, `wickra-backtest` and `wickra-exchange` as
-Cargo crates and composes them in one binary, no FFI. `terminal-core` re-exports
+A Rust build depends on `wickra-core` and `wickra-exchange` as Cargo crates and
+composes them in one binary, no FFI. `terminal-core` re-exports
 `Symbol` and `Event` from `wickra-exchange` so the source layer speaks the
 exchange's types directly.

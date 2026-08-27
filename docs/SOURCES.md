@@ -45,12 +45,15 @@ message in with the `Feed` command. The web renderer ships a Binance bridge
 At runtime, sources and subscriptions are driven through the data-driven
 [`command_json`](RENDERERS.md) boundary:
 
+Ids are assigned in order as sources are added, starting after the ones the
+config opened. These examples assume the config opened one, so it holds id 0.
+
 ```json
 {"type":"AddSource","spec":{"Synth":{"seed":2}}}
 {"type":"AddSource","spec":"Manual"}
-{"type":"Subscribe","source":0,"symbol":"BTC/USDT"}
-{"type":"Feed","source":1,"event":{"type":"trade","symbol":{"base":"BTC","quote":"USDT"},"price":"64000","quantity":"0.1","aggressor":"Buy","timestamp":1}}
-{"type":"Unsubscribe","source":0,"symbol":"BTC/USDT"}
+{"type":"Subscribe","source":2,"symbol":"BTC/USDT"}
+{"type":"Feed","source":2,"event":{"type":"trade","symbol":{"base":"BTC","quote":"USDT"},"price":"64000","quantity":"0.1","aggressor":"Buy","timestamp":1}}
+{"type":"Unsubscribe","source":2,"symbol":"BTC/USDT"}
 {"type":"RemoveSource","id":1}
 ```
 
@@ -75,4 +78,4 @@ synthetic source (which keep no recorded history) is an error. Because it is jus
 another command on the [data-driven boundary](RENDERERS.md), every binding and
 both renderers get the time-machine for free.
 
-See also: [PANELS.md](PANELS.md) · [STREAMING.md](STREAMING.md).
+See also: [INDICATORS.md](INDICATORS.md) · [PANELS.md](PANELS.md) · [STREAMING.md](STREAMING.md).

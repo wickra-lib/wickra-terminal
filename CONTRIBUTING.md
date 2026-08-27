@@ -27,6 +27,8 @@ cargo fmt --all
 cargo test --workspace --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo deny check
+.github/scripts/check-cbindgen.sh   # skips cleanly if cbindgen is not installed
+python scripts/check_binding_surface.py
 ```
 
 `cargo fmt --all` and the `clippy -D warnings` gate are enforced in CI on three
@@ -53,7 +55,7 @@ adds a `PanelView` variant in `src/view.rs`, and gets a widget in the TUI and a
 canvas renderer in the Web front-end — the core stays the single source of truth.
 A new **data source** implements the `DataSource` trait in
 `crates/terminal-core/src/source/`, registers in `build_source`, and ships a
-golden replay fixture. See `docs/PANELS.md` and `docs/SOURCES.md`.
+golden replay fixture. See `docs/INDICATORS.md`, `docs/PANELS.md` and `docs/SOURCES.md`.
 
 ## Developer Certificate of Origin
 

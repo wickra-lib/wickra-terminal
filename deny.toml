@@ -1,16 +1,21 @@
 # cargo-deny configuration — supply-chain gate (advisories, licenses, bans, sources).
+# Run locally with `cargo deny check`; CI runs the same in the `supply-chain` job.
+
+[graph]
+# Scan the feature-expanded graph, not just default features. The `live` feature
+# pulls the native exchange facade (tokio/reqwest/rustls) and the webpki-roots
+# exception below exists only for that tree — without this the checks never saw
+# it at all, and the exception sat unevaluated.
+all-features = true
 
 [advisories]
 version = 2
 yanked = "deny"
-# Suppressed advisories (assessed as not affecting wickra-terminal). Keep in
-# lock-step with osv-scanner.toml.
-ignore = [
-    # paste — unmaintained (not a vulnerability). A build-time proc-macro helper
-    # pulled transitively by ratatui (the TUI renderer); ratatui has not yet
-    # migrated off it. No runtime code path, no known security impact.
-    "RUSTSEC-2024-0436",
-]
+# No advisories are currently suppressed. RUSTSEC-2024-0436 (paste,
+# unmaintained) used to be ignored here for ratatui's sake; ratatui 0.30 dropped
+# the dependency, cargo-deny now reports the entry as unmatched, and a
+# suppression that matches nothing only hides the next real one. Any new entry
+# must be added to osv-scanner.toml in the same commit.
 
 [licenses]
 version = 2
@@ -37,12 +42,15 @@ exceptions = [
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Internal workspace crates may be referenced by `path`, which reads as a wildcard
+# requirement but is not an unpinned external dependency.
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
 
-# The exchange and backtester are consumed as git dependencies until their first
-# crates.io release; both live under the project's own GitHub org.
+# The exchange is consumed as a git dependency until its first crates.io release;
+# it lives under the project's own GitHub org.
 [sources.allow-org]
 github = ["wickra-lib"]

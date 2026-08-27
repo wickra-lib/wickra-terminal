@@ -13,11 +13,11 @@
       ],
       "indicators": [
         {
-          "name": "SMA(20)",
+          "name": "Sma(20)",
           "value": null
         },
         {
-          "name": "EMA(50)",
+          "name": "Ema(50)",
           "value": null
         }
       ]

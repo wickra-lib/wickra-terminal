@@ -1,0 +1,5 @@
+{"type":"Subscribe","source":0,"symbol":"BTC/USDT"}
+{"type":"Tick"}
+{"type":"Tick"}
+{"type":"Tick"}
+{"type":"Tick"}

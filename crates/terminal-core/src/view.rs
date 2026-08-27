@@ -11,13 +11,39 @@ use serde::{Deserialize, Serialize};
 
 use crate::source::SourceId;
 
+/// One named output of a multi-output indicator.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IndicatorField {
+    /// The field name as wickra-core declares it (`macd`, `signal`, `histogram`).
+    pub name: String,
+    /// The field's latest value.
+    pub value: f64,
+}
+
 /// One indicator's latest value (`None` while warming up).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IndicatorValue {
-    /// The indicator's display name (e.g. `"SMA(20)"`).
+    /// The indicator's display label (`"Sma(20)"`), derived from its spec.
     pub name: String,
-    /// The latest value, or `None` during warmup.
+    /// The primary value, or `None` during warmup. For a multi-output indicator
+    /// this is its first field, so a renderer that only wants one line does not
+    /// have to know which field that is.
     pub value: Option<f64>,
+    /// Every named output, in declaration order, for the multi-output
+    /// indicators. Empty for single-output ones, and omitted from the JSON
+    /// entirely when empty: a consumer written against the single-output shape
+    /// sees exactly the object it saw before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<IndicatorField>,
+    /// A bounded recent series, oldest first, ending at the current tick, for
+    /// renderers that draw the indicator as a line over the price.
+    ///
+    /// Indicators warm up at different lengths, so this is not always as long as
+    /// the chart's own series. Both end at the same tick, so a renderer aligns
+    /// this to the right. Empty while warming up, and then omitted from the JSON
+    /// entirely rather than serialised as `[]`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub series: Vec<f64>,
 }
 
 /// The chart panel's view-model: a recent price series with indicator overlays.
@@ -150,8 +176,10 @@ mod tests {
             last: 100.0,
             series: vec![99.0, 100.0],
             indicators: vec![IndicatorValue {
-                name: "SMA(20)".to_string(),
+                name: "Sma(20)".to_string(),
                 value: None,
+                fields: Vec::new(),
+                series: Vec::new(),
             }],
         });
         let json = serde_json::to_string(&view).unwrap();

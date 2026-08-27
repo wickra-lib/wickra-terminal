@@ -5,14 +5,16 @@
 org          = "wickra-lib"
 name         = "wickra-terminal"
 url          = "https://github.com/wickra-lib/wickra-terminal"
-homepage     = "https://wickra.org"
+homepage     = "https://terminal.wickra.org"
 issues_url   = "https://github.com/wickra-lib/wickra-terminal/issues"
 security_url = "https://github.com/wickra-lib/wickra-terminal/security/advisories/new"
 
 [maintainer]
 # `handle` is the natural-person credit shown in package manifests; it does not
-# move with a GitHub org transfer. `github` is the org @-mention slug used in
-# CODEOWNERS and prose.
+# move with a GitHub org transfer, and it is what CODEOWNERS names — GitHub
+# resolves a code owner to a user, a team (`@org/team`) or an email, and rejects
+# a bare org slug as an unknown owner, which silently stops review requests.
+# `github` is the org slug for URLs and prose.
 handle = "kingchenc"
 email  = "support@wickra.org"
 github = "wickra-lib"

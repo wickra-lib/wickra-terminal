@@ -12,6 +12,22 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_TERM_COLOR: always
+  # Network-flake resilience: retry transient registry/DNS failures at the tool
+  # level so a blip fetching crates.io / npm / PyPI inside any build step (cargo,
+  # napi, maturin, wasm-pack, npm ci, pip) retries automatically instead of
+  # failing the job and needing a manual re-run. Cargo treats "couldn't resolve
+  # host" / connect / timeout as spurious and retries with backoff; 10 attempts
+  # ride out a transient DNS blip on a runner. Complements the setup-action /
+  # cache retries (which only cover toolchain download + cache restore).
+  CARGO_NET_RETRY: "10"
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  npm_config_fetch_retries: "5"
+  npm_config_fetch_retry_maxtimeout: "120000"
+  PIP_RETRIES: "5"
+  PIP_DEFAULT_TIMEOUT: "120"
+
 jobs:
   test:
     name: Test (${{ matrix.os }})
@@ -20,6 +36,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
     # The ui-tui binary and the C ABI cdylib are both named wickra_terminal on
     # Windows, so building both in one --workspace pass makes two units write the
     # same wickra_terminal.pdb concurrently and intermittently trips LNK1201. The
@@ -34,7 +51,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
+        timeout-minutes: 6
       # The PyO3 extension cdylib is built and tested by the `python` job via
       # maturin; the C ABI cdylib by the `c-abi` job. Exclude both here — the
       # latter also avoids the wickra_terminal.pdb output-filename collision.
@@ -44,6 +63,7 @@ jobs:
   lint:
     name: Format & Clippy
     runs-on: ubuntu-latest
+    timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -51,13 +71,16 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
+        timeout-minutes: 6
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   msrv:
     name: MSRV workspace (1.86)
     runs-on: ubuntu-latest
+    timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -65,7 +88,9 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           toolchain: "1.86"
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
+        timeout-minutes: 6
       # The Node binding (napi 3) and the ui-tui app (ratatui pulls instability,
       # which needs 1.88) require Rust 1.88 and are checked separately below; the
       # Python binding needs maturin's platform link flags and is built by the
@@ -79,6 +104,7 @@ jobs:
   msrv-1_88:
     name: MSRV node + tui (1.88)
     runs-on: ubuntu-latest
+    timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -86,17 +112,36 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           toolchain: "1.88"
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
+        timeout-minutes: 6
       - run: cargo build -p wickra-terminal-node -p wickra-terminal
+
+  binding-surface:
+    name: Binding surface parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 10 # a static check; if it is not done in ten minutes it is stuck
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Ten language reaches sit on one C ABI, and each is tested separately. The
+      # golden corpus compares values, so a binding that never grew a method has
+      # no test to fail. This holds every language to the header instead.
+      - name: Compare every binding's surface with the C ABI
+        run: python3 scripts/check_binding_surface.py
 
   supply-chain:
     name: cargo-deny
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
+        timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: cargo-deny
       - run: cargo deny check
@@ -107,18 +152,42 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+        # 3.10 is listed in the classifiers but not tested here, and that is
+        # deliberate: maturin builds one abi3 wheel against the 3.9 stable ABI
+        # (cp39-abi3), so every later minor loads the same binary by the ABI
+        # guarantee. Testing the floor plus the three current minors covers the
+        # pure-Python layer; a fifth job would re-prove the ABI contract.
         python-version: ["3.9", "3.11", "3.12", "3.13"]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - name: Set up Python
+        id: setup_python
+        continue-on-error: true
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Wait before Python retry
+        if: steps.setup_python.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::warning::setup-python failed (likely CDN flake), waiting 30s before retry..."
+          sleep 30
+
+      - name: Set up Python (retry)
+        if: steps.setup_python.outcome == 'failure'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
       - uses: ./.github/actions/setup-rust
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - run: pip install maturin pytest
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
+        timeout-minutes: 6
+      - run: pip install -r bindings/python/requirements-ci.txt
       - run: maturin build --out dist
         working-directory: bindings/python
       - run: pip install --no-index --find-links bindings/python/dist wickra-terminal
@@ -132,13 +201,34 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
         node-version: ["22", "24"]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
+        timeout-minutes: 6
+      - name: Set up Node
+        id: setup_node
+        continue-on-error: true
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: bindings/node/package-lock.json
+
+      - name: Wait before Node retry
+        if: steps.setup_node.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::warning::setup-node failed (likely CDN flake), waiting 30s before retry..."
+          sleep 30
+
+      - name: Set up Node (retry)
+        if: steps.setup_node.outcome == 'failure'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
@@ -158,6 +248,7 @@ jobs:
   wasm:
     name: WASM
     runs-on: ubuntu-latest
+    timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -165,18 +256,37 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
+        timeout-minutes: 6
       - name: Install wasm-pack
         uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
+        timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: wasm-pack
-      - name: Build the wasm binding
+      # Two targets, two consumers: `web` is what the Vue renderer imports and
+      # what web-deploy.yml ships; `nodejs` is the only form `require()` can
+      # load, so the test suite needs it. Building both also proves a change
+      # has not broken either output shape.
+      - name: Build the wasm binding (web target)
         run: wasm-pack build --target web
         working-directory: bindings/wasm
+      - name: Build the wasm binding (nodejs target, for the test suite)
+        run: wasm-pack build --target nodejs --release --out-dir pkg-node
+        working-directory: bindings/wasm
+      - name: Verify generated artefacts
+        run: |
+          test -f bindings/wasm/pkg/wickra_terminal_wasm.js
+          test -f bindings/wasm/pkg/wickra_terminal_wasm_bg.wasm
+          test -f bindings/wasm/pkg/wickra_terminal_wasm.d.ts
+          test -f bindings/wasm/pkg-node/wickra_terminal_wasm.js
+      - name: WASM tests (node)
+        run: node --test bindings/wasm/tests/*.test.cjs
 
   web:
     name: Web renderer
     runs-on: ubuntu-latest
+    timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -184,21 +294,45 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
+        timeout-minutes: 6
       - name: Install wasm-pack
         uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
+        timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: wasm-pack
       # The web app depends on the wasm binding's pkg/ via a file: dependency, so
       # build it before installing web dependencies.
-      - name: Build the wasm binding
+      - name: Build the wasm binding (web target)
         run: wasm-pack build --target web
         working-directory: bindings/wasm
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - name: Set up Node
+        id: setup_node_2
+        continue-on-error: true
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
+
+      - name: Wait before Node retry
+        if: steps.setup_node_2.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::warning::setup-node failed (likely CDN flake), waiting 30s before retry..."
+          sleep 30
+
+      - name: Set up Node (retry)
+        if: steps.setup_node_2.outcome == 'failure'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Install web dependencies
+        run: cd web && npm ci --no-audit --no-fund
+      - name: Web renderer tests
+        run: cd web && npm test
       - name: Build the web renderer
-        run: cd web && npm install --no-audit --no-fund && npm run build
+        # vue-tsc first, so a type error fails here rather than at deploy time.
+        run: cd web && npm run build
 
   c-abi:
     name: C ABI on ${{ matrix.os }}
@@ -207,35 +341,32 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
+        timeout-minutes: 6
       - name: Install cbindgen
         uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
+        timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: cbindgen
       - name: Build the C ABI library (cdylib + staticlib)
         run: cargo build -p wickra-terminal-c --release
       - name: Rust unit tests
         run: cargo test -p wickra-terminal-c
-      # The generated header is platform-independent, so checking drift on one OS
-      # is enough — and avoids a spurious CRLF/LF diff on the Windows runner.
       - name: Check the committed header is in sync with cbindgen
+        # The generated header is platform-independent, so checking drift on one
+        # OS is enough — and avoids a spurious CRLF/LF diff on the Windows runner.
+        # The script is the same one contributors run locally, where it skips
+        # cleanly if cbindgen is not installed.
         if: runner.os == 'Linux'
         shell: bash
-        run: |
-          cbindgen --config bindings/c/cbindgen.toml --crate wickra-terminal-c --output bindings/c/include/wickra_terminal.h
-          if ! git diff --quiet -- bindings/c/include/wickra_terminal.h; then
-            echo "::error::bindings/c/include/wickra_terminal.h is out of sync — run cbindgen and commit the result"
-            git --no-pager diff -- bindings/c/include/wickra_terminal.h
-            exit 1
-          fi
-      # The real cross-language test: a foreign C consumer links the generated
-      # header + the compiled library and runs. If this passes on all three OSes,
-      # every C-capable language can link the same way.
+        run: .github/scripts/check-cbindgen.sh
       - name: Build and run the C example (CMake + ctest)
         shell: bash
         run: |
@@ -250,6 +381,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -259,7 +391,9 @@ jobs:
           go-version: "stable"
           cache: false
       - uses: ./.github/actions/setup-rust
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
+        timeout-minutes: 6
 
       - name: Build the C ABI library
         run: cargo build -p wickra-terminal-c --release
@@ -312,12 +446,15 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
+        timeout-minutes: 6
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: "8.0"
@@ -328,6 +465,12 @@ jobs:
         run: cargo build -p wickra-terminal-c
       - name: Test the C# binding
         run: dotnet test bindings/csharp/WickraTerminal.Tests/WickraTerminal.Tests.csproj -c Release
+      # Built here rather than in a separate job because this one already has
+      # dotnet and the native library staged on all three runners. macOS is the
+      # reason it matters: the example's library copy is per-platform, and a
+      # missing entry only shows up as a DllNotFoundException at run time.
+      - name: Build and run the C# example
+        run: dotnet run --project examples/csharp -c Release
 
   java:
     name: Java on ${{ matrix.os }}
@@ -336,12 +479,15 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
+        timeout-minutes: 6
       # The binding loads the C ABI hub via the Java FFM API; the pom points
       # native.lib.dir at target/debug, so build it in the debug profile here.
       - name: Build the C ABI library
@@ -363,6 +509,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
     env:
       WKTERM_INC: ${{ github.workspace }}/bindings/c/include
       WKTERM_LIB: ${{ github.workspace }}/target/release
@@ -371,7 +518,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
+        timeout-minutes: 6
       # The package compiles a thin .Call glue layer against the C ABI hub and
       # links -lwickra_terminal from WKTERM_LIB; build the library first.
       - name: Build the C ABI library
@@ -400,6 +549,12 @@ jobs:
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
+    timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
+    env:
+      # Lifted to job level so the upload step can test for it. A repository
+      # without the secret must not report a green coverage job that uploaded
+      # nothing.
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -407,29 +562,47 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
+        timeout-minutes: 6
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
+        timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: cargo-llvm-cov
       - name: Generate coverage (lcov)
-        # Measure the core without the `live` feature: LiveSource is the thin
-        # real-socket path, exercised by gated live tests, not the offline suite.
+        # Both product crates, not just the core: ui-tui is a thousand lines of
+        # renderer with its own tests, and measuring only terminal-core reported a
+        # number for a third of the code while the rest went unseen. terminal-bench
+        # stays out — benches are not product code, and neither sibling repo
+        # measures its bench crate.
+        #
+        # `--no-default-features` drops the `live` feature on purpose: LiveSource is
+        # the thin real-socket path, exercised by the gated live tests rather than
+        # the offline suite, so counting it would only report a hole the offline run
+        # can never fill. Revisit when it grows a mock-socket suite.
         run: >
           cargo llvm-cov --no-default-features
-          -p terminal-core
+          -p terminal-core -p wickra-terminal
           --lcov --output-path lcov.info
       - name: Upload to Codecov
+        if: env.CODECOV_TOKEN != ''
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           files: lcov.info
           fail_ci_if_error: false
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Report a missing Codecov token
+        if: env.CODECOV_TOKEN == ''
+        run: >
+          echo "::warning::CODECOV_TOKEN is not set for this repository, so the
+          coverage report was generated but never uploaded. The README badge and
+          the codecov/patch status stay empty until the secret is added."
 
   fuzz-smoke:
     name: Fuzz (smoke)
     runs-on: ubuntu-latest
+    timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -437,11 +610,14 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           toolchain: nightly
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
+        timeout-minutes: 6
         with:
           workspaces: fuzz
       - name: Install cargo-fuzz
         uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
+        timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: cargo-fuzz
       - name: Fuzz feed_event (30 s)
@@ -456,3 +632,117 @@ jobs:
       - name: Fuzz config_parse (30 s)
         run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu config_parse -- -max_total_time=30
         working-directory: fuzz
+
+  # Early heads-up on link rot while reviewing a PR. Non-blocking on purpose:
+  # external link failure is non-deterministic (third-party sites go down,
+  # rate-limit or move), and a transient outage must never gate a merge. The
+  # authoritative run is links.yml on a weekly schedule.
+  links:
+    name: External links (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        with:
+          # Keep this file set in step with links.yml.
+          args: --config lychee.toml --no-progress --root-dir "${{ github.workspace }}" "*.md" "docs/*.md" "bindings/*/README.md" "bindings/csharp/WickraTerminal/README.md" "examples/README.md" "golden/README.md" "web/README.md"
+          fail: true
+
+  # Syntax-only, and deliberately so: it needs no native library, so it stays a
+  # fast guard against the common breakage (a bad edit to an example nobody
+  # runs). It does NOT prove an example works -- the C example is built and run
+  # by the c-abi job, the C# one by the csharp job, and the Rust one is a
+  # workspace member, so `cargo build --workspace` compiles it.
+  examples-smoke:
+    name: Examples (syntax smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15 # a parse check; if it is not done in fifteen minutes it is stuck
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        id: setup_node_examples
+        continue-on-error: true
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Wait before Node retry
+        if: steps.setup_node_examples.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::warning::setup-node failed (likely CDN flake), waiting 30s before retry..."
+          sleep 30
+
+      - name: Set up Node (retry)
+        if: steps.setup_node_examples.outcome == 'failure'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Set up Python
+        id: setup_python_examples
+        continue-on-error: true
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Wait before Python retry
+        if: steps.setup_python_examples.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::warning::setup-python failed (likely CDN flake), waiting 30s before retry..."
+          sleep 30
+
+      - name: Set up Python (retry)
+        if: steps.setup_python_examples.outcome == 'failure'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Node examples, syntax check
+        shell: bash
+        run: |
+          shopt -s nullglob
+          count=0
+          for f in examples/node/*.js; do
+            echo "node --check $f"
+            node --check "$f"
+            count=$((count + 1))
+          done
+          test "$count" -gt 0 || { echo "::error::no Node examples found to check"; exit 1; }
+          echo "checked $count Node .js files"
+
+      - name: Python examples, byte-compile
+        shell: bash
+        run: |
+          shopt -s nullglob
+          count=0
+          for f in examples/python/*.py; do
+            echo "py_compile $f"
+            python -m py_compile "$f"
+            count=$((count + 1))
+          done
+          test "$count" -gt 0 || { echo "::error::no Python examples found to check"; exit 1; }
+          echo "compiled $count Python files"
+
+      - name: Go examples, parse check
+        shell: bash
+        # gofmt parses without building, so this needs neither cgo nor the native
+        # library the Go example links against at run time.
+        run: |
+          shopt -s nullglob
+          count=0
+          for f in examples/go/*.go; do
+            echo "gofmt -e $f"
+            gofmt -e "$f" > /dev/null
+            count=$((count + 1))
+          done
+          test "$count" -gt 0 || { echo "::error::no Go examples found to check"; exit 1; }
+          echo "checked $count Go files"

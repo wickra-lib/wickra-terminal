@@ -1,10 +1,15 @@
 "use strict";
 
-// Cross-language golden parity: build the terminal from the committed
-// `golden/config.json`, replay the feed, and assert the frame equals
-// `golden/expected/basic.min.json` byte-for-byte. Because the binding returns the
+// Cross-language golden parity, driven by `golden/manifest.json`.
+//
+// Each scenario names a config and a command sequence; replaying it must produce
+// the frame in its expected file, byte for byte. Because the binding returns the
 // core's compact `command_json` string verbatim, byte equality against that one
-// file is the exact cross-language parity check.
+// file is the exact parity check.
+//
+// Reading the manifest rather than naming one scenario is what makes the corpus
+// extensible: a scenario added in the Rust suite is picked up here, and in the
+// seven other language suites, with no change to any of them.
 
 const { test } = require("node:test");
 const assert = require("node:assert");
@@ -16,7 +21,7 @@ function goldenDir() {
   let dir = __dirname;
   for (let i = 0; i < 8; i++) {
     const g = path.join(dir, "golden");
-    if (fs.existsSync(path.join(g, "config.json"))) {
+    if (fs.existsSync(path.join(g, "manifest.json"))) {
       return g;
     }
     dir = path.dirname(dir);
@@ -24,18 +29,34 @@ function goldenDir() {
   throw new Error("golden/ not found");
 }
 
-test("golden parity: config.json reproduces the byte-exact frame", () => {
-  const g = goldenDir();
-  const config = fs.readFileSync(path.join(g, "config.json"), "utf8");
-  const expected = fs
-    .readFileSync(path.join(g, "expected", "basic.min.json"), "utf8")
-    .trim();
+const golden = goldenDir();
+const manifest = JSON.parse(fs.readFileSync(path.join(golden, "manifest.json"), "utf8"));
 
-  const term = new Terminal(config);
-  term.command(JSON.stringify({ type: "Subscribe", source: 0, symbol: "BTC/USDT" }));
-  let frame = "";
-  for (let i = 0; i < 32; i++) {
-    frame = term.command(JSON.stringify({ type: "Tick" }));
+for (const scenario of manifest.scenarios) {
+  test(`golden parity: ${scenario.name}`, () => {
+    const config = fs.readFileSync(path.join(golden, scenario.config), "utf8");
+    const expected = fs.readFileSync(path.join(golden, scenario.expected), "utf8").trim();
+    const commands = fs
+      .readFileSync(path.join(golden, scenario.commands), "utf8")
+      .split("\n")
+      .filter((line) => line.trim().length > 0);
+    assert.ok(commands.length > 0, scenario.name);
+
+    const term = new Terminal(config);
+    let frame = "";
+    for (const command of commands) {
+      frame = term.command(command);
+    }
+    assert.strictEqual(frame.trim(), expected, scenario.name);
+  });
+}
+
+test("the corpus covers more than one scenario", () => {
+  // A manifest that silently shrank to one entry would leave every parity test
+  // passing while checking a fraction of what it used to.
+  const names = manifest.scenarios.map((s) => s.name);
+  assert.ok(names.length >= 7, `only ${names.length} scenarios`);
+  for (const expected of ["basic", "book_deltas", "footprint", "indicators", "seek"]) {
+    assert.ok(names.includes(expected), `${expected} missing from the manifest`);
   }
-  assert.strictEqual(frame.trim(), expected);
 });

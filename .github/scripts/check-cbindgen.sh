@@ -20,6 +20,11 @@ cbindgen --config bindings/c/cbindgen.toml --crate wickra-terminal-c --output "$
 
 if ! diff -u "$header" "$tmp"; then
     echo ""
+    # Surface it as a job annotation when running under Actions; a plain line
+    # is what a local run wants.
+    if [ -n "${GITHUB_ACTIONS:-}" ]; then
+        echo "::error::$header is out of sync with cbindgen output."
+    fi
     echo "ERROR: $header is out of sync with cbindgen output."
     echo "Regenerate it with:"
     echo "  cbindgen --config bindings/c/cbindgen.toml --crate wickra-terminal-c --output $header"

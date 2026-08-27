@@ -6,7 +6,7 @@ the runnable [examples](../examples/) for full programs per language.
 ## Run the TUI over a live feed
 
 ```bash
-cargo run -p wickra-terminal -- --render tui --source live:binance:BTC/USDT
+cargo run -p wickra-terminal -- --source live:binance:BTC/USDT
 ```
 
 Keys: `s` add a source · `a` subscribe a symbol · `d` unsubscribe · `x` remove a
@@ -15,22 +15,34 @@ source · `←/→` cycle the focused symbol · `q` quit.
 ## Run the TUI over a deterministic synthetic feed (no network)
 
 ```bash
-cargo run -p wickra-terminal -- --render tui --source synth:1
+cargo run -p wickra-terminal -- --source synth:1
 ```
 
 ## Drive the core from a config file
 
 ```toml
 # terminal.toml
+timeframe = "1m"
+
 [[sources]]
 [sources.Synth]
 seed = 1
 
-[layout]
+[[indicators]]
+kind = "Sma"
+params = [20]
+
+[[indicators]]
+kind = "Rsi"
+params = [14]
+
 [[layout.panels]]
 kind = "Chart"
 [layout.panels.rect]
-x = 0; y = 0; w = 100; h = 100
+x = 0
+y = 0
+w = 100
+h = 100
 ```
 
 ```bash
@@ -114,5 +126,5 @@ Public market data only — no API keys. See
 ( cd web && npm install && npm run dev )   # http://localhost:5173
 ```
 
-See also: [PANELS.md](PANELS.md) · [SOURCES.md](SOURCES.md) ·
+See also: [INDICATORS.md](INDICATORS.md) · [PANELS.md](PANELS.md) · [SOURCES.md](SOURCES.md) ·
 [STREAMING.md](STREAMING.md).

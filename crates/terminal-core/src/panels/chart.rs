@@ -5,7 +5,7 @@ use rust_decimal::prelude::ToPrimitive;
 use super::{Panel, PanelKind};
 use crate::source::{SourceId, Symbol};
 use crate::state::AppState;
-use crate::view::{ChartView, IndicatorValue, PanelView};
+use crate::view::{ChartView, IndicatorField, IndicatorValue, PanelView};
 
 /// The number of price points the chart series carries.
 const CHART_POINTS: usize = 120;
@@ -27,9 +27,26 @@ impl Panel for ChartPanel {
                 series: st.series(CHART_POINTS),
                 indicators: st
                     .indicators
-                    .values()
+                    .snapshot()
                     .into_iter()
-                    .map(|(name, value)| IndicatorValue { name, value })
+                    .map(|mut reading| IndicatorValue {
+                        name: reading.label,
+                        value: reading.value,
+                        fields: reading
+                            .fields
+                            .into_iter()
+                            .map(|(name, value)| IndicatorField {
+                                name: name.to_string(),
+                                value,
+                            })
+                            .collect(),
+                        // Trimmed to the chart's own window: the set keeps the
+                        // same number of points, but a panel configured for
+                        // fewer should not ship more than it draws.
+                        series: reading
+                            .series
+                            .split_off(reading.series.len().saturating_sub(CHART_POINTS)),
+                    })
                     .collect(),
             },
             None => ChartView {

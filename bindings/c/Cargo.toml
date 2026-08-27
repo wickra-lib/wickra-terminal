@@ -17,21 +17,11 @@ publish = false
 name = "wickra_terminal"
 crate-type = ["cdylib", "staticlib"]
 
-# The C ABI inherently needs `unsafe` (raw pointers across the FFI boundary). This
-# crate is the one place that boundary lives; the lint set mirrors the workspace.
-[lints.clippy]
-all = { level = "warn", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
-module_name_repetitions = "allow"
-must_use_candidate = "allow"
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
-missing_safety_doc = "allow"
-cast_precision_loss = "allow"
-cast_sign_loss = "allow"
-cast_possible_truncation = "allow"
-cast_possible_wrap = "allow"
-similar_names = "allow"
+# The C ABI inherently needs `unsafe` (raw pointers across the FFI boundary).
+# The lint set is inherited; the two relaxations this boundary needs are scoped
+# to the crate in src/lib.rs, where the reason for each is written down.
+[lints]
+workspace = true
 
 [dependencies]
 terminal-core = { workspace = true }

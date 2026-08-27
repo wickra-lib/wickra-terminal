@@ -8,6 +8,10 @@
 //! `#[ignore]`d so it never runs on a normal push (network flakiness would flake
 //! every PR); the `testnet.yml` workflow runs it nightly and on demand to surface
 //! upstream/API drift — the same pattern as `wickra-exchange`.
+//!
+//! Reaching the deadline without data is a failure by default. Set
+//! `WICKRA_LIVE_ALLOW_SKIP=1` -- as `testnet.yml` does -- to degrade that to a
+//! logged skip, for networks the venue geo-restricts.
 
 #![cfg(feature = "live")]
 
@@ -49,14 +53,31 @@ fn live_binance_streams_public_market_data() {
         sleep(Duration::from_millis(250));
     }
 
-    // No price within the deadline means the venue is unreachable from this
-    // network — Binance geo-restricts data-centre / CI-runner IP ranges. Treat
-    // that as a skip rather than a failure so the nightly job stays green where
-    // the venue is blocked; it still validates the live path where reachable.
-    if !saw_price {
-        eprintln!(
-            "skipping live_binance_streams_public_market_data: no live BTC/USDT \
-             price within 20s (venue likely restricted from this runner)"
-        );
+    if saw_price {
+        return;
     }
+
+    // No price within the deadline has two very different causes, and the test
+    // cannot tell them apart from here: the venue is unreachable from this network
+    // (Binance geo-restricts data-centre and CI-runner IP ranges, and the block
+    // shows up as silence rather than an error, because `connect` only builds the
+    // HTTP client and the subscribe handshake is asynchronous), or the live path is
+    // genuinely broken.
+    //
+    // So the caller decides which it is. Unset -- a developer on an ordinary
+    // network -- the deadline is a failure, which is what a test is for. Set by
+    // `testnet.yml`, where a hosted runner may well be blocked, it degrades to a
+    // loud skip so a geo-block does not paint the nightly red forever. Either way
+    // it stays visible: passing silently on no data is what left this test unable
+    // to report anything at all.
+    let message = "no live BTC/USDT price within 20s";
+    let restricted = "(venue likely restricted from this runner)";
+    if std::env::var_os("WICKRA_LIVE_ALLOW_SKIP").is_some() {
+        if std::env::var_os("GITHUB_ACTIONS").is_some() {
+            println!("::warning::live integration skipped: {message} {restricted}");
+        }
+        eprintln!("skipping live_binance_streams_public_market_data: {message} {restricted}");
+        return;
+    }
+    panic!("{message}; set WICKRA_LIVE_ALLOW_SKIP=1 if this network cannot reach the venue");
 }

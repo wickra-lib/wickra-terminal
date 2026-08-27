@@ -25,11 +25,21 @@ struct SynthSym {
     seq: u64,
 }
 
+/// How far the synthetic clock advances per poll.
+///
+/// The timestamps have to look like a market, not like a tick index. They feed
+/// the candle builder, so a one-per-poll counter would put 60,000 polls between
+/// two one-minute bars and leave every bar-input indicator permanently warming
+/// up on the default demo source. One trade per second closes a one-minute bar
+/// every sixty polls, which is a few seconds of wall clock at the renderers'
+/// hundred-millisecond tick.
+const TICK_INTERVAL_MS: i64 = 1_000;
+
 /// A deterministic synthetic feed.
 pub struct SynthSource {
     id: SourceId,
     seed: u64,
-    /// Global tick counter (the synthetic timestamp), advanced once per `poll`.
+    /// The synthetic clock in milliseconds, advanced once per `poll`.
     t: i64,
     symbols: BTreeMap<String, SynthSym>,
 }
@@ -101,7 +111,7 @@ impl DataSource for SynthSource {
     }
 
     fn poll(&mut self) -> Vec<(Symbol, Event)> {
-        self.t = self.t.wrapping_add(1);
+        self.t = self.t.wrapping_add(TICK_INTERVAL_MS);
         let mut out = Vec::new();
         for state in self.symbols.values_mut() {
             let sym = state.symbol.clone();

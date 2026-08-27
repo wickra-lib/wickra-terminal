@@ -1,42 +1,63 @@
 # Security Policy
 
-`wickra-terminal` connects to live markets and, once explicitly enabled, can
-place authenticated orders through the Wickra exchange layer. In that mode it
-handles **secret key material** and **order flow**, so security is a first-class
-concern. Please read [THREAT_MODEL.md](THREAT_MODEL.md) for the asset inventory,
-trust boundaries and the split between the native and browser renderers.
+`wickra-terminal` renders market data. It places no orders, holds no credentials
+and keeps no position: the `Live` source connects to public endpoints with empty
+credentials, and the exchange client it wraps is used here only for public market
+data. See [THREAT_MODEL.md](THREAT_MODEL.md) for what that leaves in scope.
 
 ## Supported versions
 
-This project is pre-release. Security fixes target the `main` branch and the most
-recent published version once a release exists.
+This project is pre-release. Security fixes target the `main` branch; once a
+release exists they will target the latest one.
 
 | Version | Supported |
-|---------|-----------|
-| `main`  | ✅        |
-| `0.1.x` (upcoming) | ✅ |
+| --- | --- |
+| `main` | :white_check_mark: |
+| `0.1.0` (unreleased) | :white_check_mark: |
 
 ## Reporting a vulnerability
 
-**Please do not open a public issue, pull request or discussion for security
-problems.** Report privately through either channel:
+**Do not open a public issue, pull request or discussion for a security
+vulnerability.**
 
-- GitHub → the repository's **Security** tab → **Report a vulnerability**
-  (private advisory), or
-- email **support@wickra.org**.
+Report it privately through one of:
 
-Include a description, affected version/commit, reproduction steps and impact.
-**Never include real API keys, secrets or signed request payloads** — redact them.
+- GitHub's [private vulnerability reporting](https://github.com/wickra-lib/wickra-terminal/security/advisories/new)
+  ("Report a vulnerability" under the repository's *Security* tab), or
+- email to **support@wickra.org** with a subject line starting with
+  `[wickra-terminal security]`.
+
+Please include:
+
+- the affected version or commit, and the platform / language binding,
+- a description of the issue and its impact,
+- steps to reproduce, ideally a minimal proof of concept.
+
+## What to expect
 
 We aim to acknowledge within a few days, agree a disclosure timeline, and credit
 reporters who wish to be named once a fix ships.
 
 ## Scope
 
-In scope: leakage of secret material (logs, errors, memory) on the native
-execution path, order-rounding/validation flaws that could mis-size or mis-route
-an order, and any path that would let the browser renderer obtain a secret key.
-Both renderers default to **read-only / paper** mode. Out of scope:
-vulnerabilities in third-party exchanges themselves, and any deployment that puts
-secret keys in a browser or other untrusted client (explicitly unsupported — see
-the threat model).
+In scope:
+
+- **Memory safety across the C ABI.** Ten language bindings call five exported
+  functions, four of them across raw pointers; a null, a use-after-free or an unwind across that
+  boundary is the highest-impact class of bug here. The release profile is
+  `panic = "abort"` precisely because unwinding through C is undefined behaviour.
+- **Untrusted input handling.** Config TOML and JSON, command JSON and feed
+  events all come from outside. Malformed input must yield a typed error, never a
+  panic or a hang.
+- **Supply chain.** A compromised dependency, a tampered release artefact, or a
+  workflow that could be made to publish one.
+
+Out of scope:
+
+- Vulnerabilities in the exchanges themselves.
+- Trading losses. The terminal displays data; what a reader does with it is not a
+  security boundary.
+
+Execution, credentials and order flow are **not** in scope because they are not
+implemented. If that changes, this document and the threat model change with it —
+the scope here describes the code as it is, not as it may become.

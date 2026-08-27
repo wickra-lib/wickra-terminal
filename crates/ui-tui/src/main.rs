@@ -1,9 +1,14 @@
 //! `wickra-terminal` — the native TUI renderer.
 //!
 //! One of two reference renderers over [`terminal_core`]; the other is the Web
-//! app in `web/`. Both consume the same view-models. Select the renderer with
-//! `--render tui|web`; this binary drives the TUI and points `--render web` at
-//! the web app.
+//! app in `web/`. Both consume the same view-models, and both are driven by the
+//! same config.
+//!
+//! They are separate programs, not two modes of one. This binary is the TUI; the
+//! web app is a Vite project you run from `web/`. There used to be a
+//! `--render tui|web` flag here, but `--render web` could only ever print an
+//! instruction to go and run something else, which is a worse way of saying what
+//! the README says.
 
 mod app;
 mod input;
@@ -27,13 +32,11 @@ use app::App;
 use term::TermGuard;
 
 /// The native TUI renderer for the Wickra trading terminal.
+///
+/// The web renderer is a separate app in `web/`; see the README.
 #[derive(Parser)]
 #[command(name = "wickra-terminal", version, about)]
 struct Cli {
-    /// Which renderer to use: `tui` (this binary) or `web` (the web app).
-    #[arg(long, default_value = "tui")]
-    render: String,
-
     /// A source shorthand: `synth:<seed>`, `live:<venue>:<BASE/QUOTE>` or
     /// `replay:<json>`.
     #[arg(long)]
@@ -76,7 +79,15 @@ fn run(mut app: App) -> Result<(), Box<dyn Error>> {
     loop {
         app.update();
         let footer = app.footer();
-        tui.draw(|frame| render::draw(frame, &app.frame, app.terminal.config(), &footer))?;
+        tui.draw(|frame| {
+            render::draw(
+                frame,
+                &app.frame,
+                app.terminal.config(),
+                &footer,
+                app.focused_panel,
+            );
+        })?;
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
@@ -104,19 +115,10 @@ fn run(mut app: App) -> Result<(), Box<dyn Error>> {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
-    match cli.render.as_str() {
-        "web" => {
-            println!("The web renderer lives in web/. Run: cd web && npm install && npm run dev");
-            Ok(())
-        }
-        "tui" => {
-            let config = build_config(&cli)?;
-            let mut terminal = Terminal::new(&config)?;
-            ensure_subscription(&mut terminal, &config)?;
-            run(App::new(terminal))
-        }
-        other => Err(format!("unknown renderer: {other} (expected tui or web)").into()),
-    }
+    let config = build_config(&cli)?;
+    let mut terminal = Terminal::new(&config)?;
+    ensure_subscription(&mut terminal, &config)?;
+    run(App::new(terminal))
 }
 
 #[cfg(test)]
@@ -127,7 +129,6 @@ mod tests {
     #[test]
     fn build_config_from_source_adds_the_source() {
         let cli = Cli {
-            render: "tui".to_string(),
             source: Some("synth:1".to_string()),
             config: None,
         };

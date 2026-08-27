@@ -54,3 +54,41 @@ fn sources_are_object_safe_and_report_their_kind() {
     assert_eq!(sources[2].id(), 2);
     assert_eq!(sources[2].kind(), SourceKind::Manual);
 }
+
+// `Live` is the one source whose trait shape most needs this guard: it is the
+// only implementation behind a feature flag, so a signature drift there compiles
+// away on a default `cargo check` of the wasm binding and surfaces only in a
+// native build. Constructing it does not touch the network -- `LiveSource::connect`
+// builds the HTTP client and nothing else; the subscribe handshake is what talks
+// to the venue, and this test never subscribes.
+#[cfg(feature = "live")]
+#[test]
+fn live_source_is_object_safe_and_reports_its_kind() {
+    let live = build_source(
+        3,
+        &SourceSpec::Live {
+            venue: "binance".to_string(),
+            symbol: "BTC/USDT".to_string(),
+            testnet: false,
+        },
+    )
+    .unwrap();
+
+    let sources: Vec<Box<dyn DataSource>> = vec![live];
+    assert_eq!(sources[0].id(), 3);
+    assert_eq!(sources[0].kind(), SourceKind::Live);
+}
+
+#[cfg(feature = "live")]
+#[test]
+fn live_source_rejects_an_unknown_venue() {
+    let err = build_source(
+        4,
+        &SourceSpec::Live {
+            venue: "not-a-venue".to_string(),
+            symbol: "BTC/USDT".to_string(),
+            testnet: false,
+        },
+    );
+    assert!(err.is_err());
+}

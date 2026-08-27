@@ -1,11 +1,45 @@
+<p align="center">
+  <a href="https://wickra.org"><img src="https://raw.githubusercontent.com/wickra-lib/.github/main/profile/wickra-banner.webp?v=514" alt="Wickra Terminal — the data-driven trading terminal for the JVM" width="100%"></a>
+</p>
+
+[![Built on Wickra](https://img.shields.io/badge/built%20on-wickra-3b82f6)](https://github.com/wickra-lib/wickra)
+[![CI](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/ci.svg)](https://github.com/wickra-lib/wickra-terminal/actions/workflows/ci.yml)
+[![codecov](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/codecov.svg)](https://codecov.io/gh/wickra-lib/wickra-terminal)
+[![License: MIT OR Apache-2.0](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/license.svg)](https://github.com/wickra-lib/wickra-terminal#license)
+
 # Wickra Terminal — Java
 
-JVM bindings for the `wickra-terminal` data-driven core, over the Wickra C ABI
-using the Foreign Function & Memory API (FFM/Panama). Build a `Terminal` from a
-JSON config, drive it with command JSON, read back frame view-models — the same
-protocol as the native TUI and every other binding.
+---
 
-Requires a JVM with a finalized FFM API (`maven.compiler.release` 22).
+> **▶ Web renderer:** the same core drives a browser front-end (WASM + Vue) as a selectable renderer — see [`web/`](https://github.com/wickra-lib/wickra-terminal/tree/main/web).
+
+JVM bindings for the [wickra-terminal](https://github.com/wickra-lib/wickra-terminal) data-driven core, over the Wickra
+C ABI hub using the Foreign Function & Memory API (FFM/Panama). Build a
+`Terminal` from a JSON config, drive it with command JSON, read back frame
+view-models — the same protocol as the native TUI and every other binding.
+
+No JNI shim: FFM calls the C ABI directly, so there is no second native artefact
+to build or ship.
+
+## Requirements
+
+- A JVM with a finalized FFM API — `maven.compiler.release` 22
+- The native `wickra_terminal` library, located at run time via the
+  `native.lib.dir` system property
+
+## Install
+
+> **Pre-release.** The package is not on the registry yet, so until the first
+> release the way in is a source build (below). The install line is what it will
+> be once published.
+
+```xml
+<dependency>
+  <groupId>org.wickra</groupId>
+  <artifactId>wickra-terminal</artifactId>
+  <version>0.1.0</version>
+</dependency>
+```
 
 ## Usage
 
@@ -22,13 +56,72 @@ try (Terminal term = new Terminal(
 }
 ```
 
+## API
+
+| Name | Returns |
+|------|---------|
+| `new Terminal(configJson)` | A handle; throws on an invalid config |
+| `term.command(cmdJson)` | The frame JSON; throws on an invalid command |
+| `Terminal.version()` | The library version |
+| `term.close()` | Releases the native handle |
+
+`Terminal` implements `AutoCloseable`, so try-with-resources is the intended form.
+
 ## Build and test from source
 
 ```bash
-cargo build -p wickra-terminal-c          # produces the native wickra_terminal library
-mvn -f bindings/java/pom.xml test         # loads it from target/debug via native.lib.dir
+cargo build -p wickra-terminal-c     # produces the native wickra_terminal library
+mvn -f bindings/java/pom.xml test    # loads it from target/debug via native.lib.dir
 ```
 
-The native library is located at runtime via the `native.lib.dir` system
-property (the workspace `target/debug` directory by default); the release
-pipeline stages it per platform.
+The `native.lib.dir` system property defaults to the workspace `target/debug`
+directory; the release pipeline stages the library per platform.
+
+## The command protocol
+
+Every binding drives the same eight commands, and the frame that comes back is
+the same JSON in all of them:
+
+| Command | Effect |
+|---------|--------|
+| `Tick` | Poll every source, fold what arrived, return the frame |
+| `Subscribe` / `Unsubscribe` | Add or drop a market on one source |
+| `SetFocus` | Choose the market the panels render |
+| `AddSource` / `RemoveSource` | Attach or detach a feed at run time |
+| `Seek` | Rewind or fast-forward a replay source (the time machine) |
+| `Feed` | Hand an event to a `Manual` source from the host |
+
+A frame is `{"panels": [...]}`, one entry per configured panel, each tagged with
+its `panel` kind — `chart`, `book`, `tape`, `watchlist`, `footprint`. See
+[`docs/`](https://github.com/wickra-lib/wickra-terminal/tree/main/docs) for the panel and source references.
+
+## Cross-language equality
+
+The same config and the same command sequence produce a byte-identical frame in
+Rust, Python, Node.js, WASM, C, C++, C#, Go, Java and R. That is not an aspiration:
+[`golden/`](https://github.com/wickra-lib/wickra-terminal/tree/main/golden) holds a recorded feed and the expected frame,
+and every binding's test suite asserts its own output against that one file.
+
+## Documentation
+
+- **Repository:** <https://github.com/wickra-lib/wickra-terminal>
+- **Panels, sources, renderers, streaming:** [`docs/`](https://github.com/wickra-lib/wickra-terminal/tree/main/docs)
+- **Cookbook:** [`docs/Cookbook.md`](https://github.com/wickra-lib/wickra-terminal/blob/main/docs/Cookbook.md)
+- **Built on Wickra:** <https://github.com/wickra-lib/wickra> · <https://docs.wickra.org>
+
+## Security
+
+Found a security issue? **Please don't open a public issue.** Report it privately
+via the repository's *Security* tab (*"Report a vulnerability"*) or email
+**support@wickra.org**. Full policy: <https://github.com/wickra-lib/wickra-terminal/blob/main/SECURITY.md>.
+
+## Disclaimer
+
+Not a trading system, and not financial advice. The terminal renders market data
+and derived view-models; what you do with them is your own risk. Provided **as
+is**, without warranty of any kind.
+
+## License
+
+Dual-licensed under [MIT](https://github.com/wickra-lib/wickra-terminal/blob/main/LICENSE-MIT) or
+[Apache-2.0](https://github.com/wickra-lib/wickra-terminal/blob/main/LICENSE-APACHE), at your option.

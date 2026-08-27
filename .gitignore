@@ -27,6 +27,9 @@ node_modules/
 
 # WASM / web build artifacts
 bindings/wasm/pkg/
+# The nodejs-target build the WASM test suite requires (CI builds both targets:
+# `web` for the renderer, `nodejs` so `require()` can load the module).
+bindings/wasm/pkg-node/
 web/node_modules/
 web/dist/
 

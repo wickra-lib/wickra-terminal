@@ -72,11 +72,6 @@ func main() {
 }
 ```
 
-The same command protocol works from every binding and both renderers — `Tick`,
-`Subscribe`, `Unsubscribe`, `SetFocus`, `AddSource`, `RemoveSource`, `Seek` (the
-time-machine) and `Feed` (a host-fed source). See the
-[docs](https://github.com/wickra-lib/wickra-terminal/tree/main/docs).
-
 ## Building from this repository (contributors)
 
 This `bindings/go` directory is the development source. To build it directly,
@@ -94,7 +89,51 @@ cp target/release/wickra_terminal.dll      bindings/go/lib/windows_amd64/  # Win
 Then, with the library on the loader path, run `go test ./...` from this
 directory.
 
+## The command protocol
+
+Every binding drives the same eight commands, and the frame that comes back is
+the same JSON in all of them:
+
+| Command | Effect |
+|---------|--------|
+| `Tick` | Poll every source, fold what arrived, return the frame |
+| `Subscribe` / `Unsubscribe` | Add or drop a market on one source |
+| `SetFocus` | Choose the market the panels render |
+| `AddSource` / `RemoveSource` | Attach or detach a feed at run time |
+| `Seek` | Rewind or fast-forward a replay source (the time machine) |
+| `Feed` | Hand an event to a `Manual` source from the host |
+
+A frame is `{"panels": [...]}`, one entry per configured panel, each tagged with
+its `panel` kind — `chart`, `book`, `tape`, `watchlist`, `footprint`. See
+[`docs/`](https://github.com/wickra-lib/wickra-terminal/tree/main/docs) for the panel and source references.
+
+## Cross-language equality
+
+The same config and the same command sequence produce a byte-identical frame in
+Rust, Python, Node.js, WASM, C, C++, C#, Go, Java and R. That is not an aspiration:
+[`golden/`](https://github.com/wickra-lib/wickra-terminal/tree/main/golden) holds a recorded feed and the expected frame,
+and every binding's test suite asserts its own output against that one file.
+
+## Documentation
+
+- **Repository:** <https://github.com/wickra-lib/wickra-terminal>
+- **Panels, sources, renderers, streaming:** [`docs/`](https://github.com/wickra-lib/wickra-terminal/tree/main/docs)
+- **Cookbook:** [`docs/Cookbook.md`](https://github.com/wickra-lib/wickra-terminal/blob/main/docs/Cookbook.md)
+- **Built on Wickra:** <https://github.com/wickra-lib/wickra> · <https://docs.wickra.org>
+
+## Security
+
+Found a security issue? **Please don't open a public issue.** Report it privately
+via the repository's *Security* tab (*"Report a vulnerability"*) or email
+**support@wickra.org**. Full policy: <https://github.com/wickra-lib/wickra-terminal/blob/main/SECURITY.md>.
+
+## Disclaimer
+
+Not a trading system, and not financial advice. The terminal renders market data
+and derived view-models; what you do with them is your own risk. Provided **as
+is**, without warranty of any kind.
+
 ## License
 
-Dual-licensed under [MIT](https://github.com/wickra-lib/wickra-terminal/blob/main/LICENSE-MIT)
-or [Apache-2.0](https://github.com/wickra-lib/wickra-terminal/blob/main/LICENSE-APACHE), at your option.
+Dual-licensed under [MIT](https://github.com/wickra-lib/wickra-terminal/blob/main/LICENSE-MIT) or
+[Apache-2.0](https://github.com/wickra-lib/wickra-terminal/blob/main/LICENSE-APACHE), at your option.
