@@ -8,7 +8,7 @@ use ratatui::Frame;
 use terminal_core::view::FootprintView;
 
 /// Render the footprint panel.
-pub fn render(frame: &mut Frame, area: Rect, view: &FootprintView, focused: bool) {
+pub(crate) fn render(frame: &mut Frame, area: Rect, view: &FootprintView, focused: bool) {
     let lines: Vec<Line> = view
         .levels
         .iter()

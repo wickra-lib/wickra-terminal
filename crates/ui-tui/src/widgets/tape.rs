@@ -8,7 +8,7 @@ use ratatui::Frame;
 use terminal_core::view::TapeView;
 
 /// Render the tape panel.
-pub fn render(frame: &mut Frame, area: Rect, view: &TapeView, focused: bool) {
+pub(crate) fn render(frame: &mut Frame, area: Rect, view: &TapeView, focused: bool) {
     let lines: Vec<Line> = view
         .prints
         .iter()

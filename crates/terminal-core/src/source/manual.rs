@@ -14,6 +14,7 @@ use wickra_exchange_core::Event;
 
 /// A source whose events are pushed in by the host rather than pulled from a
 /// connection.
+#[derive(Debug)]
 pub struct ManualSource {
     id: SourceId,
     subscribed: HashSet<Symbol>,

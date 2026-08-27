@@ -7,7 +7,7 @@ use ratatui::Frame;
 use terminal_core::view::WatchlistView;
 
 /// Render the watchlist panel.
-pub fn render(frame: &mut Frame, area: Rect, view: &WatchlistView, focused: bool) {
+pub(crate) fn render(frame: &mut Frame, area: Rect, view: &WatchlistView, focused: bool) {
     let lines: Vec<Line> = view
         .rows
         .iter()

@@ -9,6 +9,7 @@ use crate::state::AppState;
 use crate::view::{BookView, Level, PanelView};
 
 /// An L2 order book for the focused market.
+#[derive(Debug)]
 pub struct BookPanel;
 
 fn levels(side: Vec<(Decimal, Decimal)>) -> Vec<Level> {

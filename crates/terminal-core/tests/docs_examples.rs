@@ -165,7 +165,19 @@ fn every_documented_command_is_accepted() {
 }
 
 /// Documents that state how many indicators this terminal reaches.
-const COUNTED: [&str; 3] = ["README.md", "ARCHITECTURE.md", "docs/INDICATORS.md"];
+///
+/// Every bare occurrence of the number in these files carries a marker, because
+/// the guard is only worth as much as its coverage: three of these documents
+/// used to state the count in prose outside any marker, so the test passed while
+/// six sites were free to rot.
+const COUNTED: [&str; 6] = [
+    "README.md",
+    "ARCHITECTURE.md",
+    "docs/INDICATORS.md",
+    "ROADMAP.md",
+    "BENCHMARKS.md",
+    "docs/STREAMING.md",
+];
 
 #[test]
 fn the_documented_indicator_count_is_the_real_one() {
@@ -178,10 +190,10 @@ fn the_documented_indicator_count_is_the_real_one() {
     // registry.
     let root = repo_root();
     let actual = terminal_core::registry::DEFAULTS.len().to_string();
-    let mut found = 0;
 
     for rel in COUNTED {
         let text = read(&root, rel);
+        let mut found = 0;
         let mut rest = text.as_str();
         while let Some(start) = rest.find(OPEN) {
             let after = &rest[start + OPEN.len()..];
@@ -196,12 +208,44 @@ fn the_documented_indicator_count_is_the_real_one() {
             found += 1;
             rest = &after[end + CLOSE.len()..];
         }
+        // Per file rather than a total: a document that lost its marker used to
+        // be masked by another that had gained one.
+        assert!(found > 0, "{rel} states no indicator count in a marker");
     }
-    assert_eq!(
-        found,
-        COUNTED.len(),
-        "every counted document should carry exactly one marker"
-    );
+}
+
+/// The count of indicators wickra-core holds that this terminal cannot reach.
+///
+/// Not derivable from the registry, which only knows what it registered, so the
+/// documents state it and this checks the arithmetic instead: unreachable plus
+/// registered must be the library's total. A regeneration that reaches further
+/// moves both numbers, and a stale one is caught here rather than by a reader.
+#[test]
+fn the_unreachable_indicator_count_adds_up() {
+    const LIBRARY_TOTAL: usize = 504;
+    let root = repo_root();
+    let registered = terminal_core::registry::DEFAULTS.len();
+    let needle = format!(" of the {LIBRARY_TOTAL}");
+    let mut checked = 0;
+
+    for rel in ["docs/INDICATORS.md", "ROADMAP.md"] {
+        let text = read(&root, rel);
+        for (idx, _) in text.match_indices(&needle) {
+            let claimed: usize = text[..idx]
+                .rsplit(|c: char| !c.is_ascii_digit())
+                .find(|word| !word.is_empty())
+                .unwrap_or_else(|| panic!("{rel}: no number before \"{needle}\""))
+                .parse()
+                .unwrap_or_else(|err| panic!("{rel}: {err}"));
+            assert_eq!(
+                claimed + registered,
+                LIBRARY_TOTAL,
+                "{rel} says {claimed} unreachable and the registry holds {registered},                  which is not the {LIBRARY_TOTAL} the library ships"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "no unreachable-count claim found to check");
 }
 
 const OPEN: &str = "<!--indicator-count-->";

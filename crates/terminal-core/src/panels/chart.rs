@@ -11,6 +11,7 @@ use crate::view::{ChartView, IndicatorField, IndicatorValue, PanelView};
 const CHART_POINTS: usize = 120;
 
 /// A price chart with the focused market's indicator overlays.
+#[derive(Debug)]
 pub struct ChartPanel;
 
 impl Panel for ChartPanel {

@@ -9,7 +9,7 @@ use terminal_core::SourceSpec;
 /// # Errors
 ///
 /// Returns a human-readable message if the shorthand is not recognized.
-pub fn parse_source(spec: &str) -> Result<SourceSpec, String> {
+pub(crate) fn parse_source(spec: &str) -> Result<SourceSpec, String> {
     let (kind, rest) = spec.split_once(':').ok_or_else(|| {
         "expected kind:… (synth:1 | live:venue:BASE/QUOTE | replay:JSON)".to_string()
     })?;

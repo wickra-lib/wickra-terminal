@@ -56,7 +56,7 @@ is actually about.
   a canvas and some tables, and neither can diverge in behaviour because neither
   has any.
 - **The boundary is data, not an API.** A config JSON in, a command JSON in, a
-  frame JSON out. That is why 460 indicators became reachable from ten languages
+  frame JSON out. That is why <!--indicator-count-->460<!--/indicator-count--> indicators became reachable from ten languages
   without a line of binding code, and why a third renderer needs no core change.
 - **One core, checked across ten languages.** Not "ports that should agree" — one
   Rust core behind a C ABI, with every binding asserting the same recorded feed
@@ -175,7 +175,7 @@ laptop, single-threaded, with the default two-indicator overlay:
 A full tick costs about ten microseconds, so the core sustains tens of thousands
 of frames per second — far above any renderer's budget, which is the point of the
 O(1) fold. The indicator count is a direct multiplier: those numbers are two
-indicators, and the registry offers 460. See [BENCHMARKS.md](BENCHMARKS.md).
+indicators, and the registry offers <!--indicator-count-->460<!--/indicator-count-->. See [BENCHMARKS.md](BENCHMARKS.md).
 
 ## Project layout
 
@@ -242,7 +242,7 @@ run it through the C ABI under ctest. Ten languages, one file: that is what make
 
 Alongside it: property tests over the fold invariants, four `cargo-fuzz` targets
 across the parsing paths, a conformance suite pinning the trait shapes, a
-registry suite that constructs and drives all 460 indicators, and a test that
+registry suite that constructs and drives all <!--indicator-count-->460<!--/indicator-count--> indicators, and a test that
 extracts every example from this README and the docs and runs it.
 
 ```bash

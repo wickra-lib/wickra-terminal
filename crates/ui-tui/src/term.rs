@@ -14,7 +14,7 @@ use crossterm::terminal::{
 };
 
 /// Restores the terminal to a cooked, main-screen state on drop or panic.
-pub struct TermGuard;
+pub(crate) struct TermGuard;
 
 impl TermGuard {
     /// Enter raw mode + the alternate screen and arm the panic-restore hook.
@@ -22,7 +22,7 @@ impl TermGuard {
     /// # Errors
     ///
     /// Returns an I/O error if the terminal mode cannot be changed.
-    pub fn new() -> io::Result<Self> {
+    pub(crate) fn new() -> io::Result<Self> {
         enable_raw_mode()?;
         execute!(io::stdout(), EnterAlternateScreen)?;
 

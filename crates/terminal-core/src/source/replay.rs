@@ -14,6 +14,7 @@ use crate::error::{Error, Result};
 use wickra_exchange_core::Event;
 
 /// A deterministic replay of a recorded event list.
+#[derive(Debug)]
 pub struct ReplaySource {
     id: SourceId,
     /// The recorded feed, each event pre-tagged with its market. Lifecycle
