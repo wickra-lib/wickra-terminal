@@ -16,7 +16,8 @@ Terminal::version()                 the crate version
 ```
 
 Commands (`Tick`, `Subscribe`, `Unsubscribe`, `SetFocus`, `AddSource`,
-`RemoveSource`, `Seek`, `Feed`) and the returned frame (the active panels'
+`RemoveSource`, `Seek`, `Feed`, `AddIndicator`, `RemoveIndicator`,
+`SetTimeframe`, `ListIndicators`) and the returned frame (the active panels'
 view-models) are JSON. No callbacks cross the boundary, so streaming is as
 trivial to carry as a synchronous call — across all ten languages. `Seek` is the
 time-machine (rewind a replay source and re-fold), and `Feed` pushes an external

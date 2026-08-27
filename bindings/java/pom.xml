@@ -13,11 +13,37 @@
   <description>The data-driven trading-terminal core for the JVM over the Wickra C ABI (FFM/Panama): build a Terminal from a JSON config, drive it with commands, read back frame view-models.</description>
   <url>https://github.com/wickra-lib/wickra-terminal</url>
 
+  <!-- Two entries, not one named "MIT OR Apache-2.0". That string is an SPDX
+       expression, which Cargo understands and Maven does not: Central validates
+       each <license> as a single named license with a url, so the expression
+       form is rejected. The dual licence is expressed as two elements, matching
+       the LICENSE-MIT and LICENSE-APACHE files at the repository root. -->
   <licenses>
     <license>
-      <name>MIT OR Apache-2.0</name>
+      <name>MIT</name>
+      <url>https://opensource.org/licenses/MIT</url>
+      <distribution>repo</distribution>
+    </license>
+    <license>
+      <name>Apache-2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+      <distribution>repo</distribution>
     </license>
   </licenses>
+
+  <developers>
+    <developer>
+      <id>kingchenc</id>
+      <name>kingchenc</name>
+      <url>https://github.com/kingchenc</url>
+    </developer>
+  </developers>
+
+  <scm>
+    <connection>scm:git:https://github.com/wickra-lib/wickra-terminal.git</connection>
+    <developerConnection>scm:git:https://github.com/wickra-lib/wickra-terminal.git</developerConnection>
+    <url>https://github.com/wickra-lib/wickra-terminal</url>
+  </scm>
 
   <properties>
     <maven.compiler.release>22</maven.compiler.release>
@@ -58,6 +84,114 @@
           </systemPropertyVariables>
         </configuration>
       </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <version>3.5.1</version>
+        <configuration>
+          <archive>
+            <manifestEntries>
+              <!-- Grant native access when the jar is run directly. This binding
+                   is FFM/Panama, which is a restricted API: without the entry a
+                   consumer on JDK 24+ gets a native-access error rather than a
+                   warning. -->
+              <Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
+            </manifestEntries>
+          </archive>
+        </configuration>
+      </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <!--
+      Release profile (CI only, gated). `release.yml` runs
+      `mvn -B -f bindings/java -Prelease deploy -DskipTests`, so everything
+      Maven Central requires beyond a plain jar lives here: a sources jar, a
+      javadoc jar, a GPG signature over every artifact, and the publishing
+      plugin that uploads them.
+
+      Without this profile the deploy runs bare. Maven only warns about a
+      missing -P, so the failure is not the missing profile itself. It is
+      `mvn deploy` with no distributionManagement and no signatures, which
+      Central rejects. `github-release` depends on this job, so that rejection
+      takes the whole GitHub Release with it.
+
+      The native libraries are staged into src/main/resources/native/<os>-<arch>/
+      from the c-abi-* artifacts before the deploy runs, so the published jar
+      carries every platform's library.
+    -->
+    <profile>
+      <id>release</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-source-plugin</artifactId>
+            <version>3.4.0</version>
+            <executions>
+              <execution>
+                <id>attach-sources</id>
+                <goals><goal>jar-no-fork</goal></goals>
+              </execution>
+            </executions>
+          </plugin>
+
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-javadoc-plugin</artifactId>
+            <version>3.12.0</version>
+            <configuration>
+              <!-- Central requires a javadoc jar, not perfect javadoc; doclint
+                   would fail the release over a missing @param on a binding
+                   whose contract is the C ABI. -->
+              <doclint>none</doclint>
+              <quiet>true</quiet>
+            </configuration>
+            <executions>
+              <execution>
+                <id>attach-javadocs</id>
+                <goals><goal>jar</goal></goals>
+              </execution>
+            </executions>
+          </plugin>
+
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <version>3.2.8</version>
+            <executions>
+              <execution>
+                <id>sign-artifacts</id>
+                <phase>verify</phase>
+                <goals><goal>sign</goal></goals>
+                <configuration>
+                  <!-- Non-interactive signing on CI: modern GPG needs loopback
+                       pinentry to take the passphrase from the env without a
+                       TTY. The key and passphrase are wired in by setup-java. -->
+                  <gpgArguments>
+                    <arg>--pinentry-mode</arg>
+                    <arg>loopback</arg>
+                  </gpgArguments>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+
+          <plugin>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <version>0.11.0</version>
+            <extensions>true</extensions>
+            <configuration>
+              <!-- Matches `server-id: central` in the setup-java step, which is
+                   where CENTRAL_USERNAME / CENTRAL_PASSWORD are bound. -->
+              <publishingServerId>central</publishingServerId>
+              <autoPublish>true</autoPublish>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>
