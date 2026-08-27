@@ -651,6 +651,10 @@ jobs:
     timeout-minutes: 45
     needs: c-abi-build
     runs-on: ubuntu-latest
+    # This publishes to a second repository with a PAT, so it belongs behind the
+    # same environment gate as the other six publishing jobs rather than beside
+    # them.
+    environment: release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -716,8 +720,21 @@ jobs:
             git -c commit.gpgsign=false commit -q -m "Release v$version"
           fi
           git push origin HEAD:refs/heads/main
-          git tag "v$version"
-          git push origin "v$version"
+          # Idempotent, like every other publish step in this workflow: a bare
+          # `git tag` exits 128 on an existing tag, which failed the job, which
+          # skipped github-release -- so a partial re-run could never produce a
+          # GitHub Release.
+          #
+          # Left alone rather than force-moved when it exists. The Go module
+          # proxy caches a version by content hash, so moving a published tag
+          # gives consumers a checksum mismatch, which reads as a supply-chain
+          # alarm rather than a re-release.
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1; then
+            echo "skip: v$version is already tagged on the mirror"
+          else
+            git tag "v$version"
+            git push origin "v$version"
+          fi
 
   # --------------------------------------------------------------------------
   # GitHub Release: create a DRAFT, attach every built artefact, then publish-
@@ -843,7 +860,13 @@ jobs:
   attestations:
     name: Attest build provenance
     timeout-minutes: 45
-    needs: [cargo-publish, python-wheels, python-sdist, github-release]
+    needs:
+      - cargo-publish
+      - python-wheels
+      - python-sdist
+      - tui-binaries
+      - c-abi-build
+      - github-release
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -861,6 +884,16 @@ jobs:
           pattern: wheels-*
           path: artifacts/python
           merge-multiple: true
+      - name: Download the TUI binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: tui-*
+          path: artifacts/tui
+      - name: Download the C ABI libraries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: c-abi-*
+          path: artifacts/c-abi
       - name: Attest build provenance
         id: attest
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
@@ -869,6 +902,8 @@ jobs:
             artifacts/crates/*.crate
             artifacts/python/*.whl
             artifacts/python/*.tar.gz
+            artifacts/tui/**/*
+            artifacts/c-abi/**/*.tar.gz
       - name: Attach provenance bundle to the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -894,8 +929,16 @@ jobs:
   publish-release:
     name: Publish the GitHub Release
     timeout-minutes: 45
+    # No `always()`. With `needs` alone, this runs only when BOTH dependencies
+    # succeeded, which is the point: the release notes and the Signed-Releases
+    # check both claim provenance, and `always()` let the release go public with
+    # the bundle missing.
+    #
+    # The failure mode this trades into is the safe one. A Sigstore outage now
+    # leaves the release as a draft, which is recoverable by re-running; the
+    # other way round leaves a published release permanently short of the
+    # provenance it advertises.
     needs: [github-release, attestations]
-    if: always() && needs.github-release.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
