@@ -163,3 +163,46 @@ fn every_documented_command_is_accepted() {
     }
     assert!(checked > 0, "no command examples found to check");
 }
+
+/// Documents that state how many indicators this terminal reaches.
+const COUNTED: [&str; 3] = ["README.md", "ARCHITECTURE.md", "docs/INDICATORS.md"];
+
+#[test]
+fn the_documented_indicator_count_is_the_real_one() {
+    // The indicator library keeps its counts in step with a workflow that
+    // rewrites them on every push. This repository has no such workflow, and the
+    // count is the single most load-bearing number in its README — it was 514
+    // while the core wired two. A marker rather than a loose regular expression
+    // because the README also cites the library's own 514 and a sibling
+    // project's, and only this terminal's own figure should move with the
+    // registry.
+    let root = repo_root();
+    let actual = terminal_core::registry::DEFAULTS.len().to_string();
+    let mut found = 0;
+
+    for rel in COUNTED {
+        let text = read(&root, rel);
+        let mut rest = text.as_str();
+        while let Some(start) = rest.find(OPEN) {
+            let after = &rest[start + OPEN.len()..];
+            let end = after
+                .find(CLOSE)
+                .unwrap_or_else(|| panic!("{rel}: an indicator-count marker is not closed"));
+            let claimed = &after[..end];
+            assert_eq!(
+                claimed, actual,
+                "{rel} claims {claimed} indicators; the registry has {actual}"
+            );
+            found += 1;
+            rest = &after[end + CLOSE.len()..];
+        }
+    }
+    assert_eq!(
+        found,
+        COUNTED.len(),
+        "every counted document should carry exactly one marker"
+    );
+}
+
+const OPEN: &str = "<!--indicator-count-->";
+const CLOSE: &str = "<!--/indicator-count-->";

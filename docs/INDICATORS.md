@@ -1,7 +1,7 @@
 # Indicators
 
 The terminal drives the [Wickra](https://github.com/wickra-lib/wickra) indicator
-set directly: **421 of them**, constructible by name from a config or at run
+set directly: **<!--indicator-count-->421<!--/indicator-count--> of them**, constructible by name from a config or at run
 time, in every binding.
 
 ## Naming one

@@ -18,10 +18,10 @@
 
 **One core. Ten languages. Two renderers.** A streaming trading terminal built on
 the [Wickra](https://github.com/wickra-lib/wickra) core — live charts, order-book,
-tape and 514 streaming indicators — with a native **TUI** and a **Web** front-end
+tape and <!--indicator-count-->421<!--/indicator-count--> streaming indicators — with a native **TUI** and a **Web** front-end
 as a *second renderer* of the same logic, driven by the same config.
 
-> **▶ Live demo:** all 514 indicators over real Binance market data, computed live in your browser — **[live.wickra.org](https://live.wickra.org)** · zero backend, powered by `wickra-wasm`.
+> **▶ Live demo:** the Wickra library's own 514 indicators over real Binance market data, computed live in your browser — **[live.wickra.org](https://live.wickra.org)** · zero backend, powered by `wickra-wasm`.
 
 > **Part of the [Wickra ecosystem](https://github.com/wickra-lib):** the same data-driven core and ten-language binding surface also power [wickra-exchange](https://github.com/wickra-lib/wickra-exchange), [wickra-backtest](https://github.com/wickra-lib/wickra-backtest), [wickra-terminal](https://github.com/wickra-lib/wickra-terminal), [wickra-screener](https://github.com/wickra-lib/wickra-screener), [wickra-xray](https://github.com/wickra-lib/wickra-xray), [wickra-radar](https://github.com/wickra-lib/wickra-radar), [wickra-copilot](https://github.com/wickra-lib/wickra-copilot) and [wickra-shazam](https://github.com/wickra-lib/wickra-shazam).
 
