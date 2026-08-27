@@ -55,7 +55,7 @@ test("the corpus covers more than one scenario", () => {
   // A manifest that silently shrank to one entry would leave every parity test
   // passing while checking a fraction of what it used to.
   const names = manifest.scenarios.map((s) => s.name);
-  assert.ok(names.length >= 6, `only ${names.length} scenarios`);
+  assert.ok(names.length >= 7, `only ${names.length} scenarios`);
   for (const expected of ["basic", "book_deltas", "footprint", "indicators", "seek"]) {
     assert.ok(names.includes(expected), `${expected} missing from the manifest`);
   }

@@ -38,7 +38,7 @@ Terminal::command_json(cmd_json)    apply a command, return the next frame as JS
 Terminal::version()                 the crate version
 ```
 
-Commands (subscribe, set-focus, add-source, add-indicator, set-timeframe…) and frames (the
+Commands (`Subscribe`, `SetFocus`, `AddSource`, `AddIndicator`, `SetTimeframe`…) and frames (the
 active panels' view-models) are JSON. No callbacks cross the C ABI — every
 language drives its own loop and drains frames, so streaming is as trivial to
 carry as a synchronous call, R included.

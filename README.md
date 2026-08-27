@@ -100,7 +100,20 @@ cargo run -p wickra-terminal -- --source live:binance:BTC/USDT
 
 # Or a deterministic synthetic feed (no network):
 cargo run -p wickra-terminal -- --source synth:1
+
+# Or replay a recorded feed. `replay:` takes the JSON itself, not a path, so
+# a recorded file is passed through the shell:
+cargo run -p wickra-terminal -- --source "replay:$(cat golden/replay/basic.json)"
+
+# Anything beyond one source -- panels, indicators, timeframe -- comes from a
+# config file, which overrides `--source`:
+cargo run -p wickra-terminal -- --config my-terminal.toml
 ```
+
+The three `--source` shorthands are `synth:<seed>`, `live:<venue>:<BASE/QUOTE>`
+and `replay:<json>` — the last one taking the recorded events inline rather than
+a filename. See [docs/SOURCES.md](docs/SOURCES.md) for what each one does and
+[docs/Cookbook.md](docs/Cookbook.md) for worked config files.
 
 ## Renderers
 
@@ -119,7 +132,7 @@ Both consume the identical `Frame` of view-models from `terminal-core`.
 > commands here are what they will be.
 
 ```bash
-cargo add wickra-terminal                    # Rust
+cargo install wickra-terminal                # Rust (the TUI binary)
 pip install wickra-terminal                  # Python
 npm install wickra-terminal                  # Node.js
 dotnet add package WickraTerminal            # C# / .NET
@@ -252,7 +265,9 @@ python scripts/check_binding_surface.py     # every binding matches the C ABI he
 
 ## Requirements
 
-- **Rust** ≥ 1.86 (workspace MSRV; the Node binding needs ≥ 1.88).
+- **Rust** ≥ 1.88 to build the `wickra-terminal` TUI (ratatui pulls
+  `instability`/`darling`), and to build the Node binding. The library crate
+  `terminal-core` keeps the workspace MSRV of ≥ 1.86.
 - Renderer/binding toolchains as needed: Node ≥ 22, Python ≥ 3.9, a C toolchain,
   .NET 8, JDK 22+, Go 1.23, R — see each `bindings/<lang>/README.md`.
 
