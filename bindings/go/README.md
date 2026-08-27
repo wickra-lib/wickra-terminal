@@ -72,11 +72,17 @@ func main() {
 }
 ```
 
-## Building from this repository (contributors)
+## Building from source (contributors)
 
-This `bindings/go` directory is the development source. To build it directly,
-compile the C ABI hub and stage the library into the per-platform directory cgo
-links against:
+This section applies to the [wickra-terminal] source repository, not to the
+published module: the released module vendors the libraries and needs none of
+this. It is here because the same file is the module's page on pkg.go.dev, and a
+reader who arrived there should not be sent looking for directories the module
+does not contain.
+
+In a `wickra-terminal` checkout, compile the C ABI hub and stage the library into
+the per-platform directory cgo links against — paths are from the repository
+root:
 
 ```bash
 cargo build -p wickra-terminal-c --release
@@ -86,8 +92,10 @@ cp target/release/libwickra_terminal.dylib bindings/go/lib/darwin_arm64/   # mac
 cp target/release/wickra_terminal.dll      bindings/go/lib/windows_amd64/  # Windows
 ```
 
-Then, with the library on the loader path, run `go test ./...` from this
-directory.
+Then, with the library on the loader path, run `go test ./...` from
+`bindings/go`.
+
+[wickra-terminal]: https://github.com/wickra-lib/wickra-terminal
 
 ## The command protocol
 
