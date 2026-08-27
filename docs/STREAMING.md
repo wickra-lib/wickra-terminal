@@ -11,15 +11,33 @@ second regardless of how long a session has run.
 to one `(SourceId, Symbol)`'s state incrementally:
 
 - **Trade** → update `last`, push into the bounded `TapeRing`, add to the
-  `Footprint` (per-price buy/sell volume), advance the `IndicatorSet`, and append
-  to a bounded price history.
+  `Footprint` (per-price buy/sell volume), fold into the `CandleBuilder`, advance
+  the `IndicatorSet` with the resulting tick, and append to a bounded price
+  history.
 - **Ticker** → update `last`.
 - **BookSnapshot / BookDelta** → apply to the local L2 `BookState` (a
   `BTreeMap`-backed book; a zero-quantity level is a removal).
 - Account / lifecycle events do not affect per-symbol market state.
 
-Every buffer is bounded (the tape ring, the price history), so memory is bounded
-regardless of session length.
+Every buffer is bounded — the tape ring at 256 prints, the price history at 512,
+each indicator's series at 120 — so memory is bounded regardless of session
+length. The book and the footprint are bounded by the market rather than by a
+constant: a book holds the levels a venue publishes, and the footprint one entry
+per price traded.
+
+## Bars, from the same fold
+
+More than half the Wickra indicator set reads a `Candle`, and a terminal has
+ticks. The same trade that advances the price indicators is folded into a
+[`CandleBuilder`](../crates/terminal-core/src/candle.rs), which returns a closed
+bar on the tick that crosses a bar boundary and nothing on every other tick. So a
+price indicator advances once per trade and a bar indicator once per bar, from
+one code path and one pass.
+
+Only closed bars reach an indicator. Feeding the bar in progress would make every
+reading repaint as the bar fills — the last print of a minute silently rewriting
+what the previous print produced. The forming bar is available separately, for a
+renderer that wants to draw it.
 
 ## Determinism and the golden corpus
 
@@ -48,4 +66,10 @@ WICKRA_REGEN=1 cargo test -p terminal-core --test golden
 ## Performance
 
 Measured with `cargo bench -p terminal-bench` (see [../BENCHMARKS.md](../BENCHMARKS.md)):
-folding one event ~333 ns, a full tick (poll + fold + build every panel) ~25 µs.
+folding one trade ~157 ns, applying an L2 depth diff ~115 ns, a full tick (poll +
+fold + build every panel) ~10.7 µs.
+
+The split matters more than the totals: the fold is nanoseconds and building the
+view-models is microseconds, so the O(1) fold is not what a renderer waits on.
+The indicator count is a direct multiplier on the fold — those figures are the
+two-indicator default, and the registry offers 421.
