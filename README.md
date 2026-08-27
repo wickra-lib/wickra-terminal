@@ -87,9 +87,13 @@ The same `Terminal` handle — construct from a JSON config, drive with
 `command(json) -> json`, read `version` — is reachable from every binding:
 
 ```python
+import json
 from wickra_terminal import Terminal
-t = Terminal('{"sources":[{"Synth":{"seed":1}}]}')
-frame = t.command('{"Tick":{}}')   # JSON frame of panel view-models
+
+term = Terminal(json.dumps({"sources": [{"Synth": {"seed": 1}}]}))
+term.command(json.dumps({"type": "Subscribe", "source": 0, "symbol": "BTC/USDT"}))
+frame = json.loads(term.command(json.dumps({"type": "Tick"})))
+print(frame["panels"][0])          # the chart panel's view-model
 ```
 
 ## Project layout

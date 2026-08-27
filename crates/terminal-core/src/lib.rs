@@ -39,7 +39,9 @@ pub mod terminal;
 pub mod view;
 
 pub use candle::{CandleBuilder, Timeframe};
-pub use config::{Config, Keybinds, Layout, PanelSpec, RectSpec, SourceSpec};
+pub use config::{
+    default_indicators, Config, IndicatorSpec, Keybinds, Layout, PanelSpec, RectSpec, SourceSpec,
+};
 pub use error::{Error, Result};
 pub use panels::{build_panel, Panel, PanelKind};
 pub use registry::{build as build_indicator, TickIndicator, TickInput, KINDS};

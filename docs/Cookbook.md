@@ -22,15 +22,27 @@ cargo run -p wickra-terminal -- --source synth:1
 
 ```toml
 # terminal.toml
+timeframe = "1m"
+
 [[sources]]
 [sources.Synth]
 seed = 1
 
-[layout]
+[[indicators]]
+kind = "Sma"
+params = [20]
+
+[[indicators]]
+kind = "Rsi"
+params = [14]
+
 [[layout.panels]]
 kind = "Chart"
 [layout.panels.rect]
-x = 0; y = 0; w = 100; h = 100
+x = 0
+y = 0
+w = 100
+h = 100
 ```
 
 ```bash
