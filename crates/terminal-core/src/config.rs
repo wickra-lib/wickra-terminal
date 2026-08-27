@@ -303,4 +303,112 @@ mod tests {
         let err = Config::from_toml("not = = valid").unwrap_err();
         assert!(matches!(err, Error::Config(_)));
     }
+
+    #[test]
+    fn a_config_with_indicators_and_a_timeframe_round_trips_through_json() {
+        let mut cfg = Config::default_layout();
+        cfg.indicators = vec![
+            IndicatorSpec::new("Rsi", vec![14.0]),
+            IndicatorSpec::new("MacdIndicator", vec![12.0, 26.0, 9.0]),
+            IndicatorSpec::new("AdaptiveCycle", vec![]),
+        ];
+        cfg.timeframe = Timeframe::parse("15m").unwrap();
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert_eq!(Config::from_json(&json).unwrap(), cfg);
+    }
+
+    #[test]
+    fn a_config_round_trips_through_toml() {
+        // TOML is the on-disk `--config` form, and it is a different serialiser
+        // with different rules about tables and nesting, so JSON passing says
+        // nothing about it.
+        let mut cfg = Config::default_layout();
+        cfg.sources = vec![SourceSpec::Synth { seed: 3 }];
+        cfg.indicators = vec![IndicatorSpec::new("Atr", vec![14.0])];
+        cfg.timeframe = Timeframe::parse("4h").unwrap();
+        let text = toml::to_string(&cfg).unwrap();
+        assert_eq!(Config::from_toml(&text).unwrap(), cfg);
+    }
+
+    #[test]
+    fn the_timeframe_survives_as_its_label_not_as_a_number() {
+        let mut cfg = Config::default_layout();
+        cfg.timeframe = Timeframe::parse("15m").unwrap();
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(
+            json.contains(r#""timeframe":"15m""#),
+            "a config should carry the label a reader recognises: {json}"
+        );
+    }
+
+    #[test]
+    fn omitting_indicators_and_timeframe_yields_the_defaults() {
+        let cfg = Config::from_json(r#"{"sources":[],"layout":{"panels":[]}}"#).unwrap();
+        assert_eq!(cfg.indicators, default_indicators());
+        assert_eq!(cfg.timeframe, Timeframe::default());
+    }
+
+    #[test]
+    fn omitting_the_layout_yields_the_standard_panels() {
+        // The shape the README shows: sources and nothing else.
+        let cfg = Config::from_json(r#"{"sources":[{"Synth":{"seed":1}}]}"#).unwrap();
+        assert_eq!(cfg.layout.panels.len(), 5);
+        assert_eq!(cfg.sources, vec![SourceSpec::Synth { seed: 1 }]);
+    }
+
+    #[test]
+    fn an_empty_object_is_a_valid_config() {
+        let cfg = Config::from_json("{}").unwrap();
+        assert_eq!(cfg, Config::default());
+    }
+
+    #[test]
+    fn an_indicator_spec_may_omit_its_parameters() {
+        let cfg = Config::from_json(r#"{"indicators":[{"kind":"AdaptiveCycle"}]}"#).unwrap();
+        assert_eq!(
+            cfg.indicators,
+            vec![IndicatorSpec::new("AdaptiveCycle", vec![])]
+        );
+    }
+
+    #[test]
+    fn an_invalid_timeframe_is_rejected_at_parse_time() {
+        // Not at first use: a typo in a config file should say so when the file
+        // is read, not when the first bar would have closed.
+        let err = Config::from_json(r#"{"timeframe":"1w"}"#).unwrap_err();
+        assert!(matches!(err, Error::Config(_)), "{err}");
+        assert!(err.to_string().contains("1w"), "{err}");
+    }
+
+    #[test]
+    fn indicator_labels_render_whole_numbers_without_a_decimal_point() {
+        assert_eq!(IndicatorSpec::new("Sma", vec![20.0]).label(), "Sma(20)");
+        assert_eq!(
+            IndicatorSpec::new("MacdIndicator", vec![12.0, 26.0, 9.0]).label(),
+            "MacdIndicator(12,26,9)"
+        );
+        assert_eq!(
+            IndicatorSpec::new("AdaptiveCycle", vec![]).label(),
+            "AdaptiveCycle"
+        );
+        // A genuinely fractional parameter keeps its point.
+        assert_eq!(
+            IndicatorSpec::new("AccelerationBands", vec![14.0, 2.5]).label(),
+            "AccelerationBands(14,2.5)"
+        );
+    }
+
+    #[test]
+    fn every_default_indicator_is_in_the_registry() {
+        // The default overlay is built with `expect` in `IndicatorSet::default`,
+        // so a rename in the registry would turn into a panic at run time rather
+        // than a compile error. This is the guard for that.
+        for spec in default_indicators() {
+            assert!(
+                crate::registry::build(&spec.kind, &spec.params).is_ok(),
+                "the default overlay names {}, which the registry does not accept",
+                spec.kind
+            );
+        }
+    }
 }

@@ -272,3 +272,64 @@ fn a_candle_indicator_reads_the_bar_not_the_price() {
         "Atr read the tick price instead of the bar: {value}"
     );
 }
+
+/// The registry is regenerated from a sibling checkout, which is the one way it
+/// can shrink without anyone noticing: point the generator at an older or
+/// partial wickra tree and it emits a smaller file that still compiles and whose
+/// every entry still passes every test above.
+///
+/// The number is a floor rather than an equality, so adding indicators upstream
+/// does not fail the build; only losing them does. Raise it when a regeneration
+/// legitimately grows the set.
+const REGISTERED_FLOOR: usize = 421;
+
+#[test]
+fn the_registry_has_not_silently_shrunk() {
+    assert!(
+        DEFAULTS.len() >= REGISTERED_FLOOR,
+        "the registry has {} indicators, down from {REGISTERED_FLOOR}. If a          regeneration dropped them on purpose, lower the floor in this test and          say why; otherwise the generator was pointed at the wrong tree.",
+        DEFAULTS.len()
+    );
+}
+
+#[test]
+fn both_input_families_are_represented() {
+    // A generator run that silently lost one family would still leave a large,
+    // healthy-looking registry. Sma reads prices, Atr reads bars; one of each
+    // must survive, and they must behave differently on a tick with no bar.
+    let mut price = build("Sma", &[5.0]).unwrap();
+    let mut bar = build("Atr", &[5.0]).unwrap();
+    let tick = TickInput {
+        price: 100.0,
+        candle: None,
+    };
+    for _ in 0..20 {
+        price.update(&tick);
+        bar.update(&tick);
+    }
+    assert!(
+        price.update(&tick).is_some(),
+        "no price-input indicator advanced: the f64 family is missing"
+    );
+    assert!(
+        bar.update(&tick).is_none(),
+        "a bar indicator advanced without a bar: the Candle family is mis-wired"
+    );
+}
+
+#[test]
+fn multi_output_indicators_survived_the_generation() {
+    // The field impls are generated per Output struct, so losing them would leave
+    // every multi-output indicator reporting a value and no fields at all.
+    let with_fields = DEFAULTS
+        .iter()
+        .filter(|(kind, params)| {
+            let (_, fields) = drive(kind, params, 300);
+            fields > 0
+        })
+        .count();
+    assert!(
+        with_fields >= 60,
+        "only {with_fields} indicators reported named fields; the multi-output          wrappers look lost"
+    );
+}
