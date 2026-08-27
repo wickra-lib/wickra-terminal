@@ -41,4 +41,11 @@ jobs:
       # to a public venue and folds a few streamed events; run it here, not on
       # every push.
       - name: Run gated live-integration tests
+        # Binance geo-restricts data-centre IP ranges, and the block arrives as
+        # silence rather than an error, so a hosted runner can legitimately see
+        # no data. Opt this job into the skip; a developer running the same test
+        # locally gets a hard failure instead, which is the point of the gate.
+        # The skip still prints a job warning, so a blocked runner stays visible.
+        env:
+          WICKRA_LIVE_ALLOW_SKIP: "1"
         run: cargo test -p terminal-core --all-features -- --ignored --nocapture
