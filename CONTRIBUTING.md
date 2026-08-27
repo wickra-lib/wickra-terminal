@@ -27,6 +27,7 @@ cargo fmt --all
 cargo test --workspace --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo deny check
+.github/scripts/check-cbindgen.sh   # skips cleanly if cbindgen is not installed
 ```
 
 `cargo fmt --all` and the `clippy -D warnings` gate are enforced in CI on three

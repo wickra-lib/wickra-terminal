@@ -319,21 +319,14 @@ jobs:
         run: cargo build -p wickra-terminal-c --release
       - name: Rust unit tests
         run: cargo test -p wickra-terminal-c
-      # The generated header is platform-independent, so checking drift on one OS
-      # is enough — and avoids a spurious CRLF/LF diff on the Windows runner.
       - name: Check the committed header is in sync with cbindgen
+        # The generated header is platform-independent, so checking drift on one
+        # OS is enough — and avoids a spurious CRLF/LF diff on the Windows runner.
+        # The script is the same one contributors run locally, where it skips
+        # cleanly if cbindgen is not installed.
         if: runner.os == 'Linux'
         shell: bash
-        run: |
-          cbindgen --config bindings/c/cbindgen.toml --crate wickra-terminal-c --output bindings/c/include/wickra_terminal.h
-          if ! git diff --quiet -- bindings/c/include/wickra_terminal.h; then
-            echo "::error::bindings/c/include/wickra_terminal.h is out of sync — run cbindgen and commit the result"
-            git --no-pager diff -- bindings/c/include/wickra_terminal.h
-            exit 1
-          fi
-      # The real cross-language test: a foreign C consumer links the generated
-      # header + the compiled library and runs. If this passes on all three OSes,
-      # every C-capable language can link the same way.
+        run: .github/scripts/check-cbindgen.sh
       - name: Build and run the C example (CMake + ctest)
         shell: bash
         run: |
