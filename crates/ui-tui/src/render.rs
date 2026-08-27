@@ -10,7 +10,7 @@ use crate::widgets;
 
 /// Map a percent-of-screen [`RectSpec`] onto a concrete area.
 #[must_use]
-pub fn rect_from_spec(area: Rect, spec: RectSpec) -> Rect {
+pub(crate) fn rect_from_spec(area: Rect, spec: RectSpec) -> Rect {
     let pct =
         |dim: u16, percent: u16| -> u16 { (u32::from(dim) * u32::from(percent) / 100) as u16 };
     Rect {
@@ -28,7 +28,7 @@ pub fn rect_from_spec(area: Rect, spec: RectSpec) -> Rect {
 /// `focused_panel` indexes `config.layout.panels`; that panel is drawn with a
 /// highlighted border. An index past the end simply highlights nothing, which is
 /// what an empty layout should look like.
-pub fn draw(
+pub(crate) fn draw(
     frame: &mut TuiFrame,
     view: &Frame,
     config: &Config,

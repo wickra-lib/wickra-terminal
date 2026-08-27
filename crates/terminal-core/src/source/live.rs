@@ -23,6 +23,16 @@ pub struct LiveSource {
     client: Box<dyn Exchange>,
 }
 
+impl std::fmt::Debug for LiveSource {
+    /// `client` is a `Box<dyn Exchange>` from wickra-exchange, which carries no
+    /// `Debug` bound, so the source is identified by its id.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LiveSource")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
+}
+
 impl LiveSource {
     /// Connect a read-only client to `venue` for public market data.
     ///

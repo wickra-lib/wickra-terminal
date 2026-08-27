@@ -18,6 +18,7 @@ use wickra_exchange_core::{BookLevel, Event, OrderBookSnapshot, OrderSide, Trade
 /// Per-symbol synthetic state: the market, its current price and the walk's RNG
 /// state. Keyed in an ordered map by the symbol's string form so iteration —
 /// and therefore the event stream — is deterministic across runs.
+#[derive(Debug)]
 struct SynthSym {
     symbol: Symbol,
     price: Decimal,
@@ -36,6 +37,7 @@ struct SynthSym {
 const TICK_INTERVAL_MS: i64 = 1_000;
 
 /// A deterministic synthetic feed.
+#[derive(Debug)]
 pub struct SynthSource {
     id: SourceId,
     seed: u64,

@@ -9,6 +9,7 @@ use crate::state::AppState;
 use crate::view::{FootprintLevel, FootprintView, PanelView};
 
 /// A per-price buy/sell volume profile for the focused market.
+#[derive(Debug)]
 pub struct FootprintPanel;
 
 impl Panel for FootprintPanel {

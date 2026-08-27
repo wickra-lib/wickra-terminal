@@ -26,6 +26,7 @@ pub const WICKRA_TERMINAL_ERR: c_int = -2;
 
 /// An opaque handle to a terminal instance. Created by [`wickra_terminal_new`]
 /// and destroyed by [`wickra_terminal_free`]; never dereferenced by the caller.
+#[derive(Debug)]
 pub struct WickraTerminal(Terminal);
 
 /// Read a NUL-terminated C string as `&str`, or `None` on null / bad UTF-8.

@@ -18,7 +18,7 @@ use crate::spec;
 
 /// A pending text prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InputKind {
+pub(crate) enum InputKind {
     /// Add a source from a shorthand (`synth:2`, `live:binance:ETH/USDT`, …).
     AddSource,
     /// Subscribe a symbol on the focused source.
@@ -26,7 +26,7 @@ pub enum InputKind {
 }
 
 /// The current interaction mode.
-pub enum Mode {
+pub(crate) enum Mode {
     /// Keys map to actions.
     Normal,
     /// Keys edit a text buffer for the given prompt.
@@ -34,7 +34,7 @@ pub enum Mode {
 }
 
 /// The renderer state driven by the event loop.
-pub struct App {
+pub(crate) struct App {
     /// The terminal core this renderer drives.
     pub terminal: Terminal,
     /// Set once the user asks to quit.
@@ -52,7 +52,7 @@ pub struct App {
 impl App {
     /// Wrap a terminal core in a fresh app.
     #[must_use]
-    pub fn new(terminal: Terminal) -> Self {
+    pub(crate) fn new(terminal: Terminal) -> Self {
         Self {
             terminal,
             should_quit: false,
@@ -65,12 +65,12 @@ impl App {
     }
 
     /// Pump the core and capture the next frame.
-    pub fn update(&mut self) {
+    pub(crate) fn update(&mut self) {
         self.frame = self.terminal.tick();
     }
 
     /// Reduce a user action onto the terminal.
-    pub fn on_action(&mut self, action: Action) {
+    pub(crate) fn on_action(&mut self, action: Action) {
         match action {
             Action::Quit => self.should_quit = true,
             Action::NextSymbol => self.cycle_symbol(true),
@@ -94,27 +94,27 @@ impl App {
     }
 
     /// Append a character to the input buffer (no-op outside input mode).
-    pub fn input_push(&mut self, ch: char) {
+    pub(crate) fn input_push(&mut self, ch: char) {
         if let Mode::Input { buffer, .. } = &mut self.mode {
             buffer.push(ch);
         }
     }
 
     /// Delete the last character of the input buffer.
-    pub fn input_backspace(&mut self) {
+    pub(crate) fn input_backspace(&mut self) {
         if let Mode::Input { buffer, .. } = &mut self.mode {
             buffer.pop();
         }
     }
 
     /// Cancel input mode.
-    pub fn input_cancel(&mut self) {
+    pub(crate) fn input_cancel(&mut self) {
         self.mode = Mode::Normal;
         self.status = "cancelled".to_string();
     }
 
     /// Apply the current input buffer and return to normal mode.
-    pub fn input_submit(&mut self) {
+    pub(crate) fn input_submit(&mut self) {
         let Mode::Input { kind, buffer } = &self.mode else {
             return;
         };
@@ -129,13 +129,13 @@ impl App {
 
     /// Whether a text prompt is open.
     #[must_use]
-    pub fn is_input(&self) -> bool {
+    pub(crate) fn is_input(&self) -> bool {
         matches!(self.mode, Mode::Input { .. })
     }
 
     /// The footer line: the open prompt, or the last status message.
     #[must_use]
-    pub fn footer(&self) -> String {
+    pub(crate) fn footer(&self) -> String {
         match &self.mode {
             Mode::Input { kind, buffer } => {
                 let label = match kind {

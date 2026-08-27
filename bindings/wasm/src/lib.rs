@@ -14,6 +14,7 @@ use wasm_bindgen::prelude::*;
 use terminal_core::Terminal as CoreTerminal;
 
 /// A trading terminal instance driven by JSON commands.
+#[derive(Debug)]
 #[wasm_bindgen]
 pub struct Terminal {
     inner: CoreTerminal,

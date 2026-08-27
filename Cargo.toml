@@ -69,6 +69,16 @@ wasm-bindgen = "0.2"
 criterion = "0.8"
 proptest = "1"
 
+[workspace.lints.rust]
+# `forbid`, not `deny`: nothing outside the C ABI boundary has any business
+# reaching for unsafe, and forbid cannot be switched off by an `#[allow]` that
+# slips in with a future change. The two crates that genuinely need it say so in
+# their own manifests, which is visible in review rather than buried in a file.
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+unused_must_use = "deny"
+
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
