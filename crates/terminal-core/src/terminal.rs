@@ -15,7 +15,7 @@ use crate::config::{Config, SourceSpec};
 use crate::error::{Error, Result};
 use crate::panels::{build_panel, Panel};
 use crate::source::{build_source, event_symbol, Event, SourceId, Symbol};
-use crate::state::{AppState, SymbolState};
+use crate::state::{AppState, IndicatorSet, SymbolState};
 use crate::view::Frame;
 
 /// A command applied through the data-driven boundary.
@@ -90,8 +90,17 @@ impl Terminal {
     /// Returns an error if a source cannot be built or a configured live market
     /// cannot be subscribed.
     pub fn new(config: &Config) -> Result<Self> {
+        // Build the set once up front: an unknown indicator or a rejected
+        // parameter must fail here, naming itself, rather than when the first
+        // trade arrives.
+        IndicatorSet::from_specs(&config.indicators)?;
+        let state = AppState {
+            indicators: config.indicators.clone(),
+            timeframe: config.timeframe,
+            ..AppState::default()
+        };
         let mut terminal = Self {
-            state: AppState::default(),
+            state,
             config: config.clone(),
             panels: config.layout.panels.iter().map(build_panel).collect(),
             next_source_id: 0,

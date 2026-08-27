@@ -10,6 +10,7 @@ use crate::panels::PanelKind;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::candle::Timeframe;
 use crate::error::{Error, Result};
 
 /// One data source to open on startup.
@@ -104,6 +105,55 @@ impl Default for Keybinds {
     }
 }
 
+/// One indicator to track on a chart: a registry name and its parameters.
+///
+/// The name is a `wickra-core` type name (`Sma`, `Rsi`, `MacdIndicator`) and the
+/// parameters are positional, in the order that type's constructor takes them.
+/// `registry::KINDS` lists every accepted name and `registry::DEFAULTS` the
+/// parameters the library itself uses.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IndicatorSpec {
+    /// The registry name.
+    pub kind: String,
+    /// Positional constructor parameters.
+    #[serde(default)]
+    pub params: Vec<f64>,
+}
+
+impl IndicatorSpec {
+    /// A spec for `kind` with `params`.
+    #[must_use]
+    pub fn new(kind: impl Into<String>, params: Vec<f64>) -> Self {
+        Self {
+            kind: kind.into(),
+            params,
+        }
+    }
+
+    /// The label a renderer shows: `Sma(20)`, or just `Sma` with no parameters.
+    ///
+    /// A whole-number parameter prints without a trailing `.0`, so a period reads
+    /// as the count it is rather than as a float that happens to be round.
+    #[must_use]
+    pub fn label(&self) -> String {
+        if self.params.is_empty() {
+            return self.kind.clone();
+        }
+        let params: Vec<String> = self
+            .params
+            .iter()
+            .map(|p| {
+                if p.fract() == 0.0 {
+                    format!("{p:.0}")
+                } else {
+                    p.to_string()
+                }
+            })
+            .collect();
+        format!("{}({})", self.kind, params.join(","))
+    }
+}
+
 /// A panel layout plus the shared keymap.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Layout {
@@ -114,14 +164,32 @@ pub struct Layout {
     pub keybinds: Keybinds,
 }
 
-/// The whole terminal as data: sources to open and a layout to render.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The default chart overlay: a short and a long moving average.
+#[must_use]
+pub fn default_indicators() -> Vec<IndicatorSpec> {
+    vec![
+        IndicatorSpec::new("Sma", vec![20.0]),
+        IndicatorSpec::new("Ema", vec![50.0]),
+    ]
+}
+
+/// The whole terminal as data: sources to open, indicators to track, and a
+/// layout to render.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     /// Sources to open on startup.
     #[serde(default)]
     pub sources: Vec<SourceSpec>,
-    /// The panel layout.
+    /// The panel layout. Omitting it means the standard five-panel layout, so a
+    /// minimal config is a list of sources and nothing else.
+    #[serde(default)]
     pub layout: Layout,
+    /// Indicators tracked for every market. Omitting it means the default overlay.
+    #[serde(default = "default_indicators")]
+    pub indicators: Vec<IndicatorSpec>,
+    /// The bar size the candle-input indicators are fed at.
+    #[serde(default)]
+    pub timeframe: Timeframe,
 }
 
 impl Config {
@@ -145,10 +213,28 @@ impl Config {
         serde_json::from_str(s).map_err(|e| Error::Config(e.to_string()))
     }
 
-    /// A four-panel default layout (chart, book, tape, watchlist) with no
-    /// sources — the starting point a renderer overlays sources onto.
+    /// The standard layout with no sources: the starting point a renderer
+    /// overlays sources onto.
     #[must_use]
     pub fn default_layout() -> Self {
+        Self::default()
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            sources: Vec::new(),
+            layout: Layout::default(),
+            indicators: default_indicators(),
+            timeframe: Timeframe::default(),
+        }
+    }
+}
+
+impl Default for Layout {
+    /// Five panels (chart, book, footprint, tape, watchlist) and the default keymap.
+    fn default() -> Self {
         let panels = vec![
             PanelSpec {
                 kind: PanelKind::Chart,
@@ -172,11 +258,8 @@ impl Config {
             },
         ];
         Self {
-            sources: Vec::new(),
-            layout: Layout {
-                panels,
-                keybinds: Keybinds::default(),
-            },
+            panels,
+            keybinds: Keybinds::default(),
         }
     }
 }
