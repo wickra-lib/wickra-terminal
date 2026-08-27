@@ -206,3 +206,51 @@ fn the_documented_indicator_count_is_the_real_one() {
 
 const OPEN: &str = "<!--indicator-count-->";
 const CLOSE: &str = "<!--/indicator-count-->";
+
+#[test]
+fn benchmarks_md_lists_the_benchmarks_that_exist() {
+    // BENCHMARKS.md described four benchmarks while three existed, and
+    // contradicted itself two sections apart: four bullet points above, three
+    // table rows below. Nobody reads a document against its own source, so this
+    // does.
+    let root = repo_root();
+    let bench = fs::read_to_string(root.join("crates/terminal-bench/benches/terminal.rs"))
+        .expect("the bench source");
+    let doc = read(&root, "BENCHMARKS.md");
+
+    let defined = names_between(&bench, "bench_function(\"", "\"");
+    assert!(
+        !defined.is_empty(),
+        "no benchmarks found in the bench source"
+    );
+
+    let in_prose = names_between(&doc, "- **`", "`**");
+    let in_table = names_between(
+        &doc, "
+| `", "`",
+    );
+
+    assert_eq!(
+        in_prose, defined,
+        "BENCHMARKS.md's prose and the bench source disagree"
+    );
+    assert_eq!(
+        in_table, defined,
+        "BENCHMARKS.md's results table and the bench source disagree"
+    );
+}
+
+/// Every substring bracketed by `open` and `close`, as a sorted set.
+fn names_between(text: &str, open: &str, close: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find(open) {
+        let after = &rest[start + open.len()..];
+        let Some(end) = after.find(close) else { break };
+        found.push(after[..end].to_string());
+        rest = &after[end + close.len()..];
+    }
+    found.sort_unstable();
+    found.dedup();
+    found
+}
