@@ -1,7 +1,7 @@
 # Indicators
 
 The terminal drives the [Wickra](https://github.com/wickra-lib/wickra) indicator
-set directly: **<!--indicator-count-->421<!--/indicator-count--> of them**, constructible by name from a config or at run
+set directly: **<!--indicator-count-->436<!--/indicator-count--> of them**, constructible by name from a config or at run
 time, in every binding.
 
 ## Naming one
@@ -34,13 +34,26 @@ Each indicator is labelled from its spec: `Sma(20)`, `MacdIndicator(12,26,9)`,
 
 ## What a tick feeds
 
-The terminal folds individual trades, but half the indicator set reads bars. Both
-are driven from the same tick:
+The terminal folds individual trades, but most of the indicator set reads
+something other than the bare price. All four families are driven from the same
+tick, and each advances only on a tick that carries what it consumes:
 
 | Input | Fed with | Advances |
 |-------|----------|----------|
 | price (`f64`) | the last traded price | on every trade |
 | bar (`Candle`) | the bar that just closed | once per `timeframe` |
+| tape (`Trade`) | the print, with its size and aggressor side | on every trade |
+| book (`OrderBook`) | the locally maintained L2 book | on every trade |
+
+The tape and book families read state the terminal already keeps, converted into
+the core's types once per tick and shared across the whole set rather than
+converted per indicator. The book is converted only when some indicator in the
+set actually reads it, so the default price-and-bar configuration never walks the
+book for nothing.
+
+A book that is momentarily one-sided or crossed — an ordinary thing to see
+between a snapshot and the diffs that follow it — yields no value that tick. The
+book indicators simply do not advance, the same as while warming up.
 
 Only **closed** bars reach an indicator. Feeding the bar in progress would make
 every reading repaint as the bar fills — the last print of a minute silently
@@ -121,7 +134,7 @@ it saw before.
 
 ## What is not registered, and why
 
-83 of the 504 indicators in `wickra-core` are not reachable from the terminal
+68 of the 504 indicators in `wickra-core` are not reachable from the terminal
 yet. They are listed with a reason every time the registry is regenerated, rather
 than quietly dropped:
 
@@ -130,10 +143,13 @@ than quietly dropped:
 | pairwise (`(f64, f64)`) | 24 | needs a reference symbol; the terminal tracks several markets, so this is reachable, but the pairing has to be configured |
 | derivatives tick | 17 | no funding/open-interest feed in this repository |
 | cross-section | 15 | no market-wide breadth feed |
-| trade | 9 | reachable from the tape, needs a conversion to the core's `Trade` |
-| order book | 7 | reachable from the live book, needs a conversion to the core's `OrderBook` |
 | trade-quote | 3 | no quote feed |
-| output or constructor shape | 8 | profile outputs, `u32` outputs and one constructor the parameter reader does not handle |
+| output or constructor shape | 9 | profile outputs, `u32` outputs, `Footprint`'s variable-length level list, and one constructor the parameter reader does not handle |
+
+`Footprint` is the one that looks like an omission and is not: its output is a
+list of price levels whose length changes bar to bar, which does not fit the
+fixed named-field shape the registry exposes. The terminal renders a footprint
+from its own panel instead, which is what the `footprint` panel is.
 
 ## Regenerating the registry
 

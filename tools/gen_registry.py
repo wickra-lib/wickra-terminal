@@ -57,8 +57,38 @@ ARG_READER = {
     "i32": "i32_param(params, {i}, kind)?",
 }
 
-# The input families this terminal can feed today.
-SUPPORTED_INPUTS = {"f64", "Candle"}
+# The input families this terminal can feed today, mapped to the wrapper that
+# adapts each to `TickIndicator`: (single-output, struct-output).
+#
+# The terminal holds a book and a tape of its own, so `Trade` and `OrderBook`
+# need only a conversion to the core's types, done once per tick in `state.rs`.
+WRAPPERS = {
+    "f64": ("ScalarPrice", "ScalarPriceFields"),
+    "Candle": ("CandleIn", "CandleInFields"),
+    "Trade": ("TradeIn", "TradeInFields"),
+    "OrderBook": ("BookIn", "BookInFields"),
+}
+
+SUPPORTED_INPUTS = set(WRAPPERS)
+
+# The core type each family names, for the `Indicator<Input = ...>` bound.
+INPUT_TY = {
+    "f64": "f64",
+    "Candle": "Candle",
+    "Trade": "wc::Trade",
+    "OrderBook": "wc::OrderBook",
+}
+
+# How each family reaches its value out of a `&TickInput` and feeds it. A tick
+# that carries nothing this family consumes yields `None` without advancing the
+# indicator, which is what keeps a bar indicator on bars and a book indicator on
+# book updates while they all share one tick.
+UPDATE_EXPR = {
+    "f64": "self.{recv}.update(input.price)",
+    "Candle": "input.candle.and_then(|c| self.{recv}.update(c))",
+    "Trade": "input.trade.and_then(|t| self.{recv}.update(t))",
+    "OrderBook": "input.book.clone().and_then(|b| self.{recv}.update(b))",
+}
 
 
 def assoc_types(text: str, ty: str) -> tuple[str | None, str | None]:
@@ -114,10 +144,18 @@ HEAD = '''//! Indicator registry: constructs `wickra-core` indicators by name an
 //! ```
 //!
 //! Source of truth: the wickra-core indicator sources — the `Indicator` impls,
-//! their `new` signatures and their Output structs. Every indicator whose input
-//! is a price (`Input = f64`, fed the last trade) or a bar (`Input = Candle`, fed
-//! each bar as it closes) is registered, with a scalar `f64` or an all-`f64`-field
-//! struct output. Multi-output indicators expose their fields by name.
+//! their `new` signatures and their Output structs. An indicator is registered
+//! when its input is one of the four families this terminal can feed and its
+//! output is a scalar `f64` or a struct of `f64` fields:
+//!
+//! | `Input`     | Fed with                                  | Advances     |
+//! |-------------|-------------------------------------------|--------------|
+//! | `f64`       | the last trade price                      | every trade  |
+//! | `Candle`    | the bar the tick just closed              | every bar    |
+//! | `Trade`     | the print, with size and aggressor side   | every trade  |
+//! | `OrderBook` | the locally maintained L2 book            | every trade  |
+//!
+//! Multi-output indicators expose their fields by name.
 
 use wickra_core::{self as wc, Candle, Indicator};
 
@@ -125,15 +163,64 @@ use crate::error::{Error, Result};
 
 /// What an indicator may consume on one tick.
 ///
-/// `price` is always present — it is the last trade or ticker price. `candle` is
-/// `Some` only on the tick that closed a bar, which is why bar indicators advance
-/// once per bar rather than once per trade.
-#[derive(Debug, Clone, Copy)]
+/// `price` is always present — it is the last trade or ticker price. The rest are
+/// optional because a tick does not carry all of them: `candle` is `Some` only on
+/// the tick that closed a bar, which is why bar indicators advance once per bar
+/// rather than once per trade; `trade` and `book` are `Some` when the tick came
+/// from a print and the book has two sides to show.
+///
+/// It is built once per tick and shared by reference across the whole indicator
+/// set, so the conversion from the terminal's own book and tape into the core's
+/// types is paid once rather than once per indicator.
+#[derive(Debug, Clone)]
 pub struct TickInput {
     /// The last traded price.
     pub price: f64,
     /// The bar that just closed, if this tick closed one.
     pub candle: Option<Candle>,
+    /// The print this tick came from, with its size and aggressor side.
+    pub trade: Option<wc::Trade>,
+    /// The order book as of this tick, if it has both a bid and an ask side.
+    pub book: Option<wc::OrderBook>,
+}
+
+impl TickInput {
+    /// A tick carrying a price and nothing else.
+    ///
+    /// The builders below add what a given tick actually has. Constructing
+    /// through them rather than with a struct literal is what keeps a call site
+    /// working when a further input family is registered: the new field defaults
+    /// to absent, which is what every existing caller means.
+    #[must_use]
+    pub fn price(price: f64) -> Self {
+        Self {
+            price,
+            candle: None,
+            trade: None,
+            book: None,
+        }
+    }
+
+    /// This tick, having closed `candle`.
+    #[must_use]
+    pub fn with_candle(mut self, candle: Candle) -> Self {
+        self.candle = Some(candle);
+        self
+    }
+
+    /// This tick, carrying the print it came from.
+    #[must_use]
+    pub fn with_trade(mut self, trade: wc::Trade) -> Self {
+        self.trade = Some(trade);
+        self
+    }
+
+    /// This tick, carrying the book as of now.
+    #[must_use]
+    pub fn with_book(mut self, book: wc::OrderBook) -> Self {
+        self.book = Some(book);
+        self
+    }
 }
 
 /// A uniform, object-safe indicator the terminal drives one tick at a time.
@@ -145,84 +232,140 @@ pub trait TickIndicator: Send {
     fn fields(&self) -> Vec<(&'static str, f64)>;
     /// Number of inputs required before the first value.
     fn warmup(&self) -> usize;
-}
-
-/// Wraps a price (`Input = f64`) single-output indicator.
-struct ScalarPrice<I>(I);
-
-impl<I> TickIndicator for ScalarPrice<I>
-where
-    I: Indicator<Input = f64, Output = f64> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        self.0.update(input.price)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        Vec::new()
-    }
-    fn warmup(&self) -> usize {
-        self.0.warmup_period()
+    /// Whether this indicator reads the order book.
+    ///
+    /// The terminal asks the set before converting its book into the core's
+    /// type, so a session whose indicators are all price and bar ones — the
+    /// default — never pays for a conversion nothing would read.
+    fn wants_book(&self) -> bool {
+        false
     }
 }
 
-/// Wraps a bar (`Input = Candle`) single-output indicator. Ticks that did not
-/// close a bar yield `None` without advancing it.
-struct CandleIn<I>(I);
-
-impl<I> TickIndicator for CandleIn<I>
-where
-    I: Indicator<Input = Candle, Output = f64> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        input.candle.and_then(|c| self.0.update(c))
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        Vec::new()
-    }
-    fn warmup(&self) -> usize {
-        self.0.warmup_period()
-    }
-}
 '''
 
-FIELD_WRAPPER = '''
-/// Wraps a price indicator whose output is a struct of `f64` fields. The primary
-/// value is the first field; every field is reachable by name.
-struct ScalarPriceFields<I, O> {{
-    inner: I,
-    last: Option<O>,
-}}
+# Per-family prose for the generated wrappers, so each says what it actually
+# does rather than carrying one comment stretched over four meanings. Each entry
+# is one line per doc-comment line.
+WRAPPER_DOC = {
+    "f64": ("Wraps a price (`Input = f64`) single-output indicator.",),
+    "Candle": (
+        "Wraps a bar (`Input = Candle`) single-output indicator. Ticks that did",
+        "not close a bar yield `None` without advancing it.",
+    ),
+    "Trade": (
+        "Wraps a tape (`Input = Trade`) single-output indicator, fed the print",
+        "with its size and aggressor side rather than the price alone.",
+    ),
+    "OrderBook": (
+        "Wraps a book (`Input = OrderBook`) single-output indicator. Ticks whose",
+        "book is one-sided yield `None` without advancing it.",
+    ),
+}
 
-/// Wraps a bar indicator whose output is a struct of `f64` fields.
-struct CandleInFields<I, O> {{
-    inner: I,
-    last: Option<O>,
-}}
-'''
+# Prose for the struct-output wrappers, mirroring WRAPPER_DOC.
+FIELD_WRAPPER_DOC = {
+    "f64": (
+        "Wraps a price indicator whose output is a struct of `f64` fields. The",
+        "primary value is the first field; every field is reachable by name.",
+    ),
+    "Candle": ("Wraps a bar indicator whose output is a struct of `f64` fields.",),
+    "Trade": ("Wraps a tape indicator whose output is a struct of `f64` fields.",),
+    "OrderBook": ("Wraps a book indicator whose output is a struct of `f64` fields.",),
+}
 
 
-def emit_field_impls(structs: dict[str, list[str]]) -> str:
-    """One `TickIndicator` impl per multi-output Output struct.
+def doc(lines: tuple[str, ...]) -> str:
+    """Render doc lines as the body of a `///` comment block."""
+    return (chr(10) + "/// ").join(lines)
 
-    A blanket impl cannot reach the fields: they are named differently on every
-    struct and there is no trait exposing them, so the impls are generated.
-    """
+
+def wants_book(family: str) -> str:
+    """The `wants_book` override, for the family that reads the book."""
+    if family != "OrderBook":
+        return ""
+    return (
+        chr(10)
+        + "    fn wants_book(&self) -> bool {"
+        + chr(10)
+        + "        true"
+        + chr(10)
+        + "    }"
+    )
+
+
+def emit_scalar_wrappers() -> str:
+    """One tuple wrapper per input family, for `Output = f64` indicators."""
     out = []
-    for struct, fields in sorted(structs.items()):
-        pairs = ", ".join(f'("{f}", last.{f})' for f in fields)
-        primary = fields[0]
-        for wrapper, input_expr in (
-            ("ScalarPriceFields", "self.inner.update(input.price)"),
-            ("CandleInFields", "input.candle.and_then(|c| self.inner.update(c))"),
-        ):
-            out.append(
-                f"""
-impl<I> TickIndicator for {wrapper}<I, wc::{struct}>
+    for family, (wrapper, _) in WRAPPERS.items():
+        out.append(
+            f"""
+/// {doc(WRAPPER_DOC[family])}
+struct {wrapper}<I>(I);
+
+impl<I> TickIndicator for {wrapper}<I>
 where
-    I: Indicator<Input = {"f64" if wrapper.startswith("Scalar") else "Candle"}, Output = wc::{struct}> + Send,
+    I: Indicator<Input = {INPUT_TY[family]}, Output = f64> + Send,
 {{
     fn update(&mut self, input: &TickInput) -> Option<f64> {{
-        let out = {input_expr};
+        {UPDATE_EXPR[family].format(recv="0")}
+    }}
+    fn fields(&self) -> Vec<(&'static str, f64)> {{
+        Vec::new()
+    }}
+    fn warmup(&self) -> usize {{
+        self.0.warmup_period()
+    }}{wants_book(family)}
+}}
+"""
+        )
+    return "".join(out)
+
+
+def emit_field_structs(families: set[str]) -> str:
+    """The struct-output wrapper types, for the families that have one.
+
+    Only the families in use are emitted. A wrapper for a family whose every
+    indicator is single-output would be a type nothing names.
+    """
+    out = []
+    for family, (_, wrapper) in WRAPPERS.items():
+        if family not in families:
+            continue
+        out.append(
+            f"""
+/// {doc(FIELD_WRAPPER_DOC[family])}
+struct {wrapper}<I, O> {{
+    inner: I,
+    last: Option<O>,
+}}
+"""
+        )
+    return "".join(out)
+
+
+def emit_field_impls(structs: dict[tuple[str, str], list[str]]) -> str:
+    """One `TickIndicator` impl per (input family, Output struct) pair in use.
+
+    A blanket impl cannot reach the fields: they are named differently on every
+    struct and there is no trait exposing them, so the impls are generated. They
+    are keyed by family as well as by struct so that only the pairs some
+    indicator actually needs are emitted, rather than every struct crossed with
+    every family.
+    """
+    out = []
+    for (family, struct), fields in sorted(structs.items()):
+        wrapper = WRAPPERS[family][1]
+        pairs = ", ".join(f'("{f}", last.{f})' for f in fields)
+        primary = fields[0]
+        out.append(
+            f"""
+impl<I> TickIndicator for {wrapper}<I, wc::{struct}>
+where
+    I: Indicator<Input = {INPUT_TY[family]}, Output = wc::{struct}> + Send,
+{{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {{
+        let out = {UPDATE_EXPR[family].format(recv="inner")};
         self.last = out;
         self.last.as_ref().map(|last| last.{primary})
     }}
@@ -234,10 +377,10 @@ where
     }}
     fn warmup(&self) -> usize {{
         self.inner.warmup_period()
-    }}
+    }}{wants_book(family)}
 }}
 """
-            )
+        )
     return "".join(out)
 
 
@@ -347,24 +490,21 @@ def main() -> None:
 
     entries.sort(key=lambda e: e[0])
 
-    # Output structs that need a generated impl.
-    structs: dict[str, list[str]] = {}
-    for _, _, out, _, _, fields in entries:
+    # (input family, Output struct) pairs that need a generated impl.
+    structs: dict[tuple[str, str], list[str]] = {}
+    for _, inp, out, _, _, fields in entries:
         if fields:
-            structs[out] = fields
+            structs[(inp, out)] = fields
 
     arms = []
     for ty, inp, out, argtypes, returns_result, fields in entries:
+        scalar_wrapper, field_wrapper = WRAPPERS[inp]
+        ctor = f"wc::{ty}::new({readers(argtypes)})" if argtypes else f"wc::{ty}::new()"
+        made = f"map_new(kind, {ctor})?" if returns_result else ctor
         if fields:
-            wrapper = "ScalarPriceFields" if inp == "f64" else "CandleInFields"
-            ctor = f"wc::{ty}::new({readers(argtypes)})" if argtypes else f"wc::{ty}::new()"
-            made = f"map_new(kind, {ctor})?" if returns_result else ctor
-            body = f"Ok(Box::new({wrapper} {{ inner: {made}, last: None }}))"
+            body = f"Ok(Box::new({field_wrapper} {{ inner: {made}, last: None }}))"
         else:
-            wrapper = "ScalarPrice" if inp == "f64" else "CandleIn"
-            ctor = f"wc::{ty}::new({readers(argtypes)})" if argtypes else f"wc::{ty}::new()"
-            made = f"map_new(kind, {ctor})?" if returns_result else ctor
-            body = f"Ok(Box::new({wrapper}({made})))"
+            body = f"Ok(Box::new({scalar_wrapper}({made})))"
         arms.append(f'        "{ty}" => {body},')
 
     for alias, canonical in sorted(ALIASES.items()):
@@ -420,7 +560,15 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {{
 }}
 """
 
-    text = HEAD + FIELD_WRAPPER.format() + emit_field_impls(structs) + PARAMS + build_fn
+    field_families = {family for family, _ in structs}
+    text = (
+        HEAD
+        + emit_scalar_wrappers()
+        + emit_field_structs(field_families)
+        + emit_field_impls(structs)
+        + PARAMS
+        + build_fn
+    )
     out_path = Path(args.out)
     out_path.write_text(text, encoding="utf-8")
 
@@ -428,7 +576,7 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {{
     print(f"registered {len(entries)} indicators (+{len(names) - len(entries)} aliases) -> {out_path}")
     for k, v in sorted(by_input.items()):
         print(f"  input {k:8} {v}")
-    print(f"  multi-output structs: {len(structs)}")
+    print(f"  multi-output (family, struct) pairs: {len(structs)}")
     if missing_defaults:
         print(f"  WARNING: {len(missing_defaults)} registered indicators have no manifest defaults: "
               + ", ".join(missing_defaults[:6]))

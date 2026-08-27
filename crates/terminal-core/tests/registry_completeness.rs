@@ -3,7 +3,7 @@
 //! `registry.rs` is generated, which moves the risk: a hand-written dispatch
 //! fails to compile when it is wrong, but a generated one compiles happily with
 //! an arm that constructs the wrong thing, or one that no input can ever satisfy.
-//! Nothing else in the suite touches more than a couple of the 421 arms, so this
+//! Nothing else in the suite touches more than a couple of the 436 arms, so this
 //! drives all of them.
 //!
 //! Parameters come from `DEFAULTS`, which the generator joins in from wickra's
@@ -12,7 +12,7 @@
 
 use terminal_core::registry::{build, DEFAULTS, KINDS};
 use terminal_core::{CandleBuilder, TickInput, Timeframe};
-use wickra_core::Candle;
+use wickra_core::{Candle, Level, OrderBook, Side, Trade};
 
 /// A price path with genuine variation, on two timescales.
 ///
@@ -47,6 +47,18 @@ const TRADES_PER_BAR: i64 = 4;
 /// day boundary; second-spaced bars keep the whole run inside one day and those
 /// indicators correctly report nothing.
 const BAR_SPACING: &str = "1d";
+
+/// Trade sizes are scaled by this, not offset by it.
+///
+/// VPIN closes a bucket on cumulative volume — 5000 per bucket across 10 buckets
+/// at its manifest defaults, so 50,000 of volume before its first value. At one
+/// to seven units a trade the whole run traded about 6400 and VPIN was silent,
+/// which reads exactly like a dead arm.
+///
+/// Scaling keeps the seven-fold spread between the smallest and largest trade
+/// that the volume oscillators need; adding a constant would have cleared the
+/// same threshold while flattening every size into a narrow band.
+const VOLUME_SCALE: f64 = 10.0;
 const BAR_MS: i64 = 86_400_000;
 
 /// Feed `bars` bars, each built from several trades, and count what came back.
@@ -62,11 +74,12 @@ fn drive(kind: &str, params: &[f64], bars: i64) -> (usize, usize) {
             // Spread the trades across the bar so it has a genuine high and low.
             let price = price_at(step) + intrabar_offset(trade);
             let ts = bar * BAR_MS + trade * (BAR_MS / TRADES_PER_BAR);
-            let closed = builder.update(price, 1.0 + (step % 7) as f64, ts);
-            let input = TickInput {
-                price,
-                candle: closed,
-            };
+            let size = VOLUME_SCALE * (1.0 + (step % 7) as f64);
+            let closed = builder.update(price, size, ts);
+            let mut input = TickInput::price(price);
+            input.candle = closed;
+            input.trade = Some(trade_at(price, size, step, ts));
+            input.book = Some(book_at(price, step));
             if indicator.update(&input).is_some() {
                 values += 1;
             }
@@ -76,6 +89,43 @@ fn drive(kind: &str, params: &[f64], bars: i64) -> (usize, usize) {
         }
     }
     (values, fields)
+}
+
+/// A print at this price, with a side that follows the price rather than simply
+/// alternating.
+///
+/// A strictly alternating side makes the sign sequence perfectly anti-correlated,
+/// which is a degenerate input for `TradeSignAutocorrelation` and hides a wiring
+/// fault behind a value that looks real. Following the price gives runs of the
+/// same side, which is what a tape actually looks like.
+fn trade_at(price: f64, size: f64, step: i64, ts: i64) -> Trade {
+    let side = if price >= price_at(step - 1) {
+        Side::Buy
+    } else {
+        Side::Sell
+    };
+    Trade::new(price, size, side, ts).expect("synthetic trade is valid by construction")
+}
+
+/// A five-deep book around this price, with sizes that vary by step.
+///
+/// The sizes have to move: the imbalance family divides one side's depth by the
+/// other, so a book with the same shape on every tick reports one constant and a
+/// mis-wired indicator would be indistinguishable from a correct one.
+fn book_at(price: f64, step: i64) -> OrderBook {
+    let tick = 0.01;
+    let skew = (step % 5) as f64;
+    let side = |sign: f64, lean: f64| -> Vec<Level> {
+        (1..=5)
+            .map(|depth| {
+                let level = f64::from(depth);
+                Level::new(price + sign * tick * level, 1.0 + lean + level)
+                    .expect("synthetic level is valid by construction")
+            })
+            .collect()
+    };
+    OrderBook::new(side(-1.0, skew), side(1.0, 4.0 - skew))
+        .expect("synthetic book is valid by construction")
 }
 
 /// Move the price around within a bar so open, high, low and close differ.
@@ -152,10 +202,9 @@ fn multi_output_indicators_expose_their_fields() {
             let price = price_at(step) + intrabar_offset(trade);
             let ts = bar * BAR_MS + trade * (BAR_MS / TRADES_PER_BAR);
             let closed = builder.update(price, 1.0, ts);
-            macd.update(&TickInput {
-                price,
-                candle: closed,
-            });
+            let mut tick = TickInput::price(price);
+            tick.candle = closed;
+            macd.update(&tick);
         }
     }
     let names: Vec<&str> = macd.fields().iter().map(|(n, _)| *n).collect();
@@ -212,10 +261,7 @@ fn bar_indicators_do_not_advance_on_a_tick_without_a_bar() {
     // otherwise a busy market would warm it up faster than a quiet one.
     let mut atr = build("Atr", &[14.0]).unwrap();
     for step in 0..1_000_i64 {
-        let value = atr.update(&TickInput {
-            price: price_at(step),
-            candle: None,
-        });
+        let value = atr.update(&TickInput::price(price_at(step)));
         assert!(value.is_none(), "Atr advanced on a tick that closed no bar");
     }
 }
@@ -225,10 +271,7 @@ fn price_indicators_advance_on_every_tick() {
     let mut sma = build("Sma", &[5.0]).unwrap();
     let mut seen = None;
     for step in 0..20_i64 {
-        seen = sma.update(&TickInput {
-            price: price_at(step),
-            candle: None,
-        });
+        seen = sma.update(&TickInput::price(price_at(step)));
     }
     assert!(
         seen.is_some(),
@@ -261,10 +304,7 @@ fn a_candle_indicator_reads_the_bar_not_the_price() {
     let mut last = None;
     for step in 0..10_i64 {
         let bar = Candle::new_unchecked(10.0, 12.0, 8.0, 11.0, 1.0, step * 1_000);
-        last = atr.update(&TickInput {
-            price: 99_999.0,
-            candle: Some(bar),
-        });
+        last = atr.update(&TickInput::price(99_999.0).with_candle(bar));
     }
     let value = last.expect("Atr produced no value from ten bars");
     assert!(
@@ -281,7 +321,7 @@ fn a_candle_indicator_reads_the_bar_not_the_price() {
 /// The number is a floor rather than an equality, so adding indicators upstream
 /// does not fail the build; only losing them does. Raise it when a regeneration
 /// legitimately grows the set.
-const REGISTERED_FLOOR: usize = 421;
+const REGISTERED_FLOOR: usize = 436;
 
 #[test]
 fn the_registry_has_not_silently_shrunk() {
@@ -293,27 +333,52 @@ fn the_registry_has_not_silently_shrunk() {
 }
 
 #[test]
-fn both_input_families_are_represented() {
+fn every_input_family_is_represented() {
     // A generator run that silently lost one family would still leave a large,
-    // healthy-looking registry. Sma reads prices, Atr reads bars; one of each
-    // must survive, and they must behave differently on a tick with no bar.
+    // healthy-looking registry: the other families would carry every test above.
+    // So each family gets an indicator here, and each must advance on the tick
+    // that carries its input and stay put on the one that does not.
     let mut price = build("Sma", &[5.0]).unwrap();
     let mut bar = build("Atr", &[5.0]).unwrap();
-    let tick = TickInput {
-        price: 100.0,
-        candle: None,
-    };
+    let mut tape = build("SignedVolume", &[]).unwrap();
+    let mut book = build("Microprice", &[]).unwrap();
+
+    // A bare price tick: only the price family may move on it.
+    let bare = TickInput::price(100.0);
     for _ in 0..20 {
-        price.update(&tick);
-        bar.update(&tick);
+        price.update(&bare);
+        bar.update(&bare);
+        tape.update(&bare);
+        book.update(&bare);
     }
     assert!(
-        price.update(&tick).is_some(),
+        price.update(&bare).is_some(),
         "no price-input indicator advanced: the f64 family is missing"
     );
     assert!(
-        bar.update(&tick).is_none(),
+        bar.update(&bare).is_none(),
         "a bar indicator advanced without a bar: the Candle family is mis-wired"
+    );
+    assert!(
+        tape.update(&bare).is_none(),
+        "a tape indicator advanced without a print: the Trade family is mis-wired"
+    );
+    assert!(
+        book.update(&bare).is_none(),
+        "a book indicator advanced without a book: the OrderBook family is mis-wired"
+    );
+
+    // Now a tick that carries a print and a book.
+    let full = TickInput::price(100.0)
+        .with_trade(trade_at(100.0, 2.0, 1, 0))
+        .with_book(book_at(100.0, 0));
+    assert!(
+        tape.update(&full).is_some(),
+        "the Trade family did not advance on a tick carrying a print"
+    );
+    assert!(
+        book.update(&full).is_some(),
+        "the OrderBook family did not advance on a tick carrying a book"
     );
 }
 

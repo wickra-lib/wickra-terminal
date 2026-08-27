@@ -10,10 +10,18 @@
 //! ```
 //!
 //! Source of truth: the wickra-core indicator sources — the `Indicator` impls,
-//! their `new` signatures and their Output structs. Every indicator whose input
-//! is a price (`Input = f64`, fed the last trade) or a bar (`Input = Candle`, fed
-//! each bar as it closes) is registered, with a scalar `f64` or an all-`f64`-field
-//! struct output. Multi-output indicators expose their fields by name.
+//! their `new` signatures and their Output structs. An indicator is registered
+//! when its input is one of the four families this terminal can feed and its
+//! output is a scalar `f64` or a struct of `f64` fields:
+//!
+//! | `Input`     | Fed with                                  | Advances     |
+//! |-------------|-------------------------------------------|--------------|
+//! | `f64`       | the last trade price                      | every trade  |
+//! | `Candle`    | the bar the tick just closed              | every bar    |
+//! | `Trade`     | the print, with size and aggressor side   | every trade  |
+//! | `OrderBook` | the locally maintained L2 book            | every trade  |
+//!
+//! Multi-output indicators expose their fields by name.
 
 use wickra_core::{self as wc, Candle, Indicator};
 
@@ -21,15 +29,64 @@ use crate::error::{Error, Result};
 
 /// What an indicator may consume on one tick.
 ///
-/// `price` is always present — it is the last trade or ticker price. `candle` is
-/// `Some` only on the tick that closed a bar, which is why bar indicators advance
-/// once per bar rather than once per trade.
-#[derive(Debug, Clone, Copy)]
+/// `price` is always present — it is the last trade or ticker price. The rest are
+/// optional because a tick does not carry all of them: `candle` is `Some` only on
+/// the tick that closed a bar, which is why bar indicators advance once per bar
+/// rather than once per trade; `trade` and `book` are `Some` when the tick came
+/// from a print and the book has two sides to show.
+///
+/// It is built once per tick and shared by reference across the whole indicator
+/// set, so the conversion from the terminal's own book and tape into the core's
+/// types is paid once rather than once per indicator.
+#[derive(Debug, Clone)]
 pub struct TickInput {
     /// The last traded price.
     pub price: f64,
     /// The bar that just closed, if this tick closed one.
     pub candle: Option<Candle>,
+    /// The print this tick came from, with its size and aggressor side.
+    pub trade: Option<wc::Trade>,
+    /// The order book as of this tick, if it has both a bid and an ask side.
+    pub book: Option<wc::OrderBook>,
+}
+
+impl TickInput {
+    /// A tick carrying a price and nothing else.
+    ///
+    /// The builders below add what a given tick actually has. Constructing
+    /// through them rather than with a struct literal is what keeps a call site
+    /// working when a further input family is registered: the new field defaults
+    /// to absent, which is what every existing caller means.
+    #[must_use]
+    pub fn price(price: f64) -> Self {
+        Self {
+            price,
+            candle: None,
+            trade: None,
+            book: None,
+        }
+    }
+
+    /// This tick, having closed `candle`.
+    #[must_use]
+    pub fn with_candle(mut self, candle: Candle) -> Self {
+        self.candle = Some(candle);
+        self
+    }
+
+    /// This tick, carrying the print it came from.
+    #[must_use]
+    pub fn with_trade(mut self, trade: wc::Trade) -> Self {
+        self.trade = Some(trade);
+        self
+    }
+
+    /// This tick, carrying the book as of now.
+    #[must_use]
+    pub fn with_book(mut self, book: wc::OrderBook) -> Self {
+        self.book = Some(book);
+        self
+    }
 }
 
 /// A uniform, object-safe indicator the terminal drives one tick at a time.
@@ -41,6 +98,14 @@ pub trait TickIndicator: Send {
     fn fields(&self) -> Vec<(&'static str, f64)>;
     /// Number of inputs required before the first value.
     fn warmup(&self) -> usize;
+    /// Whether this indicator reads the order book.
+    ///
+    /// The terminal asks the set before converting its book into the core's
+    /// type, so a session whose indicators are all price and bar ones — the
+    /// default — never pays for a conversion nothing would read.
+    fn wants_book(&self) -> bool {
+        false
+    }
 }
 
 /// Wraps a price (`Input = f64`) single-output indicator.
@@ -61,8 +126,8 @@ where
     }
 }
 
-/// Wraps a bar (`Input = Candle`) single-output indicator. Ticks that did not
-/// close a bar yield `None` without advancing it.
+/// Wraps a bar (`Input = Candle`) single-output indicator. Ticks that did
+/// not close a bar yield `None` without advancing it.
 struct CandleIn<I>(I);
 
 impl<I> TickIndicator for CandleIn<I>
@@ -80,8 +145,49 @@ where
     }
 }
 
-/// Wraps a price indicator whose output is a struct of `f64` fields. The primary
-/// value is the first field; every field is reachable by name.
+/// Wraps a tape (`Input = Trade`) single-output indicator, fed the print
+/// with its size and aggressor side rather than the price alone.
+struct TradeIn<I>(I);
+
+impl<I> TickIndicator for TradeIn<I>
+where
+    I: Indicator<Input = wc::Trade, Output = f64> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        input.trade.and_then(|t| self.0.update(t))
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        Vec::new()
+    }
+    fn warmup(&self) -> usize {
+        self.0.warmup_period()
+    }
+}
+
+/// Wraps a book (`Input = OrderBook`) single-output indicator. Ticks whose
+/// book is one-sided yield `None` without advancing it.
+struct BookIn<I>(I);
+
+impl<I> TickIndicator for BookIn<I>
+where
+    I: Indicator<Input = wc::OrderBook, Output = f64> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        input.book.clone().and_then(|b| self.0.update(b))
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        Vec::new()
+    }
+    fn warmup(&self) -> usize {
+        self.0.warmup_period()
+    }
+    fn wants_book(&self) -> bool {
+        true
+    }
+}
+
+/// Wraps a price indicator whose output is a struct of `f64` fields. The
+/// primary value is the first field; every field is reachable by name.
 struct ScalarPriceFields<I, O> {
     inner: I,
     last: Option<O>,
@@ -91,32 +197,6 @@ struct ScalarPriceFields<I, O> {
 struct CandleInFields<I, O> {
     inner: I,
     last: Option<O>,
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::AccelerationBandsOutput>
-where
-    I: Indicator<Input = f64, Output = wc::AccelerationBandsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("upper", last.upper),
-                    ("middle", last.middle),
-                    ("lower", last.lower),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
 }
 
 impl<I> TickIndicator for CandleInFields<I, wc::AccelerationBandsOutput>
@@ -136,32 +216,6 @@ where
                     ("upper", last.upper),
                     ("middle", last.middle),
                     ("lower", last.lower),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::AdxOutput>
-where
-    I: Indicator<Input = f64, Output = wc::AdxOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.plus_di)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("plus_di", last.plus_di),
-                    ("minus_di", last.minus_di),
-                    ("adx", last.adx),
                 ]
             })
             .unwrap_or_default()
@@ -197,32 +251,6 @@ where
     }
 }
 
-impl<I> TickIndicator for ScalarPriceFields<I, wc::AlligatorOutput>
-where
-    I: Indicator<Input = f64, Output = wc::AlligatorOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.jaw)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("jaw", last.jaw),
-                    ("teeth", last.teeth),
-                    ("lips", last.lips),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
 impl<I> TickIndicator for CandleInFields<I, wc::AlligatorOutput>
 where
     I: Indicator<Input = Candle, Output = wc::AlligatorOutput> + Send,
@@ -240,32 +268,6 @@ where
                     ("jaw", last.jaw),
                     ("teeth", last.teeth),
                     ("lips", last.lips),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::AndrewsPitchforkOutput>
-where
-    I: Indicator<Input = f64, Output = wc::AndrewsPitchforkOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.median)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("median", last.median),
-                    ("upper", last.upper),
-                    ("lower", last.lower),
                 ]
             })
             .unwrap_or_default()
@@ -301,26 +303,6 @@ where
     }
 }
 
-impl<I> TickIndicator for ScalarPriceFields<I, wc::AroonOutput>
-where
-    I: Indicator<Input = f64, Output = wc::AroonOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.up)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("up", last.up), ("down", last.down)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
 impl<I> TickIndicator for CandleInFields<I, wc::AroonOutput>
 where
     I: Indicator<Input = Candle, Output = wc::AroonOutput> + Send,
@@ -334,32 +316,6 @@ where
         self.last
             .as_ref()
             .map(|last| vec![("up", last.up), ("down", last.down)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::AtrBandsOutput>
-where
-    I: Indicator<Input = f64, Output = wc::AtrBandsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("upper", last.upper),
-                    ("middle", last.middle),
-                    ("lower", last.lower),
-                ]
-            })
             .unwrap_or_default()
     }
     fn warmup(&self) -> usize {
@@ -393,26 +349,6 @@ where
     }
 }
 
-impl<I> TickIndicator for ScalarPriceFields<I, wc::AtrRatchetOutput>
-where
-    I: Indicator<Input = f64, Output = wc::AtrRatchetOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.value)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("value", last.value), ("direction", last.direction)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
 impl<I> TickIndicator for CandleInFields<I, wc::AtrRatchetOutput>
 where
     I: Indicator<Input = Candle, Output = wc::AtrRatchetOutput> + Send,
@@ -426,36 +362,6 @@ where
         self.last
             .as_ref()
             .map(|last| vec![("value", last.value), ("direction", last.direction)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::AutoFibOutput>
-where
-    I: Indicator<Input = f64, Output = wc::AutoFibOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.level_0)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("level_0", last.level_0),
-                    ("level_236", last.level_236),
-                    ("level_382", last.level_382),
-                    ("level_500", last.level_500),
-                    ("level_618", last.level_618),
-                    ("level_786", last.level_786),
-                    ("level_1000", last.level_1000),
-                ]
-            })
             .unwrap_or_default()
     }
     fn warmup(&self) -> usize {
@@ -493,12 +399,1365 @@ where
     }
 }
 
-impl<I> TickIndicator for ScalarPriceFields<I, wc::BollingerOutput>
+impl<I> TickIndicator for CandleInFields<I, wc::CamarillaPivotsOutput>
 where
-    I: Indicator<Input = f64, Output = wc::BollingerOutput> + Send,
+    I: Indicator<Input = Candle, Output = wc::CamarillaPivotsOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.pp)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("pp", last.pp),
+                    ("r1", last.r1),
+                    ("r2", last.r2),
+                    ("r3", last.r3),
+                    ("r4", last.r4),
+                    ("s1", last.s1),
+                    ("s2", last.s2),
+                    ("s3", last.s3),
+                    ("s4", last.s4),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::CandleVolumeOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::CandleVolumeOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.body)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("body", last.body), ("width", last.width)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::CentralPivotRangeOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::CentralPivotRangeOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.pivot)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("pivot", last.pivot), ("tc", last.tc), ("bc", last.bc)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::ChandeKrollStopOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::ChandeKrollStopOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.stop_long)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("stop_long", last.stop_long),
+                    ("stop_short", last.stop_short),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::ChandelierExitOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::ChandelierExitOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.long_stop)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("long_stop", last.long_stop),
+                    ("short_stop", last.short_stop),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::ClassicPivotsOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::ClassicPivotsOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.pp)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("pp", last.pp),
+                    ("r1", last.r1),
+                    ("r2", last.r2),
+                    ("r3", last.r3),
+                    ("s1", last.s1),
+                    ("s2", last.s2),
+                    ("s3", last.s3),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::CompositeProfileOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::CompositeProfileOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.poc)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("poc", last.poc), ("vah", last.vah), ("val", last.val)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::DemarkPivotsOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::DemarkPivotsOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.pp)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("pp", last.pp), ("r1", last.r1), ("s1", last.s1)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::DonchianOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::DonchianOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.upper)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("upper", last.upper),
+                    ("middle", last.middle),
+                    ("lower", last.lower),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::DonchianStopOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::DonchianStopOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.stop_long)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("stop_long", last.stop_long),
+                    ("stop_short", last.stop_short),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::ElderRayOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::ElderRayOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.bull_power)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("bull_power", last.bull_power),
+                    ("bear_power", last.bear_power),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::ElderSafeZoneOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::ElderSafeZoneOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.value)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("value", last.value), ("direction", last.direction)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::EquivolumeOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::EquivolumeOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.height)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("height", last.height), ("width", last.width)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::FibArcsOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::FibArcsOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.arc_382)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("arc_382", last.arc_382),
+                    ("arc_500", last.arc_500),
+                    ("arc_618", last.arc_618),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::FibChannelOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::FibChannelOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.base)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("base", last.base),
+                    ("level_618", last.level_618),
+                    ("level_1000", last.level_1000),
+                    ("level_1618", last.level_1618),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::FibConfluenceOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::FibConfluenceOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.price)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("price", last.price), ("strength", last.strength)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::FibExtensionOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::FibExtensionOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.level_1272)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("level_1272", last.level_1272),
+                    ("level_1414", last.level_1414),
+                    ("level_1618", last.level_1618),
+                    ("level_2000", last.level_2000),
+                    ("level_2618", last.level_2618),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::FibFanOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::FibFanOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.fan_382)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("fan_382", last.fan_382),
+                    ("fan_500", last.fan_500),
+                    ("fan_618", last.fan_618),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::FibProjectionOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::FibProjectionOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.level_618)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("level_618", last.level_618),
+                    ("level_1000", last.level_1000),
+                    ("level_1618", last.level_1618),
+                    ("level_2618", last.level_2618),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::FibRetracementOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::FibRetracementOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.level_0)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("level_0", last.level_0),
+                    ("level_236", last.level_236),
+                    ("level_382", last.level_382),
+                    ("level_500", last.level_500),
+                    ("level_618", last.level_618),
+                    ("level_786", last.level_786),
+                    ("level_1000", last.level_1000),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::FibTimeZonesOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::FibTimeZonesOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.on_zone)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("on_zone", last.on_zone),
+                    ("bars_to_next", last.bars_to_next),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::FibonacciPivotsOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::FibonacciPivotsOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.pp)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("pp", last.pp),
+                    ("r1", last.r1),
+                    ("r2", last.r2),
+                    ("r3", last.r3),
+                    ("s1", last.s1),
+                    ("s2", last.s2),
+                    ("s3", last.s3),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::FractalChaosBandsOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::FractalChaosBandsOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.upper)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("upper", last.upper), ("lower", last.lower)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::GatorOscillatorOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::GatorOscillatorOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.upper)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("upper", last.upper), ("lower", last.lower)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::GoldenPocketOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::GoldenPocketOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.low)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("low", last.low), ("mid", last.mid), ("high", last.high)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::HeikinAshiOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::HeikinAshiOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.open)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("open", last.open),
+                    ("high", last.high),
+                    ("low", last.low),
+                    ("close", last.close),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::HighLowVolumeNodesOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::HighLowVolumeNodesOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.hvn)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("hvn", last.hvn), ("lvn", last.lvn)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::HurstChannelOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::HurstChannelOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.upper)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("upper", last.upper),
+                    ("middle", last.middle),
+                    ("lower", last.lower),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::InitialBalanceOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::InitialBalanceOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.high)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("high", last.high), ("low", last.low)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::KaseDevStopOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::KaseDevStopOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.value)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("value", last.value), ("direction", last.direction)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::KasePermissionStochasticOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::KasePermissionStochasticOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.fast)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("fast", last.fast), ("slow", last.slow)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::KeltnerOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::KeltnerOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.upper)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("upper", last.upper),
+                    ("middle", last.middle),
+                    ("lower", last.lower),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::ModifiedMaStopOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::ModifiedMaStopOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.value)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("value", last.value), ("direction", last.direction)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::MurreyMathLinesOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::MurreyMathLinesOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.mm8_8)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("mm8_8", last.mm8_8),
+                    ("mm7_8", last.mm7_8),
+                    ("mm6_8", last.mm6_8),
+                    ("mm5_8", last.mm5_8),
+                    ("mm4_8", last.mm4_8),
+                    ("mm3_8", last.mm3_8),
+                    ("mm2_8", last.mm2_8),
+                    ("mm1_8", last.mm1_8),
+                    ("mm0_8", last.mm0_8),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::NrtrOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::NrtrOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.value)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("value", last.value), ("direction", last.direction)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::OpeningRangeOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::OpeningRangeOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.high)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("high", last.high),
+                    ("low", last.low),
+                    ("breakout_distance", last.breakout_distance),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::OvernightIntradayReturnOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::OvernightIntradayReturnOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.overnight)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("overnight", last.overnight), ("intraday", last.intraday)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::ProjectionBandsOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::ProjectionBandsOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.upper)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("upper", last.upper),
+                    ("middle", last.middle),
+                    ("lower", last.lower),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::RwiOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::RwiOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.high)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("high", last.high), ("low", last.low)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::SessionHighLowOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::SessionHighLowOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.high)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("high", last.high), ("low", last.low)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::SessionRangeOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::SessionRangeOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.asia)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("asia", last.asia), ("eu", last.eu), ("us", last.us)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::SmoothedHeikinAshiOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::SmoothedHeikinAshiOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.open)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("open", last.open),
+                    ("high", last.high),
+                    ("low", last.low),
+                    ("close", last.close),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::StarcBandsOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::StarcBandsOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.upper)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("upper", last.upper),
+                    ("middle", last.middle),
+                    ("lower", last.lower),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::StochasticOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::StochasticOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.k)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("k", last.k), ("d", last.d)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::SuperTrendOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::SuperTrendOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.value)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("value", last.value), ("direction", last.direction)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::TdLinesOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::TdLinesOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.resistance)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("resistance", last.resistance), ("support", last.support)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::TdMovingAverageOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::TdMovingAverageOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.st1)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("st1", last.st1), ("st2", last.st2)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::TdRangeProjectionOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::TdRangeProjectionOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.high)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("high", last.high), ("low", last.low)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::TdRiskLevelOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::TdRiskLevelOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.buy_risk)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("buy_risk", last.buy_risk), ("sell_risk", last.sell_risk)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::TdSequentialOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::TdSequentialOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.setup)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("setup", last.setup),
+                    ("countdown", last.countdown),
+                    ("direction", last.direction),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::TpoProfileOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::TpoProfileOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.price_low)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("price_low", last.price_low),
+                    ("price_high", last.price_high),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::TtmSqueezeOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::TtmSqueezeOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.squeeze)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("squeeze", last.squeeze), ("momentum", last.momentum)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::ValueAreaOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::ValueAreaOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.poc)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("poc", last.poc), ("vah", last.vah), ("val", last.val)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::VolatilityConeOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::VolatilityConeOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.current)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("current", last.current),
+                    ("min", last.min),
+                    ("median", last.median),
+                    ("max", last.max),
+                    ("percentile", last.percentile),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::VolumeProfileOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::VolumeProfileOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.price_low)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("price_low", last.price_low),
+                    ("price_high", last.price_high),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::VolumeWeightedMacdOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::VolumeWeightedMacdOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.macd)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("macd", last.macd),
+                    ("signal", last.signal),
+                    ("histogram", last.histogram),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::VolumeWeightedSrOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::VolumeWeightedSrOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.support)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("support", last.support), ("resistance", last.resistance)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::VortexOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::VortexOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.plus)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("plus", last.plus), ("minus", last.minus)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::VwapStdDevBandsOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::VwapStdDevBandsOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
         self.last = out;
         self.last.as_ref().map(|last| last.upper)
     }
@@ -520,12 +1779,80 @@ where
     }
 }
 
-impl<I> TickIndicator for CandleInFields<I, wc::BollingerOutput>
+impl<I> TickIndicator for CandleInFields<I, wc::WaveTrendOutput>
 where
-    I: Indicator<Input = Candle, Output = wc::BollingerOutput> + Send,
+    I: Indicator<Input = Candle, Output = wc::WaveTrendOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
         let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.wt1)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("wt1", last.wt1), ("wt2", last.wt2)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::WoodiePivotsOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::WoodiePivotsOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.pp)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("pp", last.pp),
+                    ("r1", last.r1),
+                    ("r2", last.r2),
+                    ("s1", last.s1),
+                    ("s2", last.s2),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for CandleInFields<I, wc::ZigZagOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::ZigZagOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input.candle.and_then(|c| self.inner.update(c));
+        self.last = out;
+        self.last.as_ref().map(|last| last.swing)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("swing", last.swing), ("direction", last.direction)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> TickIndicator for ScalarPriceFields<I, wc::BollingerOutput>
+where
+    I: Indicator<Input = f64, Output = wc::BollingerOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = self.inner.update(input.price);
         self.last = out;
         self.last.as_ref().map(|last| last.upper)
     }
@@ -573,518 +1900,6 @@ where
     }
 }
 
-impl<I> TickIndicator for CandleInFields<I, wc::BomarBandsOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::BomarBandsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("upper", last.upper),
-                    ("middle", last.middle),
-                    ("lower", last.lower),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::CamarillaPivotsOutput>
-where
-    I: Indicator<Input = f64, Output = wc::CamarillaPivotsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.pp)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("pp", last.pp),
-                    ("r1", last.r1),
-                    ("r2", last.r2),
-                    ("r3", last.r3),
-                    ("r4", last.r4),
-                    ("s1", last.s1),
-                    ("s2", last.s2),
-                    ("s3", last.s3),
-                    ("s4", last.s4),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::CamarillaPivotsOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::CamarillaPivotsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.pp)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("pp", last.pp),
-                    ("r1", last.r1),
-                    ("r2", last.r2),
-                    ("r3", last.r3),
-                    ("r4", last.r4),
-                    ("s1", last.s1),
-                    ("s2", last.s2),
-                    ("s3", last.s3),
-                    ("s4", last.s4),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::CandleVolumeOutput>
-where
-    I: Indicator<Input = f64, Output = wc::CandleVolumeOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.body)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("body", last.body), ("width", last.width)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::CandleVolumeOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::CandleVolumeOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.body)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("body", last.body), ("width", last.width)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::CentralPivotRangeOutput>
-where
-    I: Indicator<Input = f64, Output = wc::CentralPivotRangeOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.pivot)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("pivot", last.pivot), ("tc", last.tc), ("bc", last.bc)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::CentralPivotRangeOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::CentralPivotRangeOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.pivot)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("pivot", last.pivot), ("tc", last.tc), ("bc", last.bc)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::ChandeKrollStopOutput>
-where
-    I: Indicator<Input = f64, Output = wc::ChandeKrollStopOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.stop_long)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("stop_long", last.stop_long),
-                    ("stop_short", last.stop_short),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::ChandeKrollStopOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::ChandeKrollStopOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.stop_long)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("stop_long", last.stop_long),
-                    ("stop_short", last.stop_short),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::ChandelierExitOutput>
-where
-    I: Indicator<Input = f64, Output = wc::ChandelierExitOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.long_stop)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("long_stop", last.long_stop),
-                    ("short_stop", last.short_stop),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::ChandelierExitOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::ChandelierExitOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.long_stop)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("long_stop", last.long_stop),
-                    ("short_stop", last.short_stop),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::ClassicPivotsOutput>
-where
-    I: Indicator<Input = f64, Output = wc::ClassicPivotsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.pp)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("pp", last.pp),
-                    ("r1", last.r1),
-                    ("r2", last.r2),
-                    ("r3", last.r3),
-                    ("s1", last.s1),
-                    ("s2", last.s2),
-                    ("s3", last.s3),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::ClassicPivotsOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::ClassicPivotsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.pp)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("pp", last.pp),
-                    ("r1", last.r1),
-                    ("r2", last.r2),
-                    ("r3", last.r3),
-                    ("s1", last.s1),
-                    ("s2", last.s2),
-                    ("s3", last.s3),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::CompositeProfileOutput>
-where
-    I: Indicator<Input = f64, Output = wc::CompositeProfileOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.poc)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("poc", last.poc), ("vah", last.vah), ("val", last.val)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::CompositeProfileOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::CompositeProfileOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.poc)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("poc", last.poc), ("vah", last.vah), ("val", last.val)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::DemarkPivotsOutput>
-where
-    I: Indicator<Input = f64, Output = wc::DemarkPivotsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.pp)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("pp", last.pp), ("r1", last.r1), ("s1", last.s1)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::DemarkPivotsOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::DemarkPivotsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.pp)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("pp", last.pp), ("r1", last.r1), ("s1", last.s1)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::DonchianOutput>
-where
-    I: Indicator<Input = f64, Output = wc::DonchianOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("upper", last.upper),
-                    ("middle", last.middle),
-                    ("lower", last.lower),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::DonchianOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::DonchianOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("upper", last.upper),
-                    ("middle", last.middle),
-                    ("lower", last.lower),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::DonchianStopOutput>
-where
-    I: Indicator<Input = f64, Output = wc::DonchianStopOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.stop_long)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("stop_long", last.stop_long),
-                    ("stop_short", last.stop_short),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::DonchianStopOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::DonchianStopOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.stop_long)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("stop_long", last.stop_long),
-                    ("stop_short", last.stop_short),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
 impl<I> TickIndicator for ScalarPriceFields<I, wc::DoubleBollingerOutput>
 where
     I: Indicator<Input = f64, Output = wc::DoubleBollingerOutput> + Send,
@@ -1113,856 +1928,6 @@ where
     }
 }
 
-impl<I> TickIndicator for CandleInFields<I, wc::DoubleBollingerOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::DoubleBollingerOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper_outer)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("upper_outer", last.upper_outer),
-                    ("upper_inner", last.upper_inner),
-                    ("middle", last.middle),
-                    ("lower_inner", last.lower_inner),
-                    ("lower_outer", last.lower_outer),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::ElderRayOutput>
-where
-    I: Indicator<Input = f64, Output = wc::ElderRayOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.bull_power)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("bull_power", last.bull_power),
-                    ("bear_power", last.bear_power),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::ElderRayOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::ElderRayOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.bull_power)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("bull_power", last.bull_power),
-                    ("bear_power", last.bear_power),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::ElderSafeZoneOutput>
-where
-    I: Indicator<Input = f64, Output = wc::ElderSafeZoneOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.value)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("value", last.value), ("direction", last.direction)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::ElderSafeZoneOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::ElderSafeZoneOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.value)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("value", last.value), ("direction", last.direction)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::EquivolumeOutput>
-where
-    I: Indicator<Input = f64, Output = wc::EquivolumeOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.height)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("height", last.height), ("width", last.width)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::EquivolumeOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::EquivolumeOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.height)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("height", last.height), ("width", last.width)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::FibArcsOutput>
-where
-    I: Indicator<Input = f64, Output = wc::FibArcsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.arc_382)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("arc_382", last.arc_382),
-                    ("arc_500", last.arc_500),
-                    ("arc_618", last.arc_618),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::FibArcsOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::FibArcsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.arc_382)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("arc_382", last.arc_382),
-                    ("arc_500", last.arc_500),
-                    ("arc_618", last.arc_618),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::FibChannelOutput>
-where
-    I: Indicator<Input = f64, Output = wc::FibChannelOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.base)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("base", last.base),
-                    ("level_618", last.level_618),
-                    ("level_1000", last.level_1000),
-                    ("level_1618", last.level_1618),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::FibChannelOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::FibChannelOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.base)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("base", last.base),
-                    ("level_618", last.level_618),
-                    ("level_1000", last.level_1000),
-                    ("level_1618", last.level_1618),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::FibConfluenceOutput>
-where
-    I: Indicator<Input = f64, Output = wc::FibConfluenceOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.price)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("price", last.price), ("strength", last.strength)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::FibConfluenceOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::FibConfluenceOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.price)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("price", last.price), ("strength", last.strength)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::FibExtensionOutput>
-where
-    I: Indicator<Input = f64, Output = wc::FibExtensionOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.level_1272)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("level_1272", last.level_1272),
-                    ("level_1414", last.level_1414),
-                    ("level_1618", last.level_1618),
-                    ("level_2000", last.level_2000),
-                    ("level_2618", last.level_2618),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::FibExtensionOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::FibExtensionOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.level_1272)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("level_1272", last.level_1272),
-                    ("level_1414", last.level_1414),
-                    ("level_1618", last.level_1618),
-                    ("level_2000", last.level_2000),
-                    ("level_2618", last.level_2618),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::FibFanOutput>
-where
-    I: Indicator<Input = f64, Output = wc::FibFanOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.fan_382)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("fan_382", last.fan_382),
-                    ("fan_500", last.fan_500),
-                    ("fan_618", last.fan_618),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::FibFanOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::FibFanOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.fan_382)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("fan_382", last.fan_382),
-                    ("fan_500", last.fan_500),
-                    ("fan_618", last.fan_618),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::FibProjectionOutput>
-where
-    I: Indicator<Input = f64, Output = wc::FibProjectionOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.level_618)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("level_618", last.level_618),
-                    ("level_1000", last.level_1000),
-                    ("level_1618", last.level_1618),
-                    ("level_2618", last.level_2618),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::FibProjectionOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::FibProjectionOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.level_618)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("level_618", last.level_618),
-                    ("level_1000", last.level_1000),
-                    ("level_1618", last.level_1618),
-                    ("level_2618", last.level_2618),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::FibRetracementOutput>
-where
-    I: Indicator<Input = f64, Output = wc::FibRetracementOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.level_0)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("level_0", last.level_0),
-                    ("level_236", last.level_236),
-                    ("level_382", last.level_382),
-                    ("level_500", last.level_500),
-                    ("level_618", last.level_618),
-                    ("level_786", last.level_786),
-                    ("level_1000", last.level_1000),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::FibRetracementOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::FibRetracementOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.level_0)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("level_0", last.level_0),
-                    ("level_236", last.level_236),
-                    ("level_382", last.level_382),
-                    ("level_500", last.level_500),
-                    ("level_618", last.level_618),
-                    ("level_786", last.level_786),
-                    ("level_1000", last.level_1000),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::FibTimeZonesOutput>
-where
-    I: Indicator<Input = f64, Output = wc::FibTimeZonesOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.on_zone)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("on_zone", last.on_zone),
-                    ("bars_to_next", last.bars_to_next),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::FibTimeZonesOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::FibTimeZonesOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.on_zone)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("on_zone", last.on_zone),
-                    ("bars_to_next", last.bars_to_next),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::FibonacciPivotsOutput>
-where
-    I: Indicator<Input = f64, Output = wc::FibonacciPivotsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.pp)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("pp", last.pp),
-                    ("r1", last.r1),
-                    ("r2", last.r2),
-                    ("r3", last.r3),
-                    ("s1", last.s1),
-                    ("s2", last.s2),
-                    ("s3", last.s3),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::FibonacciPivotsOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::FibonacciPivotsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.pp)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("pp", last.pp),
-                    ("r1", last.r1),
-                    ("r2", last.r2),
-                    ("r3", last.r3),
-                    ("s1", last.s1),
-                    ("s2", last.s2),
-                    ("s3", last.s3),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::FractalChaosBandsOutput>
-where
-    I: Indicator<Input = f64, Output = wc::FractalChaosBandsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("upper", last.upper), ("lower", last.lower)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::FractalChaosBandsOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::FractalChaosBandsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("upper", last.upper), ("lower", last.lower)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::GatorOscillatorOutput>
-where
-    I: Indicator<Input = f64, Output = wc::GatorOscillatorOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("upper", last.upper), ("lower", last.lower)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::GatorOscillatorOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::GatorOscillatorOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("upper", last.upper), ("lower", last.lower)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::GoldenPocketOutput>
-where
-    I: Indicator<Input = f64, Output = wc::GoldenPocketOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.low)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("low", last.low), ("mid", last.mid), ("high", last.high)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::GoldenPocketOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::GoldenPocketOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.low)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("low", last.low), ("mid", last.mid), ("high", last.high)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::HeikinAshiOutput>
-where
-    I: Indicator<Input = f64, Output = wc::HeikinAshiOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.open)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("open", last.open),
-                    ("high", last.high),
-                    ("low", last.low),
-                    ("close", last.close),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::HeikinAshiOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::HeikinAshiOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.open)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("open", last.open),
-                    ("high", last.high),
-                    ("low", last.low),
-                    ("close", last.close),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::HighLowVolumeNodesOutput>
-where
-    I: Indicator<Input = f64, Output = wc::HighLowVolumeNodesOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.hvn)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("hvn", last.hvn), ("lvn", last.lvn)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::HighLowVolumeNodesOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::HighLowVolumeNodesOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.hvn)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("hvn", last.hvn), ("lvn", last.lvn)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
 impl<I> TickIndicator for ScalarPriceFields<I, wc::HtPhasorOutput>
 where
     I: Indicator<Input = f64, Output = wc::HtPhasorOutput> + Send,
@@ -1976,250 +1941,6 @@ where
         self.last
             .as_ref()
             .map(|last| vec![("inphase", last.inphase), ("quadrature", last.quadrature)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::HtPhasorOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::HtPhasorOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.inphase)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("inphase", last.inphase), ("quadrature", last.quadrature)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::HurstChannelOutput>
-where
-    I: Indicator<Input = f64, Output = wc::HurstChannelOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("upper", last.upper),
-                    ("middle", last.middle),
-                    ("lower", last.lower),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::HurstChannelOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::HurstChannelOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("upper", last.upper),
-                    ("middle", last.middle),
-                    ("lower", last.lower),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::InitialBalanceOutput>
-where
-    I: Indicator<Input = f64, Output = wc::InitialBalanceOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.high)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("high", last.high), ("low", last.low)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::InitialBalanceOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::InitialBalanceOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.high)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("high", last.high), ("low", last.low)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::KaseDevStopOutput>
-where
-    I: Indicator<Input = f64, Output = wc::KaseDevStopOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.value)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("value", last.value), ("direction", last.direction)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::KaseDevStopOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::KaseDevStopOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.value)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("value", last.value), ("direction", last.direction)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::KasePermissionStochasticOutput>
-where
-    I: Indicator<Input = f64, Output = wc::KasePermissionStochasticOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.fast)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("fast", last.fast), ("slow", last.slow)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::KasePermissionStochasticOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::KasePermissionStochasticOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.fast)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("fast", last.fast), ("slow", last.slow)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::KeltnerOutput>
-where
-    I: Indicator<Input = f64, Output = wc::KeltnerOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("upper", last.upper),
-                    ("middle", last.middle),
-                    ("lower", last.lower),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::KeltnerOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::KeltnerOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("upper", last.upper),
-                    ("middle", last.middle),
-                    ("lower", last.lower),
-                ]
-            })
             .unwrap_or_default()
     }
     fn warmup(&self) -> usize {
@@ -2247,58 +1968,12 @@ where
     }
 }
 
-impl<I> TickIndicator for CandleInFields<I, wc::KstOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::KstOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.kst)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("kst", last.kst), ("signal", last.signal)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
 impl<I> TickIndicator for ScalarPriceFields<I, wc::LinRegChannelOutput>
 where
     I: Indicator<Input = f64, Output = wc::LinRegChannelOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
         let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("upper", last.upper),
-                    ("middle", last.middle),
-                    ("lower", last.lower),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::LinRegChannelOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::LinRegChannelOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
         self.last = out;
         self.last.as_ref().map(|last| last.upper)
     }
@@ -2345,64 +2020,12 @@ where
     }
 }
 
-impl<I> TickIndicator for CandleInFields<I, wc::MaEnvelopeOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::MaEnvelopeOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("upper", last.upper),
-                    ("middle", last.middle),
-                    ("lower", last.lower),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
 impl<I> TickIndicator for ScalarPriceFields<I, wc::MacdOutput>
 where
     I: Indicator<Input = f64, Output = wc::MacdOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
         let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.macd)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("macd", last.macd),
-                    ("signal", last.signal),
-                    ("histogram", last.histogram),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::MacdOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::MacdOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
         self.last = out;
         self.last.as_ref().map(|last| last.macd)
     }
@@ -2443,346 +2066,12 @@ where
     }
 }
 
-impl<I> TickIndicator for CandleInFields<I, wc::MamaOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::MamaOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.mama)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("mama", last.mama), ("fama", last.fama)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
 impl<I> TickIndicator for ScalarPriceFields<I, wc::MedianChannelOutput>
 where
     I: Indicator<Input = f64, Output = wc::MedianChannelOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
         let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("upper", last.upper),
-                    ("middle", last.middle),
-                    ("lower", last.lower),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::MedianChannelOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::MedianChannelOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("upper", last.upper),
-                    ("middle", last.middle),
-                    ("lower", last.lower),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::ModifiedMaStopOutput>
-where
-    I: Indicator<Input = f64, Output = wc::ModifiedMaStopOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.value)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("value", last.value), ("direction", last.direction)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::ModifiedMaStopOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::ModifiedMaStopOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.value)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("value", last.value), ("direction", last.direction)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::MurreyMathLinesOutput>
-where
-    I: Indicator<Input = f64, Output = wc::MurreyMathLinesOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.mm8_8)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("mm8_8", last.mm8_8),
-                    ("mm7_8", last.mm7_8),
-                    ("mm6_8", last.mm6_8),
-                    ("mm5_8", last.mm5_8),
-                    ("mm4_8", last.mm4_8),
-                    ("mm3_8", last.mm3_8),
-                    ("mm2_8", last.mm2_8),
-                    ("mm1_8", last.mm1_8),
-                    ("mm0_8", last.mm0_8),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::MurreyMathLinesOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::MurreyMathLinesOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.mm8_8)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("mm8_8", last.mm8_8),
-                    ("mm7_8", last.mm7_8),
-                    ("mm6_8", last.mm6_8),
-                    ("mm5_8", last.mm5_8),
-                    ("mm4_8", last.mm4_8),
-                    ("mm3_8", last.mm3_8),
-                    ("mm2_8", last.mm2_8),
-                    ("mm1_8", last.mm1_8),
-                    ("mm0_8", last.mm0_8),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::NrtrOutput>
-where
-    I: Indicator<Input = f64, Output = wc::NrtrOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.value)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("value", last.value), ("direction", last.direction)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::NrtrOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::NrtrOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.value)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("value", last.value), ("direction", last.direction)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::OpeningRangeOutput>
-where
-    I: Indicator<Input = f64, Output = wc::OpeningRangeOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.high)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("high", last.high),
-                    ("low", last.low),
-                    ("breakout_distance", last.breakout_distance),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::OpeningRangeOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::OpeningRangeOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.high)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("high", last.high),
-                    ("low", last.low),
-                    ("breakout_distance", last.breakout_distance),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::OvernightIntradayReturnOutput>
-where
-    I: Indicator<Input = f64, Output = wc::OvernightIntradayReturnOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.overnight)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("overnight", last.overnight), ("intraday", last.intraday)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::OvernightIntradayReturnOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::OvernightIntradayReturnOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.overnight)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("overnight", last.overnight), ("intraday", last.intraday)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::ProjectionBandsOutput>
-where
-    I: Indicator<Input = f64, Output = wc::ProjectionBandsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("upper", last.upper),
-                    ("middle", last.middle),
-                    ("lower", last.lower),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::ProjectionBandsOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::ProjectionBandsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
         self.last = out;
         self.last.as_ref().map(|last| last.upper)
     }
@@ -2828,31 +2117,6 @@ where
     }
 }
 
-impl<I> TickIndicator for CandleInFields<I, wc::QqeOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::QqeOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.rsi_ma)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("rsi_ma", last.rsi_ma),
-                    ("trailing_line", last.trailing_line),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
 impl<I> TickIndicator for ScalarPriceFields<I, wc::QuartileBandsOutput>
 where
     I: Indicator<Input = f64, Output = wc::QuartileBandsOutput> + Send,
@@ -2870,206 +2134,6 @@ where
                     ("upper", last.upper),
                     ("middle", last.middle),
                     ("lower", last.lower),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::QuartileBandsOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::QuartileBandsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("upper", last.upper),
-                    ("middle", last.middle),
-                    ("lower", last.lower),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::RwiOutput>
-where
-    I: Indicator<Input = f64, Output = wc::RwiOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.high)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("high", last.high), ("low", last.low)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::RwiOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::RwiOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.high)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("high", last.high), ("low", last.low)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::SessionHighLowOutput>
-where
-    I: Indicator<Input = f64, Output = wc::SessionHighLowOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.high)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("high", last.high), ("low", last.low)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::SessionHighLowOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::SessionHighLowOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.high)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("high", last.high), ("low", last.low)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::SessionRangeOutput>
-where
-    I: Indicator<Input = f64, Output = wc::SessionRangeOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.asia)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("asia", last.asia), ("eu", last.eu), ("us", last.us)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::SessionRangeOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::SessionRangeOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.asia)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("asia", last.asia), ("eu", last.eu), ("us", last.us)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::SmoothedHeikinAshiOutput>
-where
-    I: Indicator<Input = f64, Output = wc::SmoothedHeikinAshiOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.open)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("open", last.open),
-                    ("high", last.high),
-                    ("low", last.low),
-                    ("close", last.close),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::SmoothedHeikinAshiOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::SmoothedHeikinAshiOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.open)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("open", last.open),
-                    ("high", last.high),
-                    ("low", last.low),
-                    ("close", last.close),
                 ]
             })
             .unwrap_or_default()
@@ -3105,894 +2169,6 @@ where
     }
 }
 
-impl<I> TickIndicator for CandleInFields<I, wc::StandardErrorBandsOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::StandardErrorBandsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("upper", last.upper),
-                    ("middle", last.middle),
-                    ("lower", last.lower),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::StarcBandsOutput>
-where
-    I: Indicator<Input = f64, Output = wc::StarcBandsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("upper", last.upper),
-                    ("middle", last.middle),
-                    ("lower", last.lower),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::StarcBandsOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::StarcBandsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("upper", last.upper),
-                    ("middle", last.middle),
-                    ("lower", last.lower),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::StochasticOutput>
-where
-    I: Indicator<Input = f64, Output = wc::StochasticOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.k)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("k", last.k), ("d", last.d)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::StochasticOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::StochasticOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.k)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("k", last.k), ("d", last.d)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::SuperTrendOutput>
-where
-    I: Indicator<Input = f64, Output = wc::SuperTrendOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.value)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("value", last.value), ("direction", last.direction)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::SuperTrendOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::SuperTrendOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.value)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("value", last.value), ("direction", last.direction)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::TdLinesOutput>
-where
-    I: Indicator<Input = f64, Output = wc::TdLinesOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.resistance)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("resistance", last.resistance), ("support", last.support)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::TdLinesOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::TdLinesOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.resistance)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("resistance", last.resistance), ("support", last.support)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::TdMovingAverageOutput>
-where
-    I: Indicator<Input = f64, Output = wc::TdMovingAverageOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.st1)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("st1", last.st1), ("st2", last.st2)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::TdMovingAverageOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::TdMovingAverageOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.st1)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("st1", last.st1), ("st2", last.st2)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::TdRangeProjectionOutput>
-where
-    I: Indicator<Input = f64, Output = wc::TdRangeProjectionOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.high)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("high", last.high), ("low", last.low)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::TdRangeProjectionOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::TdRangeProjectionOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.high)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("high", last.high), ("low", last.low)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::TdRiskLevelOutput>
-where
-    I: Indicator<Input = f64, Output = wc::TdRiskLevelOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.buy_risk)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("buy_risk", last.buy_risk), ("sell_risk", last.sell_risk)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::TdRiskLevelOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::TdRiskLevelOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.buy_risk)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("buy_risk", last.buy_risk), ("sell_risk", last.sell_risk)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::TdSequentialOutput>
-where
-    I: Indicator<Input = f64, Output = wc::TdSequentialOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.setup)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("setup", last.setup),
-                    ("countdown", last.countdown),
-                    ("direction", last.direction),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::TdSequentialOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::TdSequentialOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.setup)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("setup", last.setup),
-                    ("countdown", last.countdown),
-                    ("direction", last.direction),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::TpoProfileOutput>
-where
-    I: Indicator<Input = f64, Output = wc::TpoProfileOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.price_low)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("price_low", last.price_low),
-                    ("price_high", last.price_high),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::TpoProfileOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::TpoProfileOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.price_low)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("price_low", last.price_low),
-                    ("price_high", last.price_high),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::TtmSqueezeOutput>
-where
-    I: Indicator<Input = f64, Output = wc::TtmSqueezeOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.squeeze)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("squeeze", last.squeeze), ("momentum", last.momentum)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::TtmSqueezeOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::TtmSqueezeOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.squeeze)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("squeeze", last.squeeze), ("momentum", last.momentum)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::ValueAreaOutput>
-where
-    I: Indicator<Input = f64, Output = wc::ValueAreaOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.poc)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("poc", last.poc), ("vah", last.vah), ("val", last.val)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::ValueAreaOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::ValueAreaOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.poc)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("poc", last.poc), ("vah", last.vah), ("val", last.val)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::VolatilityConeOutput>
-where
-    I: Indicator<Input = f64, Output = wc::VolatilityConeOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.current)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("current", last.current),
-                    ("min", last.min),
-                    ("median", last.median),
-                    ("max", last.max),
-                    ("percentile", last.percentile),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::VolatilityConeOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::VolatilityConeOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.current)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("current", last.current),
-                    ("min", last.min),
-                    ("median", last.median),
-                    ("max", last.max),
-                    ("percentile", last.percentile),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::VolumeProfileOutput>
-where
-    I: Indicator<Input = f64, Output = wc::VolumeProfileOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.price_low)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("price_low", last.price_low),
-                    ("price_high", last.price_high),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::VolumeProfileOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::VolumeProfileOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.price_low)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("price_low", last.price_low),
-                    ("price_high", last.price_high),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::VolumeWeightedMacdOutput>
-where
-    I: Indicator<Input = f64, Output = wc::VolumeWeightedMacdOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.macd)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("macd", last.macd),
-                    ("signal", last.signal),
-                    ("histogram", last.histogram),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::VolumeWeightedMacdOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::VolumeWeightedMacdOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.macd)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("macd", last.macd),
-                    ("signal", last.signal),
-                    ("histogram", last.histogram),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::VolumeWeightedSrOutput>
-where
-    I: Indicator<Input = f64, Output = wc::VolumeWeightedSrOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.support)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("support", last.support), ("resistance", last.resistance)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::VolumeWeightedSrOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::VolumeWeightedSrOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.support)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("support", last.support), ("resistance", last.resistance)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::VortexOutput>
-where
-    I: Indicator<Input = f64, Output = wc::VortexOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.plus)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("plus", last.plus), ("minus", last.minus)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::VortexOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::VortexOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.plus)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("plus", last.plus), ("minus", last.minus)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::VwapStdDevBandsOutput>
-where
-    I: Indicator<Input = f64, Output = wc::VwapStdDevBandsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("upper", last.upper),
-                    ("middle", last.middle),
-                    ("lower", last.lower),
-                    ("stddev", last.stddev),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::VwapStdDevBandsOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::VwapStdDevBandsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.upper)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("upper", last.upper),
-                    ("middle", last.middle),
-                    ("lower", last.lower),
-                    ("stddev", last.stddev),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::WaveTrendOutput>
-where
-    I: Indicator<Input = f64, Output = wc::WaveTrendOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.wt1)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("wt1", last.wt1), ("wt2", last.wt2)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::WaveTrendOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::WaveTrendOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.wt1)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("wt1", last.wt1), ("wt2", last.wt2)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::WoodiePivotsOutput>
-where
-    I: Indicator<Input = f64, Output = wc::WoodiePivotsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.pp)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("pp", last.pp),
-                    ("r1", last.r1),
-                    ("r2", last.r2),
-                    ("s1", last.s1),
-                    ("s2", last.s2),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::WoodiePivotsOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::WoodiePivotsOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.pp)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("pp", last.pp),
-                    ("r1", last.r1),
-                    ("r2", last.r2),
-                    ("s1", last.s1),
-                    ("s2", last.s2),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
 impl<I> TickIndicator for ScalarPriceFields<I, wc::ZeroLagMacdOutput>
 where
     I: Indicator<Input = f64, Output = wc::ZeroLagMacdOutput> + Send,
@@ -4012,72 +2188,6 @@ where
                     ("histogram", last.histogram),
                 ]
             })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::ZeroLagMacdOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::ZeroLagMacdOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.macd)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("macd", last.macd),
-                    ("signal", last.signal),
-                    ("histogram", last.histogram),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for ScalarPriceFields<I, wc::ZigZagOutput>
-where
-    I: Indicator<Input = f64, Output = wc::ZigZagOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
-        self.last = out;
-        self.last.as_ref().map(|last| last.swing)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("swing", last.swing), ("direction", last.direction)])
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::ZigZagOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::ZigZagOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
-        self.last = out;
-        self.last.as_ref().map(|last| last.swing)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| vec![("swing", last.swing), ("direction", last.direction)])
             .unwrap_or_default()
     }
     fn warmup(&self) -> usize {
@@ -4136,7 +2246,7 @@ fn map_new<T>(kind: &str, made: core::result::Result<T, wc::Error>) -> Result<T>
 }
 
 /// Every registered indicator name, sorted.
-pub const KINDS: [&str; 423] = [
+pub const KINDS: [&str; 438] = [
     "AbandonedBaby",
     "Abcd",
     "AccelerationBands",
@@ -4152,6 +2262,7 @@ pub const KINDS: [&str; 423] = [
     "Adxr",
     "Alligator",
     "Alma",
+    "AmihudIlliquidity",
     "AnchoredRsi",
     "AnchoredVwap",
     "AndrewsPitchfork",
@@ -4211,6 +2322,7 @@ pub const KINDS: [&str; 423] = [
     "CorrelationTrendIndicator",
     "Counterattack",
     "Crab",
+    "CumulativeVolumeDelta",
     "CupAndHandle",
     "CyberneticCycle",
     "Cypher",
@@ -4219,6 +2331,7 @@ pub const KINDS: [&str; 423] = [
     "Dema",
     "DemandIndex",
     "DemarkPivots",
+    "DepthSlope",
     "DerivativeOscillator",
     "DetrendedStdDev",
     "DisparityIndex",
@@ -4355,6 +2468,7 @@ pub const KINDS: [&str; 423] = [
     "MedianMa",
     "MedianPrice",
     "Mfi",
+    "Microprice",
     "MidPoint",
     "MidPrice",
     "MinusDi",
@@ -4374,6 +2488,10 @@ pub const KINDS: [&str; 423] = [
     "OnNeck",
     "OpeningMarubozu",
     "OpeningRange",
+    "OrderBookImbalanceFull",
+    "OrderBookImbalanceTop1",
+    "OrderBookImbalanceTopN",
+    "OrderFlowImbalance",
     "OvernightGap",
     "OvernightIntradayReturn",
     "PainIndex",
@@ -4382,6 +2500,7 @@ pub const KINDS: [&str; 423] = [
     "PercentageTrailingStop",
     "Pgo",
     "PiercingDarkCloud",
+    "Pin",
     "PivotReversal",
     "PlusDi",
     "PlusDm",
@@ -4398,6 +2517,7 @@ pub const KINDS: [&str; 423] = [
     "Qqe",
     "Qstick",
     "QuartileBands",
+    "QuotedSpread",
     "RSquared",
     "RealizedVolatility",
     "RecoveryFactor",
@@ -4413,6 +2533,7 @@ pub const KINDS: [&str; 423] = [
     "Rocr",
     "Rocr100",
     "RogersSatchellVolatility",
+    "RollMeasure",
     "RollingIqr",
     "RollingMinMaxScaler",
     "RollingPercentileRank",
@@ -4436,6 +2557,7 @@ pub const KINDS: [&str; 423] = [
     "SharpeRatio",
     "ShootingStar",
     "ShortLine",
+    "SignedVolume",
     "SineWave",
     "SineWeightedMa",
     "SinglePrints",
@@ -4496,6 +2618,8 @@ pub const KINDS: [&str; 423] = [
     "TimeBasedStop",
     "TowerTopBottom",
     "TpoProfile",
+    "TradeImbalance",
+    "TradeSignAutocorrelation",
     "TradeVolumeIndex",
     "TrendLabel",
     "TrendStrengthIndex",
@@ -4540,6 +2664,7 @@ pub const KINDS: [&str; 423] = [
     "VolumeWeightedMacd",
     "VolumeWeightedSr",
     "Vortex",
+    "Vpin",
     "Vwap",
     "VwapStdDevBands",
     "Vwma",
@@ -4566,7 +2691,7 @@ pub const KINDS: [&str; 423] = [
 /// same values the library pins its own reference outputs with. Used by the
 /// build-all test so every registered indicator is constructed the way wickra
 /// constructs it, rather than with a guessed parameter count.
-pub const DEFAULTS: [(&str, &[f64]); 421] = [
+pub const DEFAULTS: [(&str, &[f64]); 436] = [
     ("AbandonedBaby", &[]),
     ("Abcd", &[]),
     ("AccelerationBands", &[14.0, 2.0]),
@@ -4582,6 +2707,7 @@ pub const DEFAULTS: [(&str, &[f64]); 421] = [
     ("Adxr", &[14.0]),
     ("Alligator", &[3.0, 7.0, 14.0]),
     ("Alma", &[9.0, 0.85, 6.0]),
+    ("AmihudIlliquidity", &[20.0]),
     ("AnchoredRsi", &[]),
     ("AnchoredVwap", &[]),
     ("AndrewsPitchfork", &[14.0]),
@@ -4640,6 +2766,7 @@ pub const DEFAULTS: [(&str, &[f64]); 421] = [
     ("CorrelationTrendIndicator", &[14.0]),
     ("Counterattack", &[]),
     ("Crab", &[]),
+    ("CumulativeVolumeDelta", &[]),
     ("CupAndHandle", &[]),
     ("CyberneticCycle", &[14.0]),
     ("Cypher", &[]),
@@ -4648,6 +2775,7 @@ pub const DEFAULTS: [(&str, &[f64]); 421] = [
     ("Dema", &[14.0]),
     ("DemandIndex", &[14.0]),
     ("DemarkPivots", &[]),
+    ("DepthSlope", &[]),
     ("DerivativeOscillator", &[3.0, 7.0, 14.0, 28.0]),
     ("DetrendedStdDev", &[14.0]),
     ("DisparityIndex", &[14.0]),
@@ -4783,6 +2911,7 @@ pub const DEFAULTS: [(&str, &[f64]); 421] = [
     ("MedianMa", &[14.0]),
     ("MedianPrice", &[]),
     ("Mfi", &[14.0]),
+    ("Microprice", &[]),
     ("MidPoint", &[14.0]),
     ("MidPrice", &[14.0]),
     ("MinusDi", &[14.0]),
@@ -4802,6 +2931,10 @@ pub const DEFAULTS: [(&str, &[f64]); 421] = [
     ("OnNeck", &[]),
     ("OpeningMarubozu", &[]),
     ("OpeningRange", &[14.0]),
+    ("OrderBookImbalanceFull", &[]),
+    ("OrderBookImbalanceTop1", &[]),
+    ("OrderBookImbalanceTopN", &[5.0]),
+    ("OrderFlowImbalance", &[20.0]),
     ("OvernightGap", &[0.0]),
     ("OvernightIntradayReturn", &[14.0]),
     ("PainIndex", &[14.0]),
@@ -4810,6 +2943,7 @@ pub const DEFAULTS: [(&str, &[f64]); 421] = [
     ("PercentageTrailingStop", &[2.0]),
     ("Pgo", &[14.0]),
     ("PiercingDarkCloud", &[]),
+    ("Pin", &[20.0]),
     ("PivotReversal", &[3.0, 7.0]),
     ("PlusDi", &[14.0]),
     ("PlusDm", &[14.0]),
@@ -4826,6 +2960,7 @@ pub const DEFAULTS: [(&str, &[f64]); 421] = [
     ("Qqe", &[3.0, 7.0, 2.0]),
     ("Qstick", &[14.0]),
     ("QuartileBands", &[14.0]),
+    ("QuotedSpread", &[]),
     ("RSquared", &[14.0]),
     ("RealizedVolatility", &[14.0]),
     ("RecoveryFactor", &[]),
@@ -4841,6 +2976,7 @@ pub const DEFAULTS: [(&str, &[f64]); 421] = [
     ("Rocr", &[14.0]),
     ("Rocr100", &[14.0]),
     ("RogersSatchellVolatility", &[20.0, 252.0]),
+    ("RollMeasure", &[20.0]),
     ("RollingIqr", &[14.0]),
     ("RollingMinMaxScaler", &[14.0]),
     ("RollingPercentileRank", &[14.0]),
@@ -4864,6 +3000,7 @@ pub const DEFAULTS: [(&str, &[f64]); 421] = [
     ("SharpeRatio", &[14.0, 2.0]),
     ("ShootingStar", &[]),
     ("ShortLine", &[]),
+    ("SignedVolume", &[]),
     ("SineWave", &[]),
     ("SineWeightedMa", &[14.0]),
     ("SinglePrints", &[3.0, 7.0]),
@@ -4924,6 +3061,8 @@ pub const DEFAULTS: [(&str, &[f64]); 421] = [
     ("TimeBasedStop", &[14.0]),
     ("TowerTopBottom", &[]),
     ("TpoProfile", &[30.0, 50.0]),
+    ("TradeImbalance", &[20.0]),
+    ("TradeSignAutocorrelation", &[20.0]),
     ("TradeVolumeIndex", &[2.0]),
     ("TrendLabel", &[14.0]),
     ("TrendStrengthIndex", &[14.0]),
@@ -4968,6 +3107,7 @@ pub const DEFAULTS: [(&str, &[f64]); 421] = [
     ("VolumeWeightedMacd", &[3.0, 7.0, 14.0]),
     ("VolumeWeightedSr", &[14.0]),
     ("Vortex", &[14.0]),
+    ("Vpin", &[5000.0, 10.0]),
     ("Vwap", &[]),
     ("VwapStdDevBands", &[2.0]),
     ("Vwma", &[14.0]),
@@ -5060,6 +3200,10 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
                 float_param(params, 1, kind)?,
                 float_param(params, 2, kind)?,
             ),
+        )?))),
+        "AmihudIlliquidity" => Ok(Box::new(TradeIn(map_new(
+            kind,
+            wc::AmihudIlliquidity::new(usize_param(params, 0, kind)?),
         )?))),
         "AnchoredRsi" => Ok(Box::new(ScalarPrice(wc::AnchoredRsi::new()))),
         "AnchoredVwap" => Ok(Box::new(CandleIn(wc::AnchoredVwap::new()))),
@@ -5323,6 +3467,7 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
         )?))),
         "Counterattack" => Ok(Box::new(CandleIn(wc::Counterattack::new()))),
         "Crab" => Ok(Box::new(CandleIn(wc::Crab::new()))),
+        "CumulativeVolumeDelta" => Ok(Box::new(TradeIn(wc::CumulativeVolumeDelta::new()))),
         "CupAndHandle" => Ok(Box::new(CandleIn(wc::CupAndHandle::new()))),
         "CyberneticCycle" => Ok(Box::new(ScalarPrice(map_new(
             kind,
@@ -5352,6 +3497,7 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             inner: wc::DemarkPivots::new(),
             last: None,
         })),
+        "DepthSlope" => Ok(Box::new(BookIn(wc::DepthSlope::new()))),
         "DerivativeOscillator" => Ok(Box::new(ScalarPrice(map_new(
             kind,
             wc::DerivativeOscillator::new(
@@ -5903,6 +4049,7 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             kind,
             wc::Mfi::new(usize_param(params, 0, kind)?),
         )?))),
+        "Microprice" => Ok(Box::new(BookIn(wc::Microprice::new()))),
         "MidPoint" => Ok(Box::new(ScalarPrice(map_new(
             kind,
             wc::MidPoint::new(usize_param(params, 0, kind)?),
@@ -5964,6 +4111,16 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             inner: map_new(kind, wc::OpeningRange::new(usize_param(params, 0, kind)?))?,
             last: None,
         })),
+        "OrderBookImbalanceFull" => Ok(Box::new(BookIn(wc::OrderBookImbalanceFull::new()))),
+        "OrderBookImbalanceTop1" => Ok(Box::new(BookIn(wc::OrderBookImbalanceTop1::new()))),
+        "OrderBookImbalanceTopN" => Ok(Box::new(BookIn(map_new(
+            kind,
+            wc::OrderBookImbalanceTopN::new(usize_param(params, 0, kind)?),
+        )?))),
+        "OrderFlowImbalance" => Ok(Box::new(BookIn(map_new(
+            kind,
+            wc::OrderFlowImbalance::new(usize_param(params, 0, kind)?),
+        )?))),
         "OvernightGap" => Ok(Box::new(CandleIn(wc::OvernightGap::new(i32_param(
             params, 0, kind,
         )?)))),
@@ -5995,6 +4152,10 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             wc::Pgo::new(usize_param(params, 0, kind)?),
         )?))),
         "PiercingDarkCloud" => Ok(Box::new(CandleIn(wc::PiercingDarkCloud::new()))),
+        "Pin" => Ok(Box::new(TradeIn(map_new(
+            kind,
+            wc::Pin::new(usize_param(params, 0, kind)?),
+        )?))),
         "PivotReversal" => Ok(Box::new(CandleIn(map_new(
             kind,
             wc::PivotReversal::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
@@ -6077,6 +4238,7 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             inner: map_new(kind, wc::QuartileBands::new(usize_param(params, 0, kind)?))?,
             last: None,
         })),
+        "QuotedSpread" => Ok(Box::new(BookIn(wc::QuotedSpread::new()))),
         "RSquared" => Ok(Box::new(ScalarPrice(map_new(
             kind,
             wc::RSquared::new(usize_param(params, 0, kind)?),
@@ -6127,6 +4289,10 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
                 usize_param(params, 0, kind)?,
                 usize_param(params, 1, kind)?,
             ),
+        )?))),
+        "RollMeasure" => Ok(Box::new(TradeIn(map_new(
+            kind,
+            wc::RollMeasure::new(usize_param(params, 0, kind)?),
         )?))),
         "RollingIqr" => Ok(Box::new(ScalarPrice(map_new(
             kind,
@@ -6219,6 +4385,7 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
         )?))),
         "ShootingStar" => Ok(Box::new(CandleIn(wc::ShootingStar::new()))),
         "ShortLine" => Ok(Box::new(CandleIn(wc::ShortLine::new()))),
+        "SignedVolume" => Ok(Box::new(TradeIn(wc::SignedVolume::new()))),
         "SineWave" => Ok(Box::new(ScalarPrice(wc::SineWave::new()))),
         "SineWeightedMa" => Ok(Box::new(ScalarPrice(map_new(
             kind,
@@ -6460,6 +4627,14 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
+        "TradeImbalance" => Ok(Box::new(TradeIn(map_new(
+            kind,
+            wc::TradeImbalance::new(usize_param(params, 0, kind)?),
+        )?))),
+        "TradeSignAutocorrelation" => Ok(Box::new(TradeIn(map_new(
+            kind,
+            wc::TradeSignAutocorrelation::new(usize_param(params, 0, kind)?),
+        )?))),
         "TradeVolumeIndex" => Ok(Box::new(CandleIn(map_new(
             kind,
             wc::TradeVolumeIndex::new(float_param(params, 0, kind)?),
@@ -6653,6 +4828,10 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             inner: map_new(kind, wc::Vortex::new(usize_param(params, 0, kind)?))?,
             last: None,
         })),
+        "Vpin" => Ok(Box::new(TradeIn(map_new(
+            kind,
+            wc::Vpin::new(float_param(params, 0, kind)?, usize_param(params, 1, kind)?),
+        )?))),
         "Vwap" => Ok(Box::new(CandleIn(wc::Vwap::new()))),
         "VwapStdDevBands" => Ok(Box::new(CandleInFields {
             inner: map_new(

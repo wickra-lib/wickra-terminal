@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
+use wickra_core as wc;
 use wickra_exchange_core::{BookDelta, BookLevel, Event, OrderBookSnapshot, OrderSide, TradePrint};
 
 use crate::candle::{CandleBuilder, Timeframe};
@@ -57,6 +58,23 @@ impl BookState {
         self.asks.iter().next().map(|(p, q)| (*p, *q))
     }
 
+    /// The book as wickra-core's [`wc::OrderBook`], for the indicators that read
+    /// it, or `None` if this book is not one the core will accept.
+    ///
+    /// `None` rather than an error because a book that is momentarily one-sided
+    /// or crossed is an ordinary thing to see on a live feed between a snapshot
+    /// and the diffs that follow it. The indicators that read the book simply do
+    /// not advance on such a tick, which is the same thing they do while warming
+    /// up; raising here would turn a normal feed hiccup into a dead terminal.
+    #[must_use]
+    pub fn to_core(&self) -> Option<wc::OrderBook> {
+        // Bids reversed: the core wants each side best-first, and a BTreeMap
+        // iterates ascending, which is best-first for asks but not for bids.
+        let bids = levels(self.bids.iter().rev())?;
+        let asks = levels(self.asks.iter())?;
+        wc::OrderBook::new(bids, asks).ok()
+    }
+
     /// The bid/ask spread, or `None` if either side is empty.
     #[must_use]
     pub fn spread(&self) -> Option<Decimal> {
@@ -85,6 +103,37 @@ impl BookState {
 }
 
 /// Insert/remove changed levels into one side of a book.
+/// Convert a print into the core's [`wc::Trade`], for the tape indicator family.
+///
+/// `None` if the price or quantity does not survive the move from `Decimal` to
+/// `f64`, or if the core rejects them — a zero or negative print price, which
+/// the core refuses because the measures built on it are ratios.
+fn core_trade(print: &TradePrint) -> Option<wc::Trade> {
+    let side = match print.aggressor {
+        OrderSide::Buy => wc::Side::Buy,
+        OrderSide::Sell => wc::Side::Sell,
+    };
+    wc::Trade::new(
+        print.price.to_f64()?,
+        print.quantity.to_f64()?,
+        side,
+        print.timestamp,
+    )
+    .ok()
+}
+
+/// Convert one side of the book into the core's levels, in the order given.
+///
+/// `None` if any price or size does not survive the move from `Decimal` to
+/// `f64`, or if the core rejects a level. Dropping the whole side rather than
+/// the offending level keeps the book self-consistent: a book missing a level
+/// in the middle would still satisfy the core's ordering checks while quietly
+/// misstating the depth every book indicator reads.
+fn levels<'a>(side: impl Iterator<Item = (&'a Decimal, &'a Decimal)>) -> Option<Vec<wc::Level>> {
+    side.map(|(price, size)| wc::Level::new(price.to_f64()?, size.to_f64()?).ok())
+        .collect()
+}
+
 fn apply_levels(side: &mut BTreeMap<Decimal, Decimal>, changes: &[BookLevel]) {
     for level in changes {
         if level.quantity.is_zero() {
@@ -267,6 +316,17 @@ impl IndicatorSet {
             series: VecDeque::with_capacity(INDICATOR_SERIES),
         });
         Ok(())
+    }
+
+    /// Whether any indicator in this set reads the order book.
+    ///
+    /// Scanned rather than cached: the set holds a handful of indicators and
+    /// this is asked once per tick, so the scan costs less than the bookkeeping
+    /// a cached flag would need on every add and remove — and it cannot go
+    /// stale, which a cached flag can.
+    #[must_use]
+    pub fn wants_book(&self) -> bool {
+        self.entries.iter().any(|e| e.indicator.wants_book())
     }
 
     /// Drop the indicator with this label. Returns whether one was removed.
@@ -452,10 +512,20 @@ impl AppState {
                     print.quantity.to_f64().unwrap_or(0.0),
                     print.timestamp,
                 );
-                state.indicators.update(&TickInput {
-                    price,
-                    candle: closed,
-                });
+                // The book is converted only when something reads it: the
+                // default indicator set is all price and bar indicators, and a
+                // deep book would otherwise be walked on every print for
+                // nothing.
+                let book = if state.indicators.wants_book() {
+                    state.book.to_core()
+                } else {
+                    None
+                };
+                let mut tick = TickInput::price(price);
+                tick.candle = closed;
+                tick.trade = core_trade(print);
+                tick.book = book;
+                state.indicators.update(&tick);
                 if state.history.len() == 512 {
                     state.history.pop_front();
                 }
@@ -691,10 +761,7 @@ mod tests {
 
     #[test]
     fn indicator_set_warms_up_then_reports() {
-        let price = |p: f64| TickInput {
-            price: p,
-            candle: None,
-        };
+        let price = TickInput::price;
         let mut set = IndicatorSet::default();
         for _ in 0..19 {
             set.update(&price(100.0));
@@ -707,10 +774,7 @@ mod tests {
 
     #[test]
     fn an_indicator_series_records_one_point_per_tick_after_warmup() {
-        let price = |p: f64| TickInput {
-            price: p,
-            candle: None,
-        };
+        let price = TickInput::price;
         let mut set = IndicatorSet::from_specs(&[IndicatorSpec::new("Sma", vec![3.0])]).unwrap();
         for step in 0..10 {
             set.update(&price(100.0 + f64::from(step)));
@@ -731,10 +795,9 @@ mod tests {
             // Four trades per bar, so only one tick in four closes one.
             let price = 100.0 + (step % 4) as f64;
             let closed = builder.update(price, 1.0, step * 250);
-            set.update(&TickInput {
-                price,
-                candle: closed,
-            });
+            let mut tick = TickInput::price(price);
+            tick.candle = closed;
+            set.update(&tick);
             ticks += 1;
         }
         let series = &set.snapshot()[0].series;
@@ -749,10 +812,7 @@ mod tests {
 
     #[test]
     fn an_indicator_series_is_bounded() {
-        let price = |p: f64| TickInput {
-            price: p,
-            candle: None,
-        };
+        let price = TickInput::price;
         let mut set = IndicatorSet::from_specs(&[IndicatorSpec::new("Sma", vec![2.0])]).unwrap();
         for step in 0..500 {
             set.update(&price(100.0 + f64::from(step)));
@@ -762,10 +822,7 @@ mod tests {
 
     #[test]
     fn a_warming_up_indicator_has_no_series_yet() {
-        let price = |p: f64| TickInput {
-            price: p,
-            candle: None,
-        };
+        let price = TickInput::price;
         let mut set = IndicatorSet::from_specs(&[IndicatorSpec::new("Sma", vec![50.0])]).unwrap();
         for _ in 0..10 {
             set.update(&price(100.0));
