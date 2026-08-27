@@ -620,6 +620,23 @@ jobs:
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: cargo-fuzz
+      # `fuzz` is `workspace.exclude`d, so `cargo fmt --all` and
+      # `cargo clippy --workspace` never reach it and its four targets were
+      # ungated entirely. The nightly toolchain and the cache are already here
+      # for cargo-fuzz, so gating costs seconds.
+      #
+      # These run on nightly because that is what this job has, which means a
+      # nightly lint change can break them where a stable one would not. The
+      # targets are four small files that rarely change, so the trade is worth
+      # it; if a nightly churns, the fix is one line here.
+      - name: Fuzz targets, formatting
+        run: cargo +nightly fmt --check
+        working-directory: fuzz
+
+      - name: Fuzz targets, clippy
+        run: cargo +nightly clippy --all-targets -- -D warnings
+        working-directory: fuzz
+
       - name: Fuzz feed_event (30 s)
         run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu feed_event -- -max_total_time=30
         working-directory: fuzz
@@ -706,6 +723,16 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - uses: r-lib/actions/setup-r@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2.12.1
+        with:
+          r-version: "release"
+          use-public-rspm: true
+
       - name: Node examples, syntax check
         shell: bash
         run: |
@@ -731,6 +758,35 @@ jobs:
           done
           test "$count" -gt 0 || { echo "::error::no Python examples found to check"; exit 1; }
           echo "compiled $count Python files"
+
+      - name: Java examples, compile
+        shell: bash
+        # Compiled rather than parsed: javac has no parse-only mode, and the
+        # binding sources on the sourcepath are enough to resolve the example
+        # without Maven or the native library. --release 22 matches the POM and
+        # is the version that finalised the FFM API this binding uses.
+        run: |
+          shopt -s nullglob
+          files=(examples/java/*.java)
+          test "${#files[@]}" -gt 0 || { echo "::error::no Java examples found to check"; exit 1; }
+          mkdir -p /tmp/java-examples
+          javac --release 22 -d /tmp/java-examples             -sourcepath bindings/java/src/main/java "${files[@]}"
+          echo "compiled ${#files[@]} Java files"
+
+      - name: R examples, parse check
+        shell: bash
+        # parse() reads and rejects, without sourcing, so this needs neither the
+        # installed package nor the native library the example loads at run time.
+        run: |
+          shopt -s nullglob
+          count=0
+          for f in examples/r/*.R; do
+            echo "parse $f"
+            Rscript -e 'invisible(parse(commandArgs(trailingOnly = TRUE)[1]))' "$f"
+            count=$((count + 1))
+          done
+          test "$count" -gt 0 || { echo "::error::no R examples found to check"; exit 1; }
+          echo "checked $count R files"
 
       - name: Go examples, parse check
         shell: bash
