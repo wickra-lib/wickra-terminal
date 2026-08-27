@@ -10,4 +10,4 @@ maturin==1.15.0
 # wheel is built against) and pytest 9 requires >= 3.10. 8.4.2 covers 3.9 through
 # 3.14, so every cell of the matrix runs the identical test runner. Raise it only
 # when the matrix floor moves off 3.9.
-pytest==8.4.2
+pytest==9.1.1
