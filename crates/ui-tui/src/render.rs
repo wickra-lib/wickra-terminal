@@ -24,7 +24,17 @@ pub fn rect_from_spec(area: Rect, spec: RectSpec) -> Rect {
 /// Draw a frame of view-models plus a one-line footer (the open prompt or the
 /// last status message). With no subscription (an empty frame) it draws a short
 /// hint instead of panels.
-pub fn draw(frame: &mut TuiFrame, view: &Frame, config: &Config, footer: &str) {
+///
+/// `focused_panel` indexes `config.layout.panels`; that panel is drawn with a
+/// highlighted border. An index past the end simply highlights nothing, which is
+/// what an empty layout should look like.
+pub fn draw(
+    frame: &mut TuiFrame,
+    view: &Frame,
+    config: &Config,
+    footer: &str,
+    focused_panel: usize,
+) {
     let full = frame.area();
     let footer_height = 1;
     let area = Rect {
@@ -44,9 +54,9 @@ pub fn draw(frame: &mut TuiFrame, view: &Frame, config: &Config, footer: &str) {
         ]);
         frame.render_widget(hint, area);
     } else {
-        for (spec, panel) in config.layout.panels.iter().zip(&view.panels) {
+        for (index, (spec, panel)) in config.layout.panels.iter().zip(&view.panels).enumerate() {
             let rect = rect_from_spec(area, spec.rect);
-            widgets::render_panel(frame, rect, panel);
+            widgets::render_panel(frame, rect, panel, index == focused_panel);
         }
     }
 

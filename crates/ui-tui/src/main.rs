@@ -79,7 +79,15 @@ fn run(mut app: App) -> Result<(), Box<dyn Error>> {
     loop {
         app.update();
         let footer = app.footer();
-        tui.draw(|frame| render::draw(frame, &app.frame, app.terminal.config(), &footer))?;
+        tui.draw(|frame| {
+            render::draw(
+                frame,
+                &app.frame,
+                app.terminal.config(),
+                &footer,
+                app.focused_panel,
+            );
+        })?;
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {

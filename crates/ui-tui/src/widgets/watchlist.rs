@@ -2,12 +2,12 @@
 
 use ratatui::layout::Rect;
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use terminal_core::view::WatchlistView;
 
 /// Render the watchlist panel.
-pub fn render(frame: &mut Frame, area: Rect, view: &WatchlistView) {
+pub fn render(frame: &mut Frame, area: Rect, view: &WatchlistView, focused: bool) {
     let lines: Vec<Line> = view
         .rows
         .iter()
@@ -19,7 +19,7 @@ pub fn render(frame: &mut Frame, area: Rect, view: &WatchlistView) {
         })
         .collect();
     frame.render_widget(
-        Paragraph::new(lines).block(Block::bordered().title("Watchlist")),
+        Paragraph::new(lines).block(super::panel_block("Watchlist".to_string(), focused)),
         area,
     );
 }

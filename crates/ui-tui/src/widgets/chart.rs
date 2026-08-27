@@ -2,7 +2,7 @@
 
 use ratatui::layout::Rect;
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use terminal_core::view::ChartView;
 
@@ -32,7 +32,7 @@ pub fn sparkline(series: &[f64], width: usize) -> String {
 }
 
 /// Render the chart panel.
-pub fn render(frame: &mut Frame, area: Rect, view: &ChartView) {
+pub fn render(frame: &mut Frame, area: Rect, view: &ChartView, focused: bool) {
     let inner_width = usize::from(area.width.saturating_sub(2));
     let spark = sparkline(&view.series, inner_width);
     let indicators = view
@@ -49,7 +49,7 @@ pub fn render(frame: &mut Frame, area: Rect, view: &ChartView) {
     let lines = vec![Line::from(spark), Line::from(indicators)];
     let title = format!("Chart {} last={:.2}", view.symbol, view.last);
     frame.render_widget(
-        Paragraph::new(lines).block(Block::bordered().title(title)),
+        Paragraph::new(lines).block(super::panel_block(title, focused)),
         area,
     );
 }
