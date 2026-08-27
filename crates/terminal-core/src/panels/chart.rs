@@ -29,7 +29,7 @@ impl Panel for ChartPanel {
                     .indicators
                     .snapshot()
                     .into_iter()
-                    .map(|reading| IndicatorValue {
+                    .map(|mut reading| IndicatorValue {
                         name: reading.label,
                         value: reading.value,
                         fields: reading
@@ -40,6 +40,12 @@ impl Panel for ChartPanel {
                                 value,
                             })
                             .collect(),
+                        // Trimmed to the chart's own window: the set keeps the
+                        // same number of points, but a panel configured for
+                        // fewer should not ship more than it draws.
+                        series: reading
+                            .series
+                            .split_off(reading.series.len().saturating_sub(CHART_POINTS)),
                     })
                     .collect(),
             },

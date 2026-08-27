@@ -35,6 +35,15 @@ pub struct IndicatorValue {
     /// sees exactly the object it saw before.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fields: Vec<IndicatorField>,
+    /// A bounded recent series, oldest first, ending at the current tick, for
+    /// renderers that draw the indicator as a line over the price.
+    ///
+    /// Indicators warm up at different lengths, so this is not always as long as
+    /// the chart's own series. Both end at the same tick, so a renderer aligns
+    /// this to the right. Empty while warming up, and then omitted from the JSON
+    /// entirely rather than serialised as `[]`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub series: Vec<f64>,
 }
 
 /// The chart panel's view-model: a recent price series with indicator overlays.
@@ -170,6 +179,7 @@ mod tests {
                 name: "Sma(20)".to_string(),
                 value: None,
                 fields: Vec::new(),
+                series: Vec::new(),
             }],
         });
         let json = serde_json::to_string(&view).unwrap();

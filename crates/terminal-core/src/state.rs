@@ -201,7 +201,15 @@ struct IndicatorEntry {
     indicator: Box<dyn TickIndicator>,
     last: Option<f64>,
     fields: Vec<(&'static str, f64)>,
+    /// A bounded recent series, for renderers that draw the indicator as a line
+    /// rather than a number.
+    series: VecDeque<f64>,
 }
+
+/// How many recent points each indicator keeps for renderers that draw it as a
+/// line. Matches the chart panel's series length: a longer one would be trimmed
+/// on the way out, a shorter one would leave the overlay short of the price line.
+const INDICATOR_SERIES: usize = 120;
 
 /// One indicator's latest reading: its label, its primary value and, for a
 /// multi-output indicator, its named fields.
@@ -213,6 +221,8 @@ pub struct IndicatorReading {
     pub value: Option<f64>,
     /// Named outputs in declaration order; empty for a single-output indicator.
     pub fields: Vec<(&'static str, f64)>,
+    /// A bounded recent series, oldest first, ending at the current tick.
+    pub series: Vec<f64>,
 }
 
 /// The set of indicators tracked for a symbol.
@@ -236,6 +246,7 @@ impl IndicatorSet {
                     indicator: registry::build(&spec.kind, &spec.params)?,
                     last: None,
                     fields: Vec::new(),
+                    series: VecDeque::with_capacity(INDICATOR_SERIES),
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -253,6 +264,7 @@ impl IndicatorSet {
             indicator: registry::build(&spec.kind, &spec.params)?,
             last: None,
             fields: Vec::new(),
+            series: VecDeque::with_capacity(INDICATOR_SERIES),
         });
         Ok(())
     }
@@ -265,11 +277,28 @@ impl IndicatorSet {
     }
 
     /// Feed one tick into every indicator.
+    ///
+    /// Each indicator that has produced a value records one point per tick, not
+    /// one per update. A bar indicator only advances when a bar closes, so
+    /// recording only its updates would give it a series several times shorter
+    /// than the price series and an overlay drawn from it would sit at the wrong
+    /// place on the x-axis. Carrying the last value forward makes it a step line
+    /// over the same ticks, which is what it actually means.
+    ///
+    /// Indicators warm up at different lengths, so the series are not all the
+    /// same length. They all end at the current tick, so a renderer aligns them
+    /// to the right of the price series.
     pub fn update(&mut self, input: &TickInput) {
         for entry in &mut self.entries {
             if let Some(value) = entry.indicator.update(input) {
                 entry.last = Some(value);
                 entry.fields = entry.indicator.fields();
+            }
+            if let Some(value) = entry.last {
+                if entry.series.len() == INDICATOR_SERIES {
+                    entry.series.pop_front();
+                }
+                entry.series.push_back(value);
             }
         }
     }
@@ -297,6 +326,7 @@ impl IndicatorSet {
                 label: entry.label.clone(),
                 value: entry.last,
                 fields: entry.fields.clone(),
+                series: entry.series.iter().copied().collect(),
             })
             .collect()
     }
@@ -646,6 +676,74 @@ mod tests {
         assert_eq!(set.values()[0].1, None);
         set.update(&price(100.0));
         assert_eq!(set.values()[0].1, Some(100.0));
+    }
+
+    #[test]
+    fn an_indicator_series_records_one_point_per_tick_after_warmup() {
+        let price = |p: f64| TickInput {
+            price: p,
+            candle: None,
+        };
+        let mut set = IndicatorSet::from_specs(&[IndicatorSpec::new("Sma", vec![3.0])]).unwrap();
+        for step in 0..10 {
+            set.update(&price(100.0 + f64::from(step)));
+        }
+        // Sma(3) is silent for the first two ticks, so eight of the ten recorded.
+        assert_eq!(set.snapshot()[0].series.len(), 8);
+    }
+
+    #[test]
+    fn a_bar_indicator_series_carries_its_value_forward_between_bars() {
+        // Atr only advances when a bar closes. Recording only its updates would
+        // give it a series several times shorter than the price series, and an
+        // overlay drawn from it would sit at the wrong place on the x-axis.
+        let mut set = IndicatorSet::from_specs(&[IndicatorSpec::new("Atr", vec![2.0])]).unwrap();
+        let mut builder = CandleBuilder::new(Timeframe::parse("1s").unwrap());
+        let mut ticks = 0;
+        for step in 0..40_i64 {
+            // Four trades per bar, so only one tick in four closes one.
+            let price = 100.0 + (step % 4) as f64;
+            let closed = builder.update(price, 1.0, step * 250);
+            set.update(&TickInput {
+                price,
+                candle: closed,
+            });
+            ticks += 1;
+        }
+        let series = &set.snapshot()[0].series;
+        assert!(!series.is_empty(), "Atr recorded nothing over ten bars");
+        assert!(
+            series.len() > ticks / 4,
+            "series of {} is barely longer than the {} bars, so it is not carrying forward",
+            series.len(),
+            ticks / 4
+        );
+    }
+
+    #[test]
+    fn an_indicator_series_is_bounded() {
+        let price = |p: f64| TickInput {
+            price: p,
+            candle: None,
+        };
+        let mut set = IndicatorSet::from_specs(&[IndicatorSpec::new("Sma", vec![2.0])]).unwrap();
+        for step in 0..500 {
+            set.update(&price(100.0 + f64::from(step)));
+        }
+        assert_eq!(set.snapshot()[0].series.len(), INDICATOR_SERIES);
+    }
+
+    #[test]
+    fn a_warming_up_indicator_has_no_series_yet() {
+        let price = |p: f64| TickInput {
+            price: p,
+            candle: None,
+        };
+        let mut set = IndicatorSet::from_specs(&[IndicatorSpec::new("Sma", vec![50.0])]).unwrap();
+        for _ in 0..10 {
+            set.update(&price(100.0));
+        }
+        assert!(set.snapshot()[0].series.is_empty());
     }
 
     #[test]

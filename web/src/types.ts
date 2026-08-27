@@ -16,6 +16,11 @@ export interface IndicatorValue {
    *  entirely for single-output ones -- the core omits an empty list from the
    *  JSON, so this is optional rather than an empty array. */
   fields?: IndicatorField[]
+  /** A bounded recent series, oldest first, ending at the current tick. Absent
+   *  while the indicator is warming up. Indicators warm up at different lengths,
+   *  so this is not always as long as the chart's own series; both end at the
+   *  same tick, so a renderer aligns it to the right. */
+  series?: number[]
 }
 
 export interface ChartView {
