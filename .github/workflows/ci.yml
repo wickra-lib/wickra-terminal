@@ -610,6 +610,9 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           toolchain: nightly
+          # cargo-fuzz needs neither, but the fmt and clippy gates below do, and
+          # dtolnay/rust-toolchain installs no components unless asked.
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
