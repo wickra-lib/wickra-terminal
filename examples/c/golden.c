@@ -1,20 +1,37 @@
-/* Cross-language golden parity for the C ABI.
+/* Cross-language golden parity for the C ABI, driven by golden/manifest.json.
  *
- * The other eight language surfaces each assert their output against
- * `golden/expected/basic.min.json`. C and C++ did not, which left the two
- * languages every other binding routes through as the only ones not held to the
- * corpus — the C ABI is the hub, so a drift there would surface everywhere at
- * once and be checked nowhere.
+ * The C ABI is the hub every other binding routes through, so a drift here
+ * surfaces everywhere at once. It used to check one scenario while the eight
+ * other language suites checked all of them, which made the hub the least
+ * covered surface rather than the most.
  *
- * No JSON parser is needed: the ABI returns the core's compact output verbatim,
- * so byte equality against that one file is the whole check. This file is C, and
- * the C++ example links the same header, so passing here covers both.
+ * The manifest is walked by splitting on the quote character rather than with a
+ * JSON parser, exactly as the Java and R suites do and for the same reason: this
+ * example deliberately links nothing but the C ABI header. Splitting on quotes
+ * is enough and needs no regular expressions, because every value in the
+ * manifest is a plain path and none of them contains a quote — the command
+ * sequences live in files of their own precisely so that stays true.
+ *
+ * No JSON parser is needed for the comparison either: the ABI returns the core's
+ * compact output verbatim, so byte equality against the expected file is the
+ * whole check. This file is C, and the C++ example links the same header, so
+ * passing here covers both.
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "wickra_terminal.h"
+
+#define MAX_SCENARIOS 32
+#define PATH_MAX_LEN 512
+
+typedef struct {
+    char name[64];
+    char config[160];
+    char commands[160];
+    char expected[160];
+} Scenario;
 
 /* Read a whole file into a NUL-terminated buffer the caller frees. */
 static char *read_file(const char *path) {
@@ -54,95 +71,202 @@ static void trim_end(char *text) {
     }
 }
 
-/* Find the golden directory by walking up from the working directory, the way
- * every other binding's golden test does — ctest runs from the build tree. */
-static char *golden_path(const char *leaf) {
-    static char path[512];
-    const char *prefixes[] = {"",         "../",          "../../",
-                              "../../../", "../../../../", "../../../../../"};
+/* The prefix that reaches the golden directory from the working directory.
+ *
+ * ctest runs from the build tree, and how deep that is depends on the
+ * generator, so this probes upwards the way every other binding's golden test
+ * does. */
+static const char *golden_prefix(void) {
+    static const char *prefixes[] = {"",          "../",          "../../",
+                                     "../../../", "../../../../", "../../../../../"};
+    static char probe[PATH_MAX_LEN];
     for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
-        snprintf(path, sizeof(path), "%sgolden/%s", prefixes[i], leaf);
-        FILE *probe = fopen(path, "rb");
-        if (probe) {
-            fclose(probe);
-            return path;
+        snprintf(probe, sizeof(probe), "%sgolden/manifest.json", prefixes[i]);
+        FILE *file = fopen(probe, "rb");
+        if (file) {
+            fclose(file);
+            return prefixes[i];
         }
     }
     return NULL;
 }
 
-int main(void) {
-    const char *config_path = golden_path("config.json");
-    if (!config_path) {
-        fprintf(stderr, "golden/config.json not found from the working directory\n");
-        return 1;
-    }
-    char *config = read_file(config_path);
-    if (!config) {
-        fprintf(stderr, "could not read %s\n", config_path);
-        return 1;
-    }
+/* Walk the manifest by splitting on the quote character.
+ *
+ * Quoted tokens alternate between keys and values. A token that matches one of
+ * the known keys selects what the next one means; a scenario is complete when
+ * its name has been read, which is why the generator writes name last. Mutates
+ * `raw` in place, terminating each token where its closing quote was. */
+static size_t parse_manifest(char *raw, Scenario *out, size_t max) {
+    static const char *keys[] = {"scenarios", "commands", "config", "expected", "name"};
+    Scenario current;
+    memset(&current, 0, sizeof current);
+    const char *key = NULL;
+    size_t count = 0;
 
-    const char *expected_path = golden_path("expected/basic.min.json");
-    if (!expected_path) {
-        fprintf(stderr, "golden/expected/basic.min.json not found\n");
-        free(config);
-        return 1;
+    for (char *cursor = raw; *cursor;) {
+        if (*cursor != '"') {
+            cursor++;
+            continue;
+        }
+        char *token = ++cursor;
+        while (*cursor && *cursor != '"') {
+            cursor++;
+        }
+        if (!*cursor) {
+            break;
+        }
+        *cursor++ = '\0';
+
+        const char *matched = NULL;
+        for (size_t k = 0; k < sizeof(keys) / sizeof(keys[0]); k++) {
+            if (strcmp(token, keys[k]) == 0) {
+                matched = keys[k];
+                break;
+            }
+        }
+        if (matched) {
+            key = matched;
+            continue;
+        }
+        if (!key) {
+            continue;
+        }
+        if (strcmp(key, "config") == 0) {
+            snprintf(current.config, sizeof current.config, "%s", token);
+        } else if (strcmp(key, "commands") == 0) {
+            snprintf(current.commands, sizeof current.commands, "%s", token);
+        } else if (strcmp(key, "expected") == 0) {
+            snprintf(current.expected, sizeof current.expected, "%s", token);
+        } else if (strcmp(key, "name") == 0) {
+            snprintf(current.name, sizeof current.name, "%s", token);
+            if (count < max) {
+                out[count++] = current;
+            }
+            memset(&current, 0, sizeof current);
+            key = NULL;
+        }
     }
-    char *expected = read_file(expected_path);
+    return count;
+}
+
+/* Drive one scenario. Returns 0 on parity, 1 otherwise. */
+static int run_scenario(const char *prefix, const Scenario *scenario) {
+    char path[PATH_MAX_LEN];
+    int failed = 1;
+    char *config = NULL;
+    char *expected = NULL;
+    char *commands = NULL;
+    WickraTerminal *term = NULL;
+    char *frame = NULL;
+
+    snprintf(path, sizeof path, "%sgolden/%s", prefix, scenario->config);
+    config = read_file(path);
+    if (!config) {
+        fprintf(stderr, "%s: could not read %s\n", scenario->name, path);
+        goto done;
+    }
+    snprintf(path, sizeof path, "%sgolden/%s", prefix, scenario->expected);
+    expected = read_file(path);
     if (!expected) {
-        fprintf(stderr, "could not read %s\n", expected_path);
-        free(config);
-        return 1;
+        fprintf(stderr, "%s: could not read %s\n", scenario->name, path);
+        goto done;
     }
     trim_end(expected);
+    snprintf(path, sizeof path, "%sgolden/%s", prefix, scenario->commands);
+    commands = read_file(path);
+    if (!commands) {
+        fprintf(stderr, "%s: could not read %s\n", scenario->name, path);
+        goto done;
+    }
 
-    WickraTerminal *term = wickra_terminal_new(config);
-    free(config);
+    term = wickra_terminal_new(config);
     if (!term) {
-        fprintf(stderr, "failed to build a terminal from golden/config.json\n");
-        free(expected);
-        return 1;
+        fprintf(stderr, "%s: failed to build a terminal from its config\n", scenario->name);
+        goto done;
     }
 
-    char *out = NULL;
-    if (wickra_terminal_command(
-            term, "{\"type\":\"Subscribe\",\"source\":0,\"symbol\":\"BTC/USDT\"}", &out) !=
-        WICKRA_TERMINAL_OK) {
-        fprintf(stderr, "subscribe failed: %s\n", out ? out : "");
-        wickra_terminal_free_string(out);
-        wickra_terminal_free(term);
-        free(expected);
-        return 1;
-    }
-    wickra_terminal_free_string(out);
-
-    /* Thirty-two ticks: the replay drains well before that, and the frame is
-     * stable afterwards, which is what the Rust golden test pins. */
-    char *frame = NULL;
-    for (int i = 0; i < 32; i++) {
-        wickra_terminal_free_string(frame);
-        frame = NULL;
-        if (wickra_terminal_command(term, "{\"type\":\"Tick\"}", &frame) !=
-            WICKRA_TERMINAL_OK) {
-            fprintf(stderr, "tick %d failed: %s\n", i, frame ? frame : "");
-            wickra_terminal_free_string(frame);
-            wickra_terminal_free(term);
-            free(expected);
-            return 1;
+    /* One command per line; the last frame returned is the one to compare. */
+    int replayed = 0;
+    for (char *line = commands; line && *line;) {
+        char *end = strchr(line, '\n');
+        if (end) {
+            *end = '\0';
         }
+        trim_end(line);
+        if (*line) {
+            wickra_terminal_free_string(frame);
+            frame = NULL;
+            if (wickra_terminal_command(term, line, &frame) != WICKRA_TERMINAL_OK) {
+                fprintf(stderr, "%s: command rejected: %s\n", scenario->name,
+                        frame ? frame : line);
+                goto done;
+            }
+            replayed++;
+        }
+        line = end ? end + 1 : NULL;
+    }
+    if (replayed == 0) {
+        fprintf(stderr, "%s: the command file is empty\n", scenario->name);
+        goto done;
     }
 
     trim_end(frame);
-    int same = strcmp(frame, expected) == 0;
-    if (!same) {
-        fprintf(stderr, "golden mismatch\n  expected: %s\n  got:      %s\n", expected, frame);
-    } else {
-        printf("C golden parity: frame matches golden/expected/basic.min.json\n");
+    if (strcmp(frame, expected) != 0) {
+        fprintf(stderr, "%s: golden mismatch\n  expected: %s\n  got:      %s\n", scenario->name,
+                expected, frame);
+        goto done;
+    }
+    printf("  %-18s %d commands, frame matches %s\n", scenario->name, replayed,
+           scenario->expected);
+    failed = 0;
+
+done:
+    wickra_terminal_free_string(frame);
+    if (term) {
+        wickra_terminal_free(term);
+    }
+    free(commands);
+    free(expected);
+    free(config);
+    return failed;
+}
+
+int main(void) {
+    const char *prefix = golden_prefix();
+    if (!prefix) {
+        fprintf(stderr, "golden/manifest.json not found from the working directory\n");
+        return 1;
     }
 
-    wickra_terminal_free_string(frame);
-    wickra_terminal_free(term);
-    free(expected);
-    return same ? 0 : 1;
+    char path[PATH_MAX_LEN];
+    snprintf(path, sizeof path, "%sgolden/manifest.json", prefix);
+    char *raw = read_file(path);
+    if (!raw) {
+        fprintf(stderr, "could not read %s\n", path);
+        return 1;
+    }
+
+    Scenario scenarios[MAX_SCENARIOS];
+    size_t count = parse_manifest(raw, scenarios, MAX_SCENARIOS);
+    free(raw);
+
+    /* A manifest that silently shrank would leave this passing while checking a
+     * fraction of what it used to, so the count is floored the way the other
+     * suites floor theirs. */
+    if (count < 9) {
+        fprintf(stderr, "only %zu scenarios parsed from the manifest\n", count);
+        return 1;
+    }
+
+    printf("C golden parity across %zu scenarios:\n", count);
+    int failures = 0;
+    for (size_t i = 0; i < count; i++) {
+        failures += run_scenario(prefix, &scenarios[i]);
+    }
+    if (failures) {
+        fprintf(stderr, "%d of %zu scenarios failed\n", failures, count);
+        return 1;
+    }
+    return 0;
 }

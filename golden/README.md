@@ -54,17 +54,20 @@ character, which needs no parser and no regular expression.
 | `indicators` | a non-default indicator set (`Sma`, `Rsi`, `MacdIndicator`) driven far enough to produce real values, including the multi-output fields and the per-indicator series |
 | `pairwise` | a pairwise indicator across two markets: the reference price reaches it through the tick, and the label carries which market it is against |
 | `seek` | the time machine: drive to the end, rewind, drive forward again |
+| `timeframe` | `SetTimeframe` mid-run, with a bar indicator that warms up again under the new size |
+| `source_lifecycle` | a source added at run time replacing the one the terminal started with |
 | `multi_source` | two sources at once, with focus on the second |
 
 ## Coverage
 
-Eight language surfaces run every scenario: Rust, Python, Node, WASM, Go, C#,
-Java and R.
+Nine language surfaces run every scenario: Rust, Python, Node, WASM, Go, C#,
+Java, R, and C through `examples/c/golden.c`.
 
-`examples/c/golden.c` runs the basic scenario only. It holds the C ABI hub — the
-one every other binding routes through — to the corpus without a JSON parser,
-which is the right trade for an example; the eight surfaces above already cover
-the hub across all six scenarios.
+The C one used to run the basic scenario alone, which left the ABI hub — the one
+every other binding routes through — as the least covered surface rather than
+the most. It now walks the manifest like the others, and like the Java and R
+suites it does so by splitting on the quote character rather than linking a JSON
+parser, which is the whole reason every manifest value is a plain path.
 
 ## Regenerating
 
