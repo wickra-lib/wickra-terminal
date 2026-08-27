@@ -66,4 +66,56 @@ for (i in seq_len(32)) {
 }
 stopifnot(identical(trimws(golden_frame), golden_expected))
 
+## The indicator registry is reachable from R.
+##
+## The registry lives in the Rust core and this binding passes JSON through the
+## C ABI, so nothing here needed new binding code. That is exactly why it is
+## worth checking: "no code changed" is also what a broken pass-through looks
+## like. A non-default indicator is used, so finding it proves the config
+## reached the registry rather than the built-in overlay looking right by chance.
+##
+## The frame is inspected with fixed substring matches rather than a JSON
+## parser, because the package deliberately has no dependencies and adding one
+## for a test would be the tail wagging the dog.
+registry_config <- paste0(
+  '{"sources":[{"Synth":{"seed":1}}],',
+  '"indicators":[{"kind":"Rsi","params":[14]}]}'
+)
+rterm <- wkterm_new(registry_config)
+invisible(wkterm_command(
+  rterm, '{"type":"Subscribe","source":0,"symbol":"BTC/USDT"}'
+))
+registry_frame <- ""
+for (i in seq_len(30)) {
+  registry_frame <- wkterm_command(rterm, '{"type":"Tick"}')
+}
+stopifnot(grepl('"name":"Rsi(14)"', registry_frame, fixed = TRUE))
+stopifnot(!grepl('"name":"Sma(20)"', registry_frame, fixed = TRUE))
+
+## Added and removed at run time.
+invisible(wkterm_command(
+  rterm, '{"type":"AddIndicator","spec":{"kind":"Atr","params":[14]}}'
+))
+added <- wkterm_command(rterm, '{"type":"Tick"}')
+stopifnot(grepl('"name":"Atr(14)"', added, fixed = TRUE))
+invisible(wkterm_command(rterm, '{"type":"RemoveIndicator","label":"Rsi(14)"}'))
+removed <- wkterm_command(rterm, '{"type":"Tick"}')
+stopifnot(!grepl('"name":"Rsi(14)"', removed, fixed = TRUE))
+stopifnot(grepl('"name":"Atr(14)"', removed, fixed = TRUE))
+
+## The catalogue answers with the whole registry: one "kind" key per row.
+catalogue <- wkterm_command(rterm, '{"type":"ListIndicators"}')
+rows <- length(gregexpr('"kind":', catalogue, fixed = TRUE)[[1]])
+stopifnot(rows >= 421)
+stopifnot(grepl('"kind":"Sma"', catalogue, fixed = TRUE))
+stopifnot(grepl('"kind":"MacdIndicator"', catalogue, fixed = TRUE))
+
+## An unknown indicator is rejected, and the error names it.
+unknown <- try(
+  wkterm_command(rterm, '{"type":"AddIndicator","spec":{"kind":"NotReal"}}'),
+  silent = TRUE
+)
+stopifnot(inherits(unknown, "try-error"))
+stopifnot(grepl("NotReal", conditionMessage(attr(unknown, "condition")), fixed = TRUE))
+
 cat("wickra-terminal R tests passed\n")
