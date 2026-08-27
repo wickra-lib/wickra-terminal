@@ -152,6 +152,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+        # 3.10 is listed in the classifiers but not tested here, and that is
+        # deliberate: maturin builds one abi3 wheel against the 3.9 stable ABI
+        # (cp39-abi3), so every later minor loads the same binary by the ABI
+        # guarantee. Testing the floor plus the three current minors covers the
+        # pure-Python layer; a fifth job would re-prove the ABI contract.
         python-version: ["3.9", "3.11", "3.12", "3.13"]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
