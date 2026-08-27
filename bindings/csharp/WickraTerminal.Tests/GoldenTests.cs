@@ -96,7 +96,7 @@ public class GoldenTests
         // A manifest that silently shrank to one entry would leave every parity
         // test passing while checking a fraction of what it used to.
         var names = Manifest().Scenarios.Select(s => s.Name).ToList();
-        Assert.True(names.Count >= 7, $"only {names.Count} scenarios");
+        Assert.True(names.Count >= 9, $"only {names.Count} scenarios");
         foreach (var expected in new[] { "basic", "book_deltas", "footprint", "indicators", "seek" })
         {
             Assert.Contains(expected, names);

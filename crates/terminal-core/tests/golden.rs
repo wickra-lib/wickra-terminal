@@ -166,6 +166,22 @@ fn pairwise_feed() -> Vec<Event> {
     feed
 }
 
+/// A feed whose timestamps span several seconds, so bars actually close.
+///
+/// `indicator_feed` stamps one millisecond per event, which keeps forty events
+/// inside a single second: at a `1s` timeframe no bar ever closes and a
+/// candle-input indicator stays silent, which would pin nothing.
+fn multi_second_feed() -> Vec<Event> {
+    (0..48_i64)
+        .map(|step| {
+            let wave = if step < 24 { step } else { 48 - step };
+            // Three trades a second, so each bar has a real open, high and close,
+            // and long enough that the indicator warms up again after the switch.
+            trade(20_000 + wave * 5, 10, step % 3 != 0, step * 334)
+        })
+        .collect()
+}
+
 /// One scenario: a config, the commands to drive it, and the name its fixtures
 /// carry.
 struct Scenario {
@@ -215,6 +231,16 @@ fn scenarios() -> Vec<Scenario> {
         "ETH/USDT",
     )];
     with_pair.timeframe = Timeframe::parse("1s").unwrap();
+
+    let timeframe_feed = multi_second_feed();
+    let mut with_timeframe = replay_config(&timeframe_feed);
+    // A candle-input indicator, so the bar size is observable in the frame: Atr
+    // reads bars and nothing else, and changing the timeframe restarts it.
+    with_timeframe.indicators = vec![IndicatorSpec::new("Atr", vec![2.0])];
+    with_timeframe.timeframe = Timeframe::parse("1s").unwrap();
+
+    let lifecycle_feed = canonical_feed();
+    let lifecycle = replay_config(&lifecycle_feed);
 
     let mut multi = Config::default_layout();
     multi.sources = vec![
@@ -282,6 +308,53 @@ fn scenarios() -> Vec<Scenario> {
                 vec![subscribe(0)],
                 tick(6),
                 vec![r#"{"type":"Seek","source":0,"index":2}"#.to_string()],
+                tick(2),
+            ]
+            .concat(),
+            replay_path: None,
+            feed: None,
+        },
+        Scenario {
+            // `SetTimeframe` mid-run. It is the candle work's public entry point
+            // and was reachable from no binding test and no scenario, so nothing
+            // outside the Rust unit tests held the eight other languages to it.
+            name: "timeframe",
+            config: with_timeframe,
+            commands: [
+                vec![subscribe(0)],
+                tick(8),
+                vec![r#"{"type":"SetTimeframe","timeframe":"2s"}"#.to_string()],
+                tick(42),
+            ]
+            .concat(),
+            replay_path: Some("replay/timeframe.json"),
+            feed: Some(timeframe_feed),
+        },
+        Scenario {
+            // The runtime-source API: `AddSource`, `Unsubscribe` and
+            // `RemoveSource`, none of which any binding exercised. A source added
+            // and then removed must leave the watchlist and the panels as if it
+            // had never been opened.
+            name: "source_lifecycle",
+            config: lifecycle,
+            commands: [
+                vec![subscribe(0)],
+                tick(3),
+                vec![
+                    r#"{"type":"AddSource","spec":{"Synth":{"seed":11}}}"#.to_string(),
+                    format!(r#"{{"type":"Subscribe","source":1,"symbol":"{SYMBOL}"}}"#),
+                ],
+                tick(3),
+                // Drop the source the terminal started with, keeping the one
+                // added at run time. The final frame then shows a watchlist of
+                // source 1 alone, which no sequence without both AddSource and
+                // RemoveSource can produce -- a fixture that ended back at the
+                // starting state would pin nothing.
+                vec![
+                    format!(r#"{{"type":"Unsubscribe","source":0,"symbol":"{SYMBOL}"}}"#),
+                    r#"{"type":"RemoveSource","id":0}"#.to_string(),
+                    format!(r#"{{"type":"SetFocus","source":1,"symbol":"{SYMBOL}"}}"#),
+                ],
                 tick(2),
             ]
             .concat(),
