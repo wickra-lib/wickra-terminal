@@ -53,7 +53,7 @@ jobs:
       - name: Build the web renderer
         working-directory: web
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npm run build
 
       # Deploy via the wrangler CLI (pinned by npm major) rather than a

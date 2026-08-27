@@ -5,6 +5,28 @@
 #
 # Keep in lock-step with deny.toml's [advisories].ignore.
 
-# No vulnerabilities are currently suppressed. RUSTSEC-2024-0436 (paste,
-# unmaintained) was listed here for ratatui; ratatui 0.30 dropped the dependency,
-# so the record no longer describes anything in the graph.
+# RUSTSEC-2024-0436 (paste, unmaintained) was listed here for ratatui; ratatui
+# 0.30 dropped the dependency, so the record no longer describes anything in the
+# graph and the entry was removed.
+
+# rkyv is in Cargo.lock and is not compiled. It is reachable only through an
+# optional `rust_decimal` feature this workspace does not enable, so it appears
+# in the lockfile without entering the build:
+#
+#   cargo tree --workspace --all-features -e normal,build,dev --target all
+#     | grep -c rkyv   ->   0
+#
+# rust_decimal is already at its latest release (1.42.1), so there is no upgrade
+# that drops the entry, and the vulnerable code is never built into anything this
+# repository ships.
+#
+# Deliberately NOT mirrored into deny.toml, which the header above otherwise asks
+# for. cargo-deny resolves the feature graph and so never reports this one; an
+# ignore entry there would match nothing, and deny.toml's own rule is that a
+# suppression matching nothing only hides the next real finding. OSV-Scanner and
+# Scorecard read the lockfile instead, which is why the record is needed here and
+# only here.
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0235"
+reason = "rkyv is a lockfile-only entry behind an optional rust_decimal feature this workspace does not enable; it is never compiled."
+
