@@ -22,6 +22,10 @@
       <Link>libwickra_terminal.so</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="../../target/release/libwickra_terminal.dylib" Condition="Exists('../../target/release/libwickra_terminal.dylib')">
+      <Link>libwickra_terminal.dylib</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>
