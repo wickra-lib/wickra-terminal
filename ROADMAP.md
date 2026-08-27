@@ -40,14 +40,52 @@ requests.
 Nothing here is scheduled. These are the openings the current shape leaves, in
 roughly the order they would pay off.
 
-- **The remaining indicator families.** 83 of the 504 in `wickra-core` are not
-  reachable yet, and the reasons differ:
-  [`docs/INDICATORS.md`](docs/INDICATORS.md) lists them. Order-book (7) and trade
-  (9) indicators need only a conversion from the book and tape this terminal
-  already holds; pairwise (24) needs a reference symbol to be configurable. The
-  other three families need feeds this repository has no source for.
-- **First release.** Blocked on `wickra-exchange` reaching crates.io: it is a git
-  dependency, and `cargo publish` rejects those.
+- **The remaining indicator families.** 44 of the 504 in `wickra-core` are not
+  reachable, and the reason is now the same for nearly all of them:
+  [`docs/INDICATORS.md`](docs/INDICATORS.md) lists them. Derivatives-tick (17),
+  cross-section (15) and trade-quote (3) need feeds this repository has no source
+  for, so they are blocked on a data source rather than on wiring. The remaining
+  nine are output shapes the registry's fixed named-field model does not carry.
+- **First release.** Blocked, and not on a decision — on a dependency. The chain,
+  in full, because it has one link and no way round it:
+
+  `terminal-core` depends on `wickra-exchange`, pinned to a git revision.
+  `wickra-exchange` is not on crates.io. `cargo publish` refuses any crate with a
+  git dependency, so `terminal-core` cannot be published:
+
+  ```text
+  $ cargo publish --dry-run -p terminal-core
+  error: failed to prepare local package for uploading
+  Caused by:
+    no matching package named `wickra-exchange` found
+    location searched: crates.io index
+  ```
+
+  Everything downstream follows from that one line. `cargo-publish` is the first
+  job in `release.yml`; `github-release` waits on it and on every other publish
+  job; `publish-release` waits on `github-release`. So the whole pipeline is
+  blocked, not merely the crates.io half — and no tag should be pushed until
+  `wickra-exchange` releases, because the run would fail at its first job.
+
+  This is recorded rather than worked around on purpose. Vendoring the dependency
+  or switching it to a path dependency would let `cargo publish` succeed while
+  shipping a tree that is not the one that was tested, which trades a visible
+  blocker for an invisible one.
+
+  Two things have to be in place before that tag is worth pushing, and neither is
+  today. The workflow itself audits clean — every action pinned to a full SHA,
+  every job with a timeout, `contents: read` at the top with write granted only
+  to the two jobs that attach release assets, and no checkout leaving credentials
+  on disk. What is missing is credentials and an environment: `release.yml`
+  references eight repository secrets (`CARGO_REGISTRY_TOKEN`, `PYPI_API_TOKEN`,
+  `NPM_TOKEN`, `GO_MIRROR_TOKEN`, `CENTRAL_USERNAME`, `CENTRAL_PASSWORD`,
+  `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE`) and a `release` environment, and the
+  repository has none of them. Every publish job would fail on authentication
+  even if the dependency chain above were resolved.
+
+  So the pipeline has never run, and a dispatch would not tell us much: it would
+  stop at its first job. It is verified structurally instead, which is what
+  catches the faults a run that dies early never reaches.
 - **Panel-local keys.** Panel focus moves and is drawn; nothing acts on it yet —
   scrolling the tape or the book would be the first use.
 
