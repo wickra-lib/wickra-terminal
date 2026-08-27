@@ -76,6 +76,19 @@ showing right now*.
 { "type": "RemoveIndicator", "label": "Atr(14)" }
 ```
 
+The bar size can change too:
+
+```json
+{ "type": "SetTimeframe", "timeframe": "5m" }
+```
+
+That restarts the bar-derived state: each market opens a new bar and the
+indicator set is rebuilt. Rebuilding all of them rather than only the bar ones is
+deliberate — an indicator's history is a sequence of readings at one bar size,
+and continuing it across a change would blend two, which is neither the smaller
+size nor the larger one. The price history, tape, book and footprint are
+untouched, since none of them comes from bars.
+
 `AddIndicator` starts the new indicator cold. A market that has been running
 keeps its price history, but the inputs this indicator missed are gone, so it
 warms up from the next tick rather than pretending to have seen them. Adding a

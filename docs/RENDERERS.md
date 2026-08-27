@@ -40,13 +40,20 @@ A developer in Python, Go, C#, Java, R, C/C++ or the browser can build a bespoke
 front-end on the core by feeding it command JSON and rendering the returned
 frames — see the [examples](../examples/).
 
-## Where "real money" splits the form
+## What each renderer can do
 
 | Layer | TUI (native) | Web (browser) |
 |-------|--------------|---------------|
 | Live charts + indicators | yes | yes (core → WASM) |
-| Paper (sim fills) | yes | yes (WASM + `localStorage`) |
-| **Real orders** | native, keys server-side | needs a backend — the browser holds no secret |
+| Recorded replay + seek | yes | yes |
+| Live market data | `wickra-exchange` | browser WebSocket into a `Manual` source |
+| Paper fills, P&L, real orders | not built | not built |
 
-Real execution is opt-in and USER-GO gated; both renderers default to
-read-only / paper. See [../THREAT_MODEL.md](../THREAT_MODEL.md).
+Both renderers read. Neither opens an order, and there is nothing to gate: the
+terminal has no simulator, no position and no order path. `LiveSource` connects
+with empty credentials, because the exchange client it wraps is used here only
+for public market data.
+
+The browser cannot hold a secret, so if execution is ever added it will need a
+backend on that side regardless. See [../THREAT_MODEL.md](../THREAT_MODEL.md) for
+what the current surface does and does not expose.

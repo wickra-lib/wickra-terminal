@@ -512,6 +512,33 @@ impl AppState {
         Ok(())
     }
 
+    /// Change the bar size every market is aggregated at.
+    ///
+    /// Restarts the bar-derived state: each market's candle builder starts a new
+    /// bar, and the indicator set is rebuilt. Rebuilding the whole set rather
+    /// than only the bar indicators is deliberate — an indicator's history is a
+    /// sequence of readings at one bar size, and continuing it across a change
+    /// would blend two, which is not a smaller bar or a larger one but a
+    /// meaningless mixture. Nothing in the registry marks which indicators read
+    /// bars, so the choice is between rebuilding all of them and knowingly
+    /// corrupting some.
+    ///
+    /// Price history, the tape, the book and the footprint are untouched: none
+    /// of them is derived from bars.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Config`] if an indicator spec is not constructible,
+    /// which cannot happen for specs already accepted.
+    pub fn set_timeframe(&mut self, timeframe: Timeframe) -> Result<()> {
+        self.timeframe = timeframe;
+        for state in self.symbols.values_mut() {
+            state.candles = CandleBuilder::new(timeframe);
+            state.indicators = IndicatorSet::from_specs(&self.indicators)?;
+        }
+        Ok(())
+    }
+
     /// Stop tracking the indicator with this label. Returns whether one matched.
     pub fn remove_indicator(&mut self, label: &str) -> bool {
         let known = self.indicators.iter().any(|s| s.label() == label);

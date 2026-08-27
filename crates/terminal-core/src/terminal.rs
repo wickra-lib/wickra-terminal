@@ -11,6 +11,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
+use crate::candle::Timeframe;
 use crate::config::{Config, IndicatorSpec, SourceSpec};
 use crate::error::{Error, Result};
 use crate::panels::{build_panel, Panel};
@@ -74,6 +75,12 @@ enum Command {
     RemoveIndicator {
         /// The label as the chart panel shows it.
         label: String,
+    },
+    /// Change the bar size the candle-input indicators are fed at. Restarts the
+    /// bar-derived state; the price history, tape, book and footprint are kept.
+    SetTimeframe {
+        /// The new bar size, in the compact venue notation (`1m`, `4h`).
+        timeframe: Timeframe,
     },
     /// Answer with the registry catalogue instead of a frame: every indicator
     /// name this build accepts, with the parameters wickra itself uses.
@@ -366,6 +373,10 @@ impl Terminal {
                     return Err(Error::Command(format!("no such indicator: {label}")));
                 }
                 self.config.indicators.retain(|s| s.label() != label);
+            }
+            Command::SetTimeframe { timeframe } => {
+                self.state.set_timeframe(timeframe)?;
+                self.config.timeframe = timeframe;
             }
             // The one command that answers rather than renders: every other
             // command changes state and gets the new frame back, so returning a
@@ -862,5 +873,76 @@ mod tests {
             "an empty field list must not appear on the wire: {sma}"
         );
         assert!(sma.get("value").is_some());
+    }
+
+    #[test]
+    fn set_timeframe_changes_the_bar_size() {
+        let mut terminal = synth_terminal();
+        terminal
+            .command_json(r#"{"type":"SetTimeframe","timeframe":"5m"}"#)
+            .unwrap();
+        assert_eq!(
+            terminal.config().timeframe,
+            Timeframe::parse("5m").unwrap(),
+            "the config should carry the new bar size"
+        );
+    }
+
+    #[test]
+    fn set_timeframe_restarts_the_bar_derived_state_only() {
+        let mut terminal = synth_terminal();
+        // Warm something up first: a price series and a price indicator.
+        for _ in 0..60 {
+            terminal.command_json(TICK).unwrap();
+        }
+        let before = chart_indicator_labels(&terminal.command_json(TICK).unwrap());
+        let series_before = {
+            let frame: serde_json::Value =
+                serde_json::from_str(&terminal.command_json(TICK).unwrap()).unwrap();
+            frame["panels"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|p| p["panel"] == "chart")
+                .unwrap()["series"]
+                .as_array()
+                .unwrap()
+                .len()
+        };
+        assert!(series_before > 1, "the price series should have filled");
+
+        terminal
+            .command_json(r#"{"type":"SetTimeframe","timeframe":"1h"}"#)
+            .unwrap();
+        let raw = terminal.command_json(TICK).unwrap();
+        let frame: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let chart = frame["panels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["panel"] == "chart")
+            .unwrap();
+
+        // The price series is not derived from bars, so it survives.
+        assert!(
+            chart["series"].as_array().unwrap().len() > 1,
+            "retiming should not clear the price history"
+        );
+        // The indicator set is rebuilt, so the same indicators are tracked but
+        // are warming up again.
+        assert_eq!(chart_indicator_labels(&raw), before);
+        assert!(
+            chart["indicators"].as_array().unwrap()[0]["value"].is_null(),
+            "a rebuilt indicator should be warming up again"
+        );
+    }
+
+    #[test]
+    fn an_invalid_timeframe_is_rejected() {
+        let mut terminal = synth_terminal();
+        let Err(err) = terminal.command_json(r#"{"type":"SetTimeframe","timeframe":"1w"}"#) else {
+            panic!("an unknown unit should be rejected");
+        };
+        assert!(err.to_string().contains("1w"), "{err}");
     }
 }

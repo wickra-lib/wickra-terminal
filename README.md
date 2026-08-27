@@ -35,8 +35,9 @@ Data arrives through the `DataSource` trait, an activatable module:
 
 - **`Live`** — the [wickra-exchange](https://github.com/wickra-lib/wickra-exchange)
   connectivity layer over the ten largest venues.
-- **`Replay`** — the [wickra-backtest](https://github.com/wickra-lib/wickra-backtest)
-  engine, driving a recorded feed with a time-machine seek.
+- **`Replay`** — a recorded feed with a time-machine seek: the whole event list
+  is kept, so `Seek` rewinds and re-folds state deterministically. It reads no
+  files and holds no engine, which is why it runs in the browser too.
 - **`Synth`** — a deterministic synthetic feed for demos and tests.
 
 The core is exposed as a **JSON-over-C-ABI data API** (`Terminal::command_json`)
@@ -52,9 +53,10 @@ benchmarks and one runnable example per language are in place and green across
 the full CI matrix (10 languages × 3 OS). Not yet released to any registry —
 track progress in [ROADMAP.md](ROADMAP.md).
 
-> ⚠️ **Real orders move real money.** Live execution is opt-in, testnet-first, and
-> keys stay server-side (native renderer only). Both renderers default to
-> read-only / paper mode. See [THREAT_MODEL.md](THREAT_MODEL.md).
+> **Read-only.** The terminal renders market data. It places no orders, holds no
+> credentials and keeps no position — the live source connects to public
+> endpoints with empty credentials. Execution is not a flag that is off; it is a
+> layer that is not built. See [THREAT_MODEL.md](THREAT_MODEL.md).
 
 ## Documentation
 
