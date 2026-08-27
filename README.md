@@ -131,27 +131,20 @@ Both consume the identical `Frame` of view-models from `terminal-core`.
 > first release waits on that crate. Until then, build from source (below). The
 > commands here are what they will be.
 
-```bash
-cargo install wickra-terminal                # Rust (the TUI binary)
-pip install wickra-terminal                  # Python
-npm install wickra-terminal                  # Node.js
-dotnet add package WickraTerminal            # C# / .NET
-go get github.com/wickra-lib/wickra-terminal-go   # Go
-```
+| Binding | Install | Example |
+|---------|---------|---------|
+| Rust (TUI binary) | `cargo install wickra-terminal` | `examples/rust/src/main.rs` |
+| Python (PyO3) | `pip install wickra-terminal` | `examples/python/synth_terminal.py` |
+| Node.js (napi-rs) | `npm install wickra-terminal` | `examples/node/synth_terminal.js` |
+| Browser / WASM | `npm install wickra-terminal-wasm` | [`web/`](web) — the Vue renderer |
+| C / C++ (C ABI) | header + library, see [`bindings/c`](bindings/c) | `examples/c/synth.c` |
+| C# (C ABI) | `dotnet add package WickraTerminal` | `examples/csharp/Program.cs` |
+| Go (cgo, C ABI) | `go get github.com/wickra-lib/wickra-terminal-go` | `examples/go/synth_terminal.go` |
+| Java (FFM, C ABI) | Maven Central `org.wickra:wickra-terminal` | `examples/java/SynthTerminal.java` |
+| R (`.Call`, C ABI) | `install.packages("wickraterminal", repos = "https://wickra-lib.r-universe.dev")` | `examples/r/synth_terminal.R` |
 
-```xml
-<!-- Java (Maven) -->
-<dependency>
-  <groupId>org.wickra</groupId>
-  <artifactId>wickra-terminal</artifactId>
-  <version>0.1.0</version>
-</dependency>
-```
-
-```r
-# R
-install.packages("wickraterminal", repos = "https://wickra-lib.r-universe.dev")
-```
+[`examples/README.md`](examples/README.md) is the cross-language index; every one
+of them drives the same core through the same JSON commands.
 
 C and C++ link the C ABI directly; the header is generated and committed at
 [`bindings/c/include/wickra_terminal.h`](bindings/c/include/wickra_terminal.h).
