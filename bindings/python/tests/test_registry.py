@@ -45,7 +45,7 @@ def test_indicators_can_be_added_and_removed_at_run_time():
 def test_the_catalogue_lists_the_whole_registry():
     term = wt.Terminal(CONFIG)
     catalogue = json.loads(term.command(json.dumps({"type": "ListIndicators"})))["indicators"]
-    assert len(catalogue) >= 436, len(catalogue)
+    assert len(catalogue) >= 460, len(catalogue)
     # Every row carries the parameters needed to construct it, which is the
     # point of the catalogue: discovery without a second lookup.
     #

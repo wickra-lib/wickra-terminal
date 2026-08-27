@@ -1,7 +1,7 @@
 # Indicators
 
 The terminal drives the [Wickra](https://github.com/wickra-lib/wickra) indicator
-set directly: **<!--indicator-count-->436<!--/indicator-count--> of them**, constructible by name from a config or at run
+set directly: **<!--indicator-count-->460<!--/indicator-count--> of them**, constructible by name from a config or at run
 time, in every binding.
 
 ## Naming one
@@ -44,6 +44,7 @@ tick, and each advances only on a tick that carries what it consumes:
 | bar (`Candle`) | the bar that just closed | once per `timeframe` |
 | tape (`Trade`) | the print, with its size and aggressor side | on every trade |
 | book (`OrderBook`) | the locally maintained L2 book | on every trade |
+| pairwise (`(f64, f64)`) | this market's price and a reference market's | on every trade |
 
 The tape and book families read state the terminal already keeps, converted into
 the core's types once per tick and shared across the whole set rather than
@@ -54,6 +55,29 @@ book for nothing.
 A book that is momentarily one-sided or crossed — an ordinary thing to see
 between a snapshot and the diffs that follow it — yields no value that tick. The
 book indicators simply do not advance, the same as while warming up.
+
+## Pairwise indicators
+
+The pairwise family measures one market against another — beta, correlation,
+cointegration, spread z-score — so a spec has to say which market. That is the
+`reference` field, written as a symbol:
+
+```json
+{ "kind": "Beta", "params": [20], "reference": "ETH/USDT" }
+```
+
+The reference is part of the label, because `Beta(20)` against BTC and the same
+against ETH are different readings: this one shows as `Beta(20) vs ETH/USDT`,
+which is also the label `RemoveIndicator` takes.
+
+A pairwise kind with no reference is **refused** rather than given a default.
+Which market it compares against changes what it measures, so a guessed one
+would produce a plausible number about the wrong thing. `ListIndicators` marks
+these rows with `"needs_reference": true`, so a caller can tell before it tries.
+
+The reference market has to be one the terminal is tracking, and it has to have
+printed: a pairwise indicator does not advance on a tick where its reference has
+no price yet. Feeding it a placeholder would produce a reading that looks real.
 
 Only **closed** bars reach an indicator. Feeding the bar in progress would make
 every reading repaint as the bar fills — the last print of a minute silently
@@ -134,13 +158,12 @@ it saw before.
 
 ## What is not registered, and why
 
-68 of the 504 indicators in `wickra-core` are not reachable from the terminal
+44 of the 504 indicators in `wickra-core` are not reachable from the terminal
 yet. They are listed with a reason every time the registry is regenerated, rather
 than quietly dropped:
 
 | Missing | Count | Why |
 |---------|------:|-----|
-| pairwise (`(f64, f64)`) | 24 | needs a reference symbol; the terminal tracks several markets, so this is reachable, but the pairing has to be configured |
 | derivatives tick | 17 | no funding/open-interest feed in this repository |
 | cross-section | 15 | no market-wide breadth feed |
 | trade-quote | 3 | no quote feed |

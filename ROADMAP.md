@@ -31,7 +31,7 @@ requests.
    Best Practices, link check, release and web deploy. ✅
 10. **README, badges, docs** — the banner and badge treatment, and the docs
     guides. ✅
-11. **Indicators** — tick-to-OHLCV aggregation and a generated registry of 436
+11. **Indicators** — tick-to-OHLCV aggregation and a generated registry of 460
     `wickra-core` indicators, configurable and changeable at run time from every
     binding. ✅
 

@@ -23,6 +23,8 @@
 //!
 //! Multi-output indicators expose their fields by name.
 
+use std::collections::BTreeMap;
+
 use wickra_core::{self as wc, Candle, Indicator};
 
 use crate::error::{Error, Result};
@@ -48,6 +50,12 @@ pub struct TickInput {
     pub trade: Option<wc::Trade>,
     /// The order book as of this tick, if it has both a bid and an ask side.
     pub book: Option<wc::OrderBook>,
+    /// The last price of every other market this terminal tracks, by symbol.
+    ///
+    /// Populated only when some indicator in the set reads another market, so a
+    /// configuration with no pairwise indicator — the usual one — never builds
+    /// it. Keyed by the symbol as it is written in a config, `BTC/USDT`.
+    pub references: BTreeMap<String, f64>,
 }
 
 impl TickInput {
@@ -64,6 +72,7 @@ impl TickInput {
             candle: None,
             trade: None,
             book: None,
+            references: BTreeMap::new(),
         }
     }
 
@@ -87,6 +96,23 @@ impl TickInput {
         self.book = Some(book);
         self
     }
+
+    /// This tick, with `symbol` last trading at `price`.
+    #[must_use]
+    pub fn with_reference(mut self, symbol: impl Into<String>, price: f64) -> Self {
+        self.references.insert(symbol.into(), price);
+        self
+    }
+
+    /// The last price of another market, or `None` if it has not printed yet.
+    ///
+    /// A reference that is absent rather than stale is the point: a pairwise
+    /// indicator fed a placeholder would produce a number that looks like a
+    /// reading, so it is given nothing and does not advance.
+    #[must_use]
+    pub fn reference(&self, symbol: &str) -> Option<f64> {
+        self.references.get(symbol).copied()
+    }
 }
 
 /// A uniform, object-safe indicator the terminal drives one tick at a time.
@@ -98,6 +124,14 @@ pub trait TickIndicator: Send {
     fn fields(&self) -> Vec<(&'static str, f64)>;
     /// Number of inputs required before the first value.
     fn warmup(&self) -> usize;
+    /// Whether this indicator reads another market's price.
+    ///
+    /// Asked for the same reason as [`TickIndicator::wants_book`]: collecting
+    /// every tracked market's last price is work no ordinary configuration
+    /// needs.
+    fn wants_reference(&self) -> bool {
+        false
+    }
     /// Whether this indicator reads the order book.
     ///
     /// The terminal asks the set before converting its book into the core's
@@ -109,79 +143,115 @@ pub trait TickIndicator: Send {
 }
 
 /// Wraps a price (`Input = f64`) single-output indicator.
-struct ScalarPrice<I>(I);
+struct ScalarPrice<I> {
+    inner: I,
+}
 
 impl<I> TickIndicator for ScalarPrice<I>
 where
     I: Indicator<Input = f64, Output = f64> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        self.0.update(input.price)
+        self.inner.update(input.price)
     }
     fn fields(&self) -> Vec<(&'static str, f64)> {
         Vec::new()
     }
     fn warmup(&self) -> usize {
-        self.0.warmup_period()
+        self.inner.warmup_period()
     }
 }
 
 /// Wraps a bar (`Input = Candle`) single-output indicator. Ticks that did
 /// not close a bar yield `None` without advancing it.
-struct CandleIn<I>(I);
+struct CandleIn<I> {
+    inner: I,
+}
 
 impl<I> TickIndicator for CandleIn<I>
 where
     I: Indicator<Input = Candle, Output = f64> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        input.candle.and_then(|c| self.0.update(c))
+        input.candle.and_then(|c| self.inner.update(c))
     }
     fn fields(&self) -> Vec<(&'static str, f64)> {
         Vec::new()
     }
     fn warmup(&self) -> usize {
-        self.0.warmup_period()
+        self.inner.warmup_period()
     }
 }
 
 /// Wraps a tape (`Input = Trade`) single-output indicator, fed the print
 /// with its size and aggressor side rather than the price alone.
-struct TradeIn<I>(I);
+struct TradeIn<I> {
+    inner: I,
+}
 
 impl<I> TickIndicator for TradeIn<I>
 where
     I: Indicator<Input = wc::Trade, Output = f64> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        input.trade.and_then(|t| self.0.update(t))
+        input.trade.and_then(|t| self.inner.update(t))
     }
     fn fields(&self) -> Vec<(&'static str, f64)> {
         Vec::new()
     }
     fn warmup(&self) -> usize {
-        self.0.warmup_period()
+        self.inner.warmup_period()
     }
 }
 
 /// Wraps a book (`Input = OrderBook`) single-output indicator. Ticks whose
 /// book is one-sided yield `None` without advancing it.
-struct BookIn<I>(I);
+struct BookIn<I> {
+    inner: I,
+}
 
 impl<I> TickIndicator for BookIn<I>
 where
     I: Indicator<Input = wc::OrderBook, Output = f64> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        input.book.clone().and_then(|b| self.0.update(b))
+        input.book.clone().and_then(|b| self.inner.update(b))
     }
     fn fields(&self) -> Vec<(&'static str, f64)> {
         Vec::new()
     }
     fn warmup(&self) -> usize {
-        self.0.warmup_period()
+        self.inner.warmup_period()
     }
     fn wants_book(&self) -> bool {
+        true
+    }
+}
+
+/// Wraps a pairwise (`Input = (f64, f64)`) single-output indicator: this
+/// market's price against a reference market's. Ticks on which the reference
+/// has not printed yet yield `None` without advancing it.
+struct PairIn<I> {
+    inner: I,
+    reference: String,
+}
+
+impl<I> TickIndicator for PairIn<I>
+where
+    I: Indicator<Input = (f64, f64), Output = f64> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        input
+            .reference(&self.reference)
+            .and_then(|other| self.inner.update((input.price, other)))
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        Vec::new()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+    fn wants_reference(&self) -> bool {
         true
     }
 }
@@ -197,6 +267,163 @@ struct ScalarPriceFields<I, O> {
 struct CandleInFields<I, O> {
     inner: I,
     last: Option<O>,
+}
+
+/// Wraps a pairwise indicator whose output is a struct of `f64` fields.
+struct PairInFields<I, O> {
+    inner: I,
+    last: Option<O>,
+    reference: String,
+}
+
+impl<I> TickIndicator for PairInFields<I, wc::CointegrationOutput>
+where
+    I: Indicator<Input = (f64, f64), Output = wc::CointegrationOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input
+            .reference(&self.reference)
+            .and_then(|other| self.inner.update((input.price, other)));
+        self.last = out;
+        self.last.as_ref().map(|last| last.hedge_ratio)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("hedge_ratio", last.hedge_ratio),
+                    ("spread", last.spread),
+                    ("adf_stat", last.adf_stat),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+    fn wants_reference(&self) -> bool {
+        true
+    }
+}
+
+impl<I> TickIndicator for PairInFields<I, wc::KalmanHedgeRatioOutput>
+where
+    I: Indicator<Input = (f64, f64), Output = wc::KalmanHedgeRatioOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input
+            .reference(&self.reference)
+            .and_then(|other| self.inner.update((input.price, other)));
+        self.last = out;
+        self.last.as_ref().map(|last| last.hedge_ratio)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("hedge_ratio", last.hedge_ratio),
+                    ("intercept", last.intercept),
+                    ("spread", last.spread),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+    fn wants_reference(&self) -> bool {
+        true
+    }
+}
+
+impl<I> TickIndicator for PairInFields<I, wc::LeadLagCrossCorrelationOutput>
+where
+    I: Indicator<Input = (f64, f64), Output = wc::LeadLagCrossCorrelationOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input
+            .reference(&self.reference)
+            .and_then(|other| self.inner.update((input.price, other)));
+        self.last = out;
+        self.last.as_ref().map(|last| last.correlation)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| vec![("correlation", last.correlation)])
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+    fn wants_reference(&self) -> bool {
+        true
+    }
+}
+
+impl<I> TickIndicator for PairInFields<I, wc::RelativeStrengthOutput>
+where
+    I: Indicator<Input = (f64, f64), Output = wc::RelativeStrengthOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input
+            .reference(&self.reference)
+            .and_then(|other| self.inner.update((input.price, other)));
+        self.last = out;
+        self.last.as_ref().map(|last| last.ratio)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("ratio", last.ratio),
+                    ("ratio_ma", last.ratio_ma),
+                    ("ratio_rsi", last.ratio_rsi),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+    fn wants_reference(&self) -> bool {
+        true
+    }
+}
+
+impl<I> TickIndicator for PairInFields<I, wc::SpreadBollingerBandsOutput>
+where
+    I: Indicator<Input = (f64, f64), Output = wc::SpreadBollingerBandsOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input
+            .reference(&self.reference)
+            .and_then(|other| self.inner.update((input.price, other)));
+        self.last = out;
+        self.last.as_ref().map(|last| last.middle)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("middle", last.middle),
+                    ("upper", last.upper),
+                    ("lower", last.lower),
+                    ("percent_b", last.percent_b),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+    fn wants_reference(&self) -> bool {
+        true
+    }
 }
 
 impl<I> TickIndicator for CandleInFields<I, wc::AccelerationBandsOutput>
@@ -2246,7 +2473,7 @@ fn map_new<T>(kind: &str, made: core::result::Result<T, wc::Error>) -> Result<T>
 }
 
 /// Every registered indicator name, sorted.
-pub const KINDS: [&str; 438] = [
+pub const KINDS: [&str; 462] = [
     "AbandonedBaby",
     "Abcd",
     "AccelerationBands",
@@ -2262,6 +2489,7 @@ pub const KINDS: [&str; 438] = [
     "Adxr",
     "Alligator",
     "Alma",
+    "Alpha",
     "AmihudIlliquidity",
     "AnchoredRsi",
     "AnchoredVwap",
@@ -2285,6 +2513,8 @@ pub const KINDS: [&str; 438] = [
     "BandpassFilter",
     "Bat",
     "BeltHold",
+    "Beta",
+    "BetaNeutralSpread",
     "BetterVolume",
     "BipowerVariation",
     "BodySizePct",
@@ -2313,6 +2543,7 @@ pub const KINDS: [&str; 438] = [
     "ClosingMarubozu",
     "Cmo",
     "CoefficientOfVariation",
+    "Cointegration",
     "CommonSenseRatio",
     "CompositeProfile",
     "ConcealingBabySwallow",
@@ -2335,6 +2566,7 @@ pub const KINDS: [&str; 438] = [
     "DerivativeOscillator",
     "DetrendedStdDev",
     "DisparityIndex",
+    "DistanceSsd",
     "Doji",
     "DojiStar",
     "Donchian",
@@ -2390,11 +2622,13 @@ pub const KINDS: [&str; 438] = [
     "GeneralizedDema",
     "GeometricMa",
     "GoldenPocket",
+    "GrangerCausality",
     "GravestoneDoji",
     "Hammer",
     "HangingMan",
     "Harami",
     "HaramiCross",
+    "HasbrouckInformationShare",
     "HeadAndShoulders",
     "HeikinAshi",
     "HeikinAshiOscillator",
@@ -2418,6 +2652,7 @@ pub const KINDS: [&str; 438] = [
     "IdenticalThreeCrows",
     "InNeck",
     "Inertia",
+    "InformationRatio",
     "InitialBalance",
     "InstantaneousTrendline",
     "IntradayIntensity",
@@ -2428,11 +2663,13 @@ pub const KINDS: [&str; 438] = [
     "Jma",
     "JumpIndicator",
     "KRatio",
+    "KalmanHedgeRatio",
     "Kama",
     "KaseDevStop",
     "KasePermissionStochastic",
     "KellyCriterion",
     "Keltner",
+    "KendallTau",
     "Kicking",
     "KickingByLength",
     "Kst",
@@ -2440,6 +2677,7 @@ pub const KINDS: [&str; 438] = [
     "Kvo",
     "LadderBottom",
     "LaguerreRsi",
+    "LeadLagCrossCorrelation",
     "LinRegAngle",
     "LinRegChannel",
     "LinRegIntercept",
@@ -2492,10 +2730,14 @@ pub const KINDS: [&str; 438] = [
     "OrderBookImbalanceTop1",
     "OrderBookImbalanceTopN",
     "OrderFlowImbalance",
+    "OuHalfLife",
     "OvernightGap",
     "OvernightIntradayReturn",
     "PainIndex",
+    "PairSpreadZScore",
+    "PairwiseBeta",
     "ParkinsonVolatility",
+    "PearsonCorrelation",
     "PercentB",
     "PercentageTrailingStop",
     "Pgo",
@@ -2524,6 +2766,7 @@ pub const KINDS: [&str; 438] = [
     "RectangleRange",
     "Reflex",
     "RegimeLabel",
+    "RelativeStrengthAB",
     "RenkoTrailingStop",
     "RickshawMan",
     "RisingThreeMethods",
@@ -2534,6 +2777,8 @@ pub const KINDS: [&str; 438] = [
     "Rocr100",
     "RogersSatchellVolatility",
     "RollMeasure",
+    "RollingCorrelation",
+    "RollingCovariance",
     "RollingIqr",
     "RollingMinMaxScaler",
     "RollingPercentileRank",
@@ -2567,7 +2812,11 @@ pub const KINDS: [&str; 438] = [
     "Smma",
     "SmoothedHeikinAshi",
     "SortinoRatio",
+    "SpearmanCorrelation",
     "SpinningTop",
+    "SpreadAr1Coefficient",
+    "SpreadBollingerBands",
+    "SpreadHurst",
     "StalledPattern",
     "StandardError",
     "StandardErrorBands",
@@ -2624,6 +2873,7 @@ pub const KINDS: [&str; 438] = [
     "TrendLabel",
     "TrendStrengthIndex",
     "Trendflex",
+    "TreynorRatio",
     "Triangle",
     "Trima",
     "TripleTopBottom",
@@ -2651,6 +2901,7 @@ pub const KINDS: [&str; 438] = [
     "ValueArea",
     "ValueAtRisk",
     "Variance",
+    "VarianceRatio",
     "VerticalHorizontalFilter",
     "Vidya",
     "VolatilityCone",
@@ -2691,7 +2942,7 @@ pub const KINDS: [&str; 438] = [
 /// same values the library pins its own reference outputs with. Used by the
 /// build-all test so every registered indicator is constructed the way wickra
 /// constructs it, rather than with a guessed parameter count.
-pub const DEFAULTS: [(&str, &[f64]); 436] = [
+pub const DEFAULTS: [(&str, &[f64]); 460] = [
     ("AbandonedBaby", &[]),
     ("Abcd", &[]),
     ("AccelerationBands", &[14.0, 2.0]),
@@ -2707,6 +2958,7 @@ pub const DEFAULTS: [(&str, &[f64]); 436] = [
     ("Adxr", &[14.0]),
     ("Alligator", &[3.0, 7.0, 14.0]),
     ("Alma", &[9.0, 0.85, 6.0]),
+    ("Alpha", &[14.0, 2.0]),
     ("AmihudIlliquidity", &[20.0]),
     ("AnchoredRsi", &[]),
     ("AnchoredVwap", &[]),
@@ -2730,6 +2982,8 @@ pub const DEFAULTS: [(&str, &[f64]); 436] = [
     ("BandpassFilter", &[20.0, 0.3]),
     ("Bat", &[]),
     ("BeltHold", &[]),
+    ("Beta", &[14.0]),
+    ("BetaNeutralSpread", &[14.0]),
     ("BetterVolume", &[14.0]),
     ("BipowerVariation", &[14.0]),
     ("BodySizePct", &[]),
@@ -2757,6 +3011,7 @@ pub const DEFAULTS: [(&str, &[f64]); 436] = [
     ("ClosingMarubozu", &[]),
     ("Cmo", &[14.0]),
     ("CoefficientOfVariation", &[14.0]),
+    ("Cointegration", &[40.0, 1.0]),
     ("CommonSenseRatio", &[14.0]),
     ("CompositeProfile", &[20.0, 24.0, 0.7]),
     ("ConcealingBabySwallow", &[]),
@@ -2779,6 +3034,7 @@ pub const DEFAULTS: [(&str, &[f64]); 436] = [
     ("DerivativeOscillator", &[3.0, 7.0, 14.0, 28.0]),
     ("DetrendedStdDev", &[14.0]),
     ("DisparityIndex", &[14.0]),
+    ("DistanceSsd", &[14.0]),
     ("Doji", &[]),
     ("DojiStar", &[]),
     ("Donchian", &[14.0]),
@@ -2834,11 +3090,13 @@ pub const DEFAULTS: [(&str, &[f64]); 436] = [
     ("GeneralizedDema", &[5.0, 0.7]),
     ("GeometricMa", &[14.0]),
     ("GoldenPocket", &[]),
+    ("GrangerCausality", &[60.0, 1.0]),
     ("GravestoneDoji", &[]),
     ("Hammer", &[]),
     ("HangingMan", &[]),
     ("Harami", &[]),
     ("HaramiCross", &[]),
+    ("HasbrouckInformationShare", &[14.0]),
     ("HeadAndShoulders", &[]),
     ("HeikinAshi", &[]),
     ("HeikinAshiOscillator", &[14.0]),
@@ -2862,6 +3120,7 @@ pub const DEFAULTS: [(&str, &[f64]); 436] = [
     ("IdenticalThreeCrows", &[]),
     ("InNeck", &[]),
     ("Inertia", &[3.0, 7.0]),
+    ("InformationRatio", &[14.0]),
     ("InitialBalance", &[14.0]),
     ("InstantaneousTrendline", &[14.0]),
     ("IntradayIntensity", &[]),
@@ -2872,11 +3131,13 @@ pub const DEFAULTS: [(&str, &[f64]); 436] = [
     ("Jma", &[7.0, 0.0, 2.0]),
     ("JumpIndicator", &[14.0, 2.0]),
     ("KRatio", &[14.0]),
+    ("KalmanHedgeRatio", &[0.01, 0.001]),
     ("Kama", &[3.0, 7.0, 14.0]),
     ("KaseDevStop", &[14.0, 2.0]),
     ("KasePermissionStochastic", &[3.0, 7.0]),
     ("KellyCriterion", &[14.0]),
     ("Keltner", &[3.0, 7.0, 2.0]),
+    ("KendallTau", &[14.0]),
     ("Kicking", &[]),
     ("KickingByLength", &[]),
     ("Kst", &[3.0, 7.0, 14.0, 28.0, 35.0, 42.0, 56.0, 63.0, 70.0]),
@@ -2884,6 +3145,7 @@ pub const DEFAULTS: [(&str, &[f64]); 436] = [
     ("Kvo", &[3.0, 7.0]),
     ("LadderBottom", &[]),
     ("LaguerreRsi", &[0.5]),
+    ("LeadLagCrossCorrelation", &[20.0, 10.0]),
     ("LinRegAngle", &[14.0]),
     ("LinRegChannel", &[14.0, 2.0]),
     ("LinRegIntercept", &[14.0]),
@@ -2935,10 +3197,14 @@ pub const DEFAULTS: [(&str, &[f64]); 436] = [
     ("OrderBookImbalanceTop1", &[]),
     ("OrderBookImbalanceTopN", &[5.0]),
     ("OrderFlowImbalance", &[20.0]),
+    ("OuHalfLife", &[14.0]),
     ("OvernightGap", &[0.0]),
     ("OvernightIntradayReturn", &[14.0]),
     ("PainIndex", &[14.0]),
+    ("PairSpreadZScore", &[20.0, 20.0]),
+    ("PairwiseBeta", &[14.0]),
     ("ParkinsonVolatility", &[20.0, 252.0]),
+    ("PearsonCorrelation", &[14.0]),
     ("PercentB", &[14.0, 2.0]),
     ("PercentageTrailingStop", &[2.0]),
     ("Pgo", &[14.0]),
@@ -2967,6 +3233,7 @@ pub const DEFAULTS: [(&str, &[f64]); 436] = [
     ("RectangleRange", &[]),
     ("Reflex", &[14.0]),
     ("RegimeLabel", &[3.0, 7.0]),
+    ("RelativeStrengthAB", &[14.0, 14.0]),
     ("RenkoTrailingStop", &[2.0]),
     ("RickshawMan", &[]),
     ("RisingThreeMethods", &[]),
@@ -2977,6 +3244,8 @@ pub const DEFAULTS: [(&str, &[f64]); 436] = [
     ("Rocr100", &[14.0]),
     ("RogersSatchellVolatility", &[20.0, 252.0]),
     ("RollMeasure", &[20.0]),
+    ("RollingCorrelation", &[14.0]),
+    ("RollingCovariance", &[14.0]),
     ("RollingIqr", &[14.0]),
     ("RollingMinMaxScaler", &[14.0]),
     ("RollingPercentileRank", &[14.0]),
@@ -3010,7 +3279,11 @@ pub const DEFAULTS: [(&str, &[f64]); 436] = [
     ("Smma", &[14.0]),
     ("SmoothedHeikinAshi", &[14.0]),
     ("SortinoRatio", &[14.0, 2.0]),
+    ("SpearmanCorrelation", &[14.0]),
     ("SpinningTop", &[]),
+    ("SpreadAr1Coefficient", &[14.0]),
+    ("SpreadBollingerBands", &[14.0, 2.0]),
+    ("SpreadHurst", &[14.0]),
     ("StalledPattern", &[]),
     ("StandardError", &[14.0]),
     ("StandardErrorBands", &[14.0, 2.0]),
@@ -3067,6 +3340,7 @@ pub const DEFAULTS: [(&str, &[f64]); 436] = [
     ("TrendLabel", &[14.0]),
     ("TrendStrengthIndex", &[14.0]),
     ("Trendflex", &[14.0]),
+    ("TreynorRatio", &[14.0, 2.0]),
     ("Triangle", &[]),
     ("Trima", &[14.0]),
     ("TripleTopBottom", &[]),
@@ -3094,6 +3368,7 @@ pub const DEFAULTS: [(&str, &[f64]); 436] = [
     ("ValueArea", &[20.0, 50.0, 0.7]),
     ("ValueAtRisk", &[20.0, 0.95]),
     ("Variance", &[14.0]),
+    ("VarianceRatio", &[60.0, 2.0]),
     ("VerticalHorizontalFilter", &[14.0]),
     ("Vidya", &[3.0, 7.0]),
     ("VolatilityCone", &[3.0, 7.0]),
@@ -3130,16 +3405,84 @@ pub const DEFAULTS: [(&str, &[f64]); 436] = [
     ("Zlema", &[14.0]),
 ];
 
+/// Every registered indicator that reads a second market, sorted.
+///
+/// These are the kinds [`build`] refuses: they need a reference symbol, which is
+/// a property of the spec rather than of the parameters. Exposed so a caller can
+/// tell a user which indicators need one before they try.
+pub const PAIRWISE: [&str; 24] = [
+    "Alpha",
+    "Beta",
+    "BetaNeutralSpread",
+    "Cointegration",
+    "DistanceSsd",
+    "GrangerCausality",
+    "HasbrouckInformationShare",
+    "InformationRatio",
+    "KalmanHedgeRatio",
+    "KendallTau",
+    "LeadLagCrossCorrelation",
+    "OuHalfLife",
+    "PairSpreadZScore",
+    "PairwiseBeta",
+    "PearsonCorrelation",
+    "RelativeStrengthAB",
+    "RollingCorrelation",
+    "RollingCovariance",
+    "SpearmanCorrelation",
+    "SpreadAr1Coefficient",
+    "SpreadBollingerBands",
+    "SpreadHurst",
+    "TreynorRatio",
+    "VarianceRatio",
+];
+
+/// The reference symbol a pairwise indicator was configured with.
+fn pair_reference<'a>(kind: &str, reference: Option<&'a str>) -> Result<&'a str> {
+    reference.ok_or_else(|| {
+        Error::Config(format!(
+            "{kind} compares two markets, so it needs a reference symbol"
+        ))
+    })
+}
+
 /// Construct an indicator by name with positional parameters.
+///
+/// A pairwise indicator is rejected here rather than given a default reference:
+/// which market it compares against changes what it measures, so guessing one
+/// would produce a plausible number about the wrong thing. Use [`build_paired`].
 ///
 /// # Errors
 ///
 /// Returns [`Error::Config`] if the name is unknown, a parameter is missing or
-/// out of range, or wickra-core rejects the parameters.
+/// out of range, wickra-core rejects the parameters, or the kind is one of
+/// [`PAIRWISE`].
 pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
+    build_inner(kind, params, None)
+}
+
+/// Construct an indicator that compares this market against `reference`.
+///
+/// # Errors
+///
+/// As [`build`]. A kind that is not pairwise ignores the reference rather than
+/// failing, so a caller may pass one uniformly.
+pub fn build_paired(kind: &str, params: &[f64], reference: &str) -> Result<Box<dyn TickIndicator>> {
+    build_inner(kind, params, Some(reference))
+}
+
+fn build_inner(
+    kind: &str,
+    params: &[f64],
+    reference: Option<&str>,
+) -> Result<Box<dyn TickIndicator>> {
     match kind {
-        "AbandonedBaby" => Ok(Box::new(CandleIn(wc::AbandonedBaby::new()))),
-        "Abcd" => Ok(Box::new(CandleIn(wc::Abcd::new()))),
+        "AbandonedBaby" => Ok(Box::new(CandleIn {
+            inner: wc::AbandonedBaby::new(),
+        })),
+        "Abcd" => Ok(Box::new(CandleIn {
+            inner: wc::Abcd::new(),
+        })),
         "AccelerationBands" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -3150,38 +3493,47 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "AcceleratorOscillator" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::AcceleratorOscillator::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-                usize_param(params, 2, kind)?,
-            ),
-        )?))),
-        "AdOscillator" => Ok(Box::new(CandleIn(wc::AdOscillator::new()))),
-        "AdaptiveCci" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::AdaptiveCci::new(usize_param(params, 0, kind)?),
-        )?))),
-        "AdaptiveCycle" => Ok(Box::new(ScalarPrice(wc::AdaptiveCycle::new()))),
-        "AdaptiveLaguerreFilter" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::AdaptiveLaguerreFilter::new(usize_param(params, 0, kind)?),
-        )?))),
-        "AdaptiveRsi" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::AdaptiveRsi::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Adl" => Ok(Box::new(CandleIn(wc::Adl::new()))),
-        "AdvanceBlock" => Ok(Box::new(CandleIn(wc::AdvanceBlock::new()))),
+        "AcceleratorOscillator" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::AcceleratorOscillator::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                    usize_param(params, 2, kind)?,
+                ),
+            )?,
+        })),
+        "AdOscillator" => Ok(Box::new(CandleIn {
+            inner: wc::AdOscillator::new(),
+        })),
+        "AdaptiveCci" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::AdaptiveCci::new(usize_param(params, 0, kind)?))?,
+        })),
+        "AdaptiveCycle" => Ok(Box::new(ScalarPrice {
+            inner: wc::AdaptiveCycle::new(),
+        })),
+        "AdaptiveLaguerreFilter" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::AdaptiveLaguerreFilter::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "AdaptiveRsi" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::AdaptiveRsi::new(usize_param(params, 0, kind)?))?,
+        })),
+        "Adl" => Ok(Box::new(CandleIn {
+            inner: wc::Adl::new(),
+        })),
+        "AdvanceBlock" => Ok(Box::new(CandleIn {
+            inner: wc::AdvanceBlock::new(),
+        })),
         "Adx" => Ok(Box::new(CandleInFields {
             inner: map_new(kind, wc::Adx::new(usize_param(params, 0, kind)?))?,
             last: None,
         })),
-        "Adxr" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::Adxr::new(usize_param(params, 0, kind)?),
-        )?))),
+        "Adxr" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::Adxr::new(usize_param(params, 0, kind)?))?,
+        })),
         "Alligator" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -3193,20 +3545,35 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "Alma" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Alma::new(
-                usize_param(params, 0, kind)?,
-                float_param(params, 1, kind)?,
-                float_param(params, 2, kind)?,
-            ),
-        )?))),
-        "AmihudIlliquidity" => Ok(Box::new(TradeIn(map_new(
-            kind,
-            wc::AmihudIlliquidity::new(usize_param(params, 0, kind)?),
-        )?))),
-        "AnchoredRsi" => Ok(Box::new(ScalarPrice(wc::AnchoredRsi::new()))),
-        "AnchoredVwap" => Ok(Box::new(CandleIn(wc::AnchoredVwap::new()))),
+        "Alma" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::Alma::new(
+                    usize_param(params, 0, kind)?,
+                    float_param(params, 1, kind)?,
+                    float_param(params, 2, kind)?,
+                ),
+            )?,
+        })),
+        "Alpha" => Ok(Box::new(PairIn {
+            inner: map_new(
+                kind,
+                wc::Alpha::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
+            )?,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "AmihudIlliquidity" => Ok(Box::new(TradeIn {
+            inner: map_new(
+                kind,
+                wc::AmihudIlliquidity::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "AnchoredRsi" => Ok(Box::new(ScalarPrice {
+            inner: wc::AnchoredRsi::new(),
+        })),
+        "AnchoredVwap" => Ok(Box::new(CandleIn {
+            inner: wc::AnchoredVwap::new(),
+        })),
         "AndrewsPitchfork" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -3214,22 +3581,25 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "Apo" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Apo::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
+        "Apo" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::Apo::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
+            )?,
+        })),
         "Aroon" => Ok(Box::new(CandleInFields {
             inner: map_new(kind, wc::Aroon::new(usize_param(params, 0, kind)?))?,
             last: None,
         })),
-        "AroonOscillator" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::AroonOscillator::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Atr" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::Atr::new(usize_param(params, 0, kind)?),
-        )?))),
+        "AroonOscillator" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::AroonOscillator::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "Atr" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::Atr::new(usize_param(params, 0, kind)?))?,
+        })),
         "AtrBands" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -3248,65 +3618,115 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "AtrTrailingStop" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::AtrTrailingStop::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
-        )?))),
+        "AtrTrailingStop" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::AtrTrailingStop::new(
+                    usize_param(params, 0, kind)?,
+                    float_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
         "AutoFib" => Ok(Box::new(CandleInFields {
             inner: wc::AutoFib::new(),
             last: None,
         })),
-        "Autocorrelation" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Autocorrelation::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
-        "AutocorrelationPeriodogram" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::AutocorrelationPeriodogram::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-            ),
-        )?))),
-        "AverageDailyRange" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::AverageDailyRange::new(usize_param(params, 0, kind)?, i32_param(params, 1, kind)?),
-        )?))),
-        "AverageDrawdown" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::AverageDrawdown::new(usize_param(params, 0, kind)?),
-        )?))),
-        "AvgPrice" => Ok(Box::new(CandleIn(wc::AvgPrice::new()))),
-        "AwesomeOscillator" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::AwesomeOscillator::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-            ),
-        )?))),
-        "AwesomeOscillatorHistogram" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::AwesomeOscillatorHistogram::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-                usize_param(params, 2, kind)?,
-            ),
-        )?))),
-        "BalanceOfPower" => Ok(Box::new(CandleIn(wc::BalanceOfPower::new()))),
-        "BandpassFilter" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::BandpassFilter::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
-        )?))),
-        "Bat" => Ok(Box::new(CandleIn(wc::Bat::new()))),
-        "BeltHold" => Ok(Box::new(CandleIn(wc::BeltHold::new()))),
-        "BetterVolume" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::BetterVolume::new(usize_param(params, 0, kind)?),
-        )?))),
-        "BipowerVariation" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::BipowerVariation::new(usize_param(params, 0, kind)?),
-        )?))),
-        "BodySizePct" => Ok(Box::new(CandleIn(wc::BodySizePct::new()))),
+        "Autocorrelation" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::Autocorrelation::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "AutocorrelationPeriodogram" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::AutocorrelationPeriodogram::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "AverageDailyRange" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::AverageDailyRange::new(
+                    usize_param(params, 0, kind)?,
+                    i32_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "AverageDrawdown" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::AverageDrawdown::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "AvgPrice" => Ok(Box::new(CandleIn {
+            inner: wc::AvgPrice::new(),
+        })),
+        "AwesomeOscillator" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::AwesomeOscillator::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "AwesomeOscillatorHistogram" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::AwesomeOscillatorHistogram::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                    usize_param(params, 2, kind)?,
+                ),
+            )?,
+        })),
+        "BalanceOfPower" => Ok(Box::new(CandleIn {
+            inner: wc::BalanceOfPower::new(),
+        })),
+        "BandpassFilter" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::BandpassFilter::new(
+                    usize_param(params, 0, kind)?,
+                    float_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "Bat" => Ok(Box::new(CandleIn {
+            inner: wc::Bat::new(),
+        })),
+        "BeltHold" => Ok(Box::new(CandleIn {
+            inner: wc::BeltHold::new(),
+        })),
+        "Beta" => Ok(Box::new(PairIn {
+            inner: map_new(kind, wc::Beta::new(usize_param(params, 0, kind)?))?,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "BetaNeutralSpread" => Ok(Box::new(PairIn {
+            inner: map_new(
+                kind,
+                wc::BetaNeutralSpread::new(usize_param(params, 0, kind)?),
+            )?,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "BetterVolume" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::BetterVolume::new(usize_param(params, 0, kind)?))?,
+        })),
+        "BipowerVariation" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::BipowerVariation::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "BodySizePct" => Ok(Box::new(CandleIn {
+            inner: wc::BodySizePct::new(),
+        })),
         "BollingerBands" => Ok(Box::new(ScalarPriceFields {
             inner: map_new(
                 kind,
@@ -3317,13 +3737,15 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "BollingerBandwidth" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::BollingerBandwidth::new(
-                usize_param(params, 0, kind)?,
-                float_param(params, 1, kind)?,
-            ),
-        )?))),
+        "BollingerBandwidth" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::BollingerBandwidth::new(
+                    usize_param(params, 0, kind)?,
+                    float_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
         "BomarBands" => Ok(Box::new(ScalarPriceFields {
             inner: map_new(
                 kind,
@@ -3331,16 +3753,18 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "Breakaway" => Ok(Box::new(CandleIn(wc::Breakaway::new()))),
-        "BurkeRatio" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::BurkeRatio::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Butterfly" => Ok(Box::new(CandleIn(wc::Butterfly::new()))),
-        "CalmarRatio" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::CalmarRatio::new(usize_param(params, 0, kind)?),
-        )?))),
+        "Breakaway" => Ok(Box::new(CandleIn {
+            inner: wc::Breakaway::new(),
+        })),
+        "BurkeRatio" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::BurkeRatio::new(usize_param(params, 0, kind)?))?,
+        })),
+        "Butterfly" => Ok(Box::new(CandleIn {
+            inner: wc::Butterfly::new(),
+        })),
+        "CalmarRatio" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::CalmarRatio::new(usize_param(params, 0, kind)?))?,
+        })),
         "Camarilla" => Ok(Box::new(CandleInFields {
             inner: wc::Camarilla::new(),
             last: None,
@@ -3349,40 +3773,46 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             inner: map_new(kind, wc::CandleVolume::new(usize_param(params, 0, kind)?))?,
             last: None,
         })),
-        "Cci" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::Cci::new(usize_param(params, 0, kind)?),
-        )?))),
-        "CenterOfGravity" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::CenterOfGravity::new(usize_param(params, 0, kind)?),
-        )?))),
+        "Cci" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::Cci::new(usize_param(params, 0, kind)?))?,
+        })),
+        "CenterOfGravity" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::CenterOfGravity::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
         "CentralPivotRange" => Ok(Box::new(CandleInFields {
             inner: wc::CentralPivotRange::new(),
             last: None,
         })),
-        "Cfo" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Cfo::new(usize_param(params, 0, kind)?),
-        )?))),
-        "ChaikinMoneyFlow" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::ChaikinMoneyFlow::new(usize_param(params, 0, kind)?),
-        )?))),
-        "ChaikinOscillator" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::ChaikinOscillator::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-            ),
-        )?))),
-        "ChaikinVolatility" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::ChaikinVolatility::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-            ),
-        )?))),
+        "Cfo" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Cfo::new(usize_param(params, 0, kind)?))?,
+        })),
+        "ChaikinMoneyFlow" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::ChaikinMoneyFlow::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "ChaikinOscillator" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::ChaikinOscillator::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "ChaikinVolatility" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::ChaikinVolatility::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
         "ChandeKrollStop" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -3404,28 +3834,48 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "ChoppinessIndex" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::ChoppinessIndex::new(usize_param(params, 0, kind)?),
-        )?))),
+        "ChoppinessIndex" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::ChoppinessIndex::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
         "ClassicPivots" => Ok(Box::new(CandleInFields {
             inner: wc::ClassicPivots::new(),
             last: None,
         })),
-        "CloseVsOpen" => Ok(Box::new(CandleIn(wc::CloseVsOpen::new()))),
-        "ClosingMarubozu" => Ok(Box::new(CandleIn(wc::ClosingMarubozu::new()))),
-        "Cmo" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Cmo::new(usize_param(params, 0, kind)?),
-        )?))),
-        "CoefficientOfVariation" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::CoefficientOfVariation::new(usize_param(params, 0, kind)?),
-        )?))),
-        "CommonSenseRatio" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::CommonSenseRatio::new(usize_param(params, 0, kind)?),
-        )?))),
+        "CloseVsOpen" => Ok(Box::new(CandleIn {
+            inner: wc::CloseVsOpen::new(),
+        })),
+        "ClosingMarubozu" => Ok(Box::new(CandleIn {
+            inner: wc::ClosingMarubozu::new(),
+        })),
+        "Cmo" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Cmo::new(usize_param(params, 0, kind)?))?,
+        })),
+        "CoefficientOfVariation" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::CoefficientOfVariation::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "Cointegration" => Ok(Box::new(PairInFields {
+            inner: map_new(
+                kind,
+                wc::Cointegration::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+            last: None,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "CommonSenseRatio" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::CommonSenseRatio::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
         "CompositeProfile" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -3437,86 +3887,120 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "ConcealingBabySwallow" => Ok(Box::new(CandleIn(wc::ConcealingBabySwallow::new()))),
-        "ConditionalValueAtRisk" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::ConditionalValueAtRisk::new(
-                usize_param(params, 0, kind)?,
-                float_param(params, 1, kind)?,
-            ),
-        )?))),
-        "ConnorsRsi" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::ConnorsRsi::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-                usize_param(params, 2, kind)?,
-            ),
-        )?))),
-        "Coppock" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Coppock::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-                usize_param(params, 2, kind)?,
-            ),
-        )?))),
-        "CorrelationTrendIndicator" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::CorrelationTrendIndicator::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Counterattack" => Ok(Box::new(CandleIn(wc::Counterattack::new()))),
-        "Crab" => Ok(Box::new(CandleIn(wc::Crab::new()))),
-        "CumulativeVolumeDelta" => Ok(Box::new(TradeIn(wc::CumulativeVolumeDelta::new()))),
-        "CupAndHandle" => Ok(Box::new(CandleIn(wc::CupAndHandle::new()))),
-        "CyberneticCycle" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::CyberneticCycle::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Cypher" => Ok(Box::new(CandleIn(wc::Cypher::new()))),
-        "Decycler" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Decycler::new(usize_param(params, 0, kind)?),
-        )?))),
-        "DecyclerOscillator" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::DecyclerOscillator::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-            ),
-        )?))),
-        "Dema" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Dema::new(usize_param(params, 0, kind)?),
-        )?))),
-        "DemandIndex" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::DemandIndex::new(usize_param(params, 0, kind)?),
-        )?))),
+        "ConcealingBabySwallow" => Ok(Box::new(CandleIn {
+            inner: wc::ConcealingBabySwallow::new(),
+        })),
+        "ConditionalValueAtRisk" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::ConditionalValueAtRisk::new(
+                    usize_param(params, 0, kind)?,
+                    float_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "ConnorsRsi" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::ConnorsRsi::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                    usize_param(params, 2, kind)?,
+                ),
+            )?,
+        })),
+        "Coppock" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::Coppock::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                    usize_param(params, 2, kind)?,
+                ),
+            )?,
+        })),
+        "CorrelationTrendIndicator" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::CorrelationTrendIndicator::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "Counterattack" => Ok(Box::new(CandleIn {
+            inner: wc::Counterattack::new(),
+        })),
+        "Crab" => Ok(Box::new(CandleIn {
+            inner: wc::Crab::new(),
+        })),
+        "CumulativeVolumeDelta" => Ok(Box::new(TradeIn {
+            inner: wc::CumulativeVolumeDelta::new(),
+        })),
+        "CupAndHandle" => Ok(Box::new(CandleIn {
+            inner: wc::CupAndHandle::new(),
+        })),
+        "CyberneticCycle" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::CyberneticCycle::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "Cypher" => Ok(Box::new(CandleIn {
+            inner: wc::Cypher::new(),
+        })),
+        "Decycler" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Decycler::new(usize_param(params, 0, kind)?))?,
+        })),
+        "DecyclerOscillator" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::DecyclerOscillator::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "Dema" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Dema::new(usize_param(params, 0, kind)?))?,
+        })),
+        "DemandIndex" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::DemandIndex::new(usize_param(params, 0, kind)?))?,
+        })),
         "DemarkPivots" => Ok(Box::new(CandleInFields {
             inner: wc::DemarkPivots::new(),
             last: None,
         })),
-        "DepthSlope" => Ok(Box::new(BookIn(wc::DepthSlope::new()))),
-        "DerivativeOscillator" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::DerivativeOscillator::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-                usize_param(params, 2, kind)?,
-                usize_param(params, 3, kind)?,
-            ),
-        )?))),
-        "DetrendedStdDev" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::DetrendedStdDev::new(usize_param(params, 0, kind)?),
-        )?))),
-        "DisparityIndex" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::DisparityIndex::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Doji" => Ok(Box::new(CandleIn(wc::Doji::new()))),
-        "DojiStar" => Ok(Box::new(CandleIn(wc::DojiStar::new()))),
+        "DepthSlope" => Ok(Box::new(BookIn {
+            inner: wc::DepthSlope::new(),
+        })),
+        "DerivativeOscillator" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::DerivativeOscillator::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                    usize_param(params, 2, kind)?,
+                    usize_param(params, 3, kind)?,
+                ),
+            )?,
+        })),
+        "DetrendedStdDev" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::DetrendedStdDev::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "DisparityIndex" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::DisparityIndex::new(usize_param(params, 0, kind)?))?,
+        })),
+        "DistanceSsd" => Ok(Box::new(PairIn {
+            inner: map_new(kind, wc::DistanceSsd::new(usize_param(params, 0, kind)?))?,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "Doji" => Ok(Box::new(CandleIn {
+            inner: wc::Doji::new(),
+        })),
+        "DojiStar" => Ok(Box::new(CandleIn {
+            inner: wc::DojiStar::new(),
+        })),
         "Donchian" => Ok(Box::new(CandleInFields {
             inner: map_new(kind, wc::Donchian::new(usize_param(params, 0, kind)?))?,
             last: None,
@@ -3536,46 +4020,53 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "DoubleTopBottom" => Ok(Box::new(CandleIn(wc::DoubleTopBottom::new()))),
-        "DownsideGapThreeMethods" => Ok(Box::new(CandleIn(wc::DownsideGapThreeMethods::new()))),
-        "Dpo" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Dpo::new(usize_param(params, 0, kind)?),
-        )?))),
-        "DragonflyDoji" => Ok(Box::new(CandleIn(wc::DragonflyDoji::new()))),
-        "DumplingTop" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::DumplingTop::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Dx" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::Dx::new(usize_param(params, 0, kind)?),
-        )?))),
-        "DynamicMomentumIndex" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::DynamicMomentumIndex::new(usize_param(params, 0, kind)?),
-        )?))),
-        "EaseOfMovement" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::EaseOfMovement::new(usize_param(params, 0, kind)?),
-        )?))),
-        "EhlersStochastic" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::EhlersStochastic::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Ehma" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Ehma::new(usize_param(params, 0, kind)?),
-        )?))),
-        "ElderImpulse" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::ElderImpulse::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-                usize_param(params, 2, kind)?,
-                usize_param(params, 3, kind)?,
-            ),
-        )?))),
+        "DoubleTopBottom" => Ok(Box::new(CandleIn {
+            inner: wc::DoubleTopBottom::new(),
+        })),
+        "DownsideGapThreeMethods" => Ok(Box::new(CandleIn {
+            inner: wc::DownsideGapThreeMethods::new(),
+        })),
+        "Dpo" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Dpo::new(usize_param(params, 0, kind)?))?,
+        })),
+        "DragonflyDoji" => Ok(Box::new(CandleIn {
+            inner: wc::DragonflyDoji::new(),
+        })),
+        "DumplingTop" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::DumplingTop::new(usize_param(params, 0, kind)?))?,
+        })),
+        "Dx" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::Dx::new(usize_param(params, 0, kind)?))?,
+        })),
+        "DynamicMomentumIndex" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::DynamicMomentumIndex::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "EaseOfMovement" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::EaseOfMovement::new(usize_param(params, 0, kind)?))?,
+        })),
+        "EhlersStochastic" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::EhlersStochastic::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "Ehma" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Ehma::new(usize_param(params, 0, kind)?))?,
+        })),
+        "ElderImpulse" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::ElderImpulse::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                    usize_param(params, 2, kind)?,
+                    usize_param(params, 3, kind)?,
+                ),
+            )?,
+        })),
         "ElderRay" => Ok(Box::new(CandleInFields {
             inner: map_new(kind, wc::ElderRay::new(usize_param(params, 0, kind)?))?,
             last: None,
@@ -3590,47 +4081,55 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "Ema" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Ema::new(usize_param(params, 0, kind)?),
-        )?))),
-        "EmpiricalModeDecomposition" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::EmpiricalModeDecomposition::new(
-                usize_param(params, 0, kind)?,
-                float_param(params, 1, kind)?,
-            ),
-        )?))),
-        "Engulfing" => Ok(Box::new(CandleIn(wc::Engulfing::new()))),
+        "Ema" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Ema::new(usize_param(params, 0, kind)?))?,
+        })),
+        "EmpiricalModeDecomposition" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::EmpiricalModeDecomposition::new(
+                    usize_param(params, 0, kind)?,
+                    float_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "Engulfing" => Ok(Box::new(CandleIn {
+            inner: wc::Engulfing::new(),
+        })),
         "Equivolume" => Ok(Box::new(CandleInFields {
             inner: map_new(kind, wc::Equivolume::new(usize_param(params, 0, kind)?))?,
             last: None,
         })),
-        "EvenBetterSinewave" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::EvenBetterSinewave::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-            ),
-        )?))),
-        "EveningDojiStar" => Ok(Box::new(CandleIn(wc::EveningDojiStar::new()))),
-        "Evwma" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::Evwma::new(usize_param(params, 0, kind)?),
-        )?))),
-        "EwmaVolatility" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::EwmaVolatility::new(float_param(params, 0, kind)?),
-        )?))),
-        "Expectancy" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Expectancy::new(usize_param(params, 0, kind)?),
-        )?))),
-        "FallingThreeMethods" => Ok(Box::new(CandleIn(wc::FallingThreeMethods::new()))),
-        "Fama" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Fama::new(float_param(params, 0, kind)?, float_param(params, 1, kind)?),
-        )?))),
+        "EvenBetterSinewave" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::EvenBetterSinewave::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "EveningDojiStar" => Ok(Box::new(CandleIn {
+            inner: wc::EveningDojiStar::new(),
+        })),
+        "Evwma" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::Evwma::new(usize_param(params, 0, kind)?))?,
+        })),
+        "EwmaVolatility" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::EwmaVolatility::new(float_param(params, 0, kind)?))?,
+        })),
+        "Expectancy" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Expectancy::new(usize_param(params, 0, kind)?))?,
+        })),
+        "FallingThreeMethods" => Ok(Box::new(CandleIn {
+            inner: wc::FallingThreeMethods::new(),
+        })),
+        "Fama" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::Fama::new(float_param(params, 0, kind)?, float_param(params, 1, kind)?),
+            )?,
+        })),
         "FibArcs" => Ok(Box::new(CandleInFields {
             inner: wc::FibArcs::new(),
             last: None,
@@ -3667,19 +4166,21 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             inner: wc::FibonacciPivots::new(),
             last: None,
         })),
-        "FisherRsi" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::FisherRsi::new(usize_param(params, 0, kind)?),
-        )?))),
-        "FisherTransform" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::FisherTransform::new(usize_param(params, 0, kind)?),
-        )?))),
-        "FlagPennant" => Ok(Box::new(CandleIn(wc::FlagPennant::new()))),
-        "ForceIndex" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::ForceIndex::new(usize_param(params, 0, kind)?),
-        )?))),
+        "FisherRsi" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::FisherRsi::new(usize_param(params, 0, kind)?))?,
+        })),
+        "FisherTransform" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::FisherTransform::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "FlagPennant" => Ok(Box::new(CandleIn {
+            inner: wc::FlagPennant::new(),
+        })),
+        "ForceIndex" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::ForceIndex::new(usize_param(params, 0, kind)?))?,
+        })),
         "FractalChaosBands" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -3687,39 +4188,46 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "Frama" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Frama::new(usize_param(params, 0, kind)?),
-        )?))),
-        "FryPanBottom" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::FryPanBottom::new(usize_param(params, 0, kind)?),
-        )?))),
-        "GainLossRatio" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::GainLossRatio::new(usize_param(params, 0, kind)?),
-        )?))),
-        "GainToPainRatio" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::GainToPainRatio::new(usize_param(params, 0, kind)?),
-        )?))),
-        "GapSideBySideWhite" => Ok(Box::new(CandleIn(wc::GapSideBySideWhite::new()))),
-        "Garch11" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Garch11::new(
-                float_param(params, 0, kind)?,
-                float_param(params, 1, kind)?,
-                float_param(params, 2, kind)?,
-            ),
-        )?))),
-        "GarmanKlassVolatility" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::GarmanKlassVolatility::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-            ),
-        )?))),
-        "Gartley" => Ok(Box::new(CandleIn(wc::Gartley::new()))),
+        "Frama" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Frama::new(usize_param(params, 0, kind)?))?,
+        })),
+        "FryPanBottom" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::FryPanBottom::new(usize_param(params, 0, kind)?))?,
+        })),
+        "GainLossRatio" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::GainLossRatio::new(usize_param(params, 0, kind)?))?,
+        })),
+        "GainToPainRatio" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::GainToPainRatio::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "GapSideBySideWhite" => Ok(Box::new(CandleIn {
+            inner: wc::GapSideBySideWhite::new(),
+        })),
+        "Garch11" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::Garch11::new(
+                    float_param(params, 0, kind)?,
+                    float_param(params, 1, kind)?,
+                    float_param(params, 2, kind)?,
+                ),
+            )?,
+        })),
+        "GarmanKlassVolatility" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::GarmanKlassVolatility::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "Gartley" => Ok(Box::new(CandleIn {
+            inner: wc::Gartley::new(),
+        })),
         "GatorOscillator" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -3731,37 +4239,73 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "GeneralizedDema" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::GeneralizedDema::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
-        )?))),
-        "GeometricMa" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::GeometricMa::new(usize_param(params, 0, kind)?),
-        )?))),
+        "GeneralizedDema" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::GeneralizedDema::new(
+                    usize_param(params, 0, kind)?,
+                    float_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "GeometricMa" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::GeometricMa::new(usize_param(params, 0, kind)?))?,
+        })),
         "GoldenPocket" => Ok(Box::new(CandleInFields {
             inner: wc::GoldenPocket::new(),
             last: None,
         })),
-        "GravestoneDoji" => Ok(Box::new(CandleIn(wc::GravestoneDoji::new()))),
-        "Hammer" => Ok(Box::new(CandleIn(wc::Hammer::new()))),
-        "HangingMan" => Ok(Box::new(CandleIn(wc::HangingMan::new()))),
-        "Harami" => Ok(Box::new(CandleIn(wc::Harami::new()))),
-        "HaramiCross" => Ok(Box::new(CandleIn(wc::HaramiCross::new()))),
-        "HeadAndShoulders" => Ok(Box::new(CandleIn(wc::HeadAndShoulders::new()))),
+        "GrangerCausality" => Ok(Box::new(PairIn {
+            inner: map_new(
+                kind,
+                wc::GrangerCausality::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "GravestoneDoji" => Ok(Box::new(CandleIn {
+            inner: wc::GravestoneDoji::new(),
+        })),
+        "Hammer" => Ok(Box::new(CandleIn {
+            inner: wc::Hammer::new(),
+        })),
+        "HangingMan" => Ok(Box::new(CandleIn {
+            inner: wc::HangingMan::new(),
+        })),
+        "Harami" => Ok(Box::new(CandleIn {
+            inner: wc::Harami::new(),
+        })),
+        "HaramiCross" => Ok(Box::new(CandleIn {
+            inner: wc::HaramiCross::new(),
+        })),
+        "HasbrouckInformationShare" => Ok(Box::new(PairIn {
+            inner: map_new(
+                kind,
+                wc::HasbrouckInformationShare::new(usize_param(params, 0, kind)?),
+            )?,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "HeadAndShoulders" => Ok(Box::new(CandleIn {
+            inner: wc::HeadAndShoulders::new(),
+        })),
         "HeikinAshi" => Ok(Box::new(CandleInFields {
             inner: wc::HeikinAshi::new(),
             last: None,
         })),
-        "HeikinAshiOscillator" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::HeikinAshiOscillator::new(usize_param(params, 0, kind)?),
-        )?))),
-        "HiLoActivator" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::HiLoActivator::new(usize_param(params, 0, kind)?),
-        )?))),
-        "HighLowRange" => Ok(Box::new(CandleIn(wc::HighLowRange::new()))),
+        "HeikinAshiOscillator" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::HeikinAshiOscillator::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "HiLoActivator" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::HiLoActivator::new(usize_param(params, 0, kind)?))?,
+        })),
+        "HighLowRange" => Ok(Box::new(CandleIn {
+            inner: wc::HighLowRange::new(),
+        })),
         "HighLowVolumeNodes" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -3772,36 +4316,52 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "HighWave" => Ok(Box::new(CandleIn(wc::HighWave::new()))),
-        "HighpassFilter" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::HighpassFilter::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Hikkake" => Ok(Box::new(CandleIn(wc::Hikkake::new()))),
-        "HikkakeModified" => Ok(Box::new(CandleIn(wc::HikkakeModified::new()))),
-        "HilbertDominantCycle" => Ok(Box::new(ScalarPrice(wc::HilbertDominantCycle::new()))),
-        "HistoricalVolatility" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::HistoricalVolatility::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-            ),
-        )?))),
-        "Hma" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Hma::new(usize_param(params, 0, kind)?),
-        )?))),
-        "HoltWinters" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::HoltWinters::new(float_param(params, 0, kind)?, float_param(params, 1, kind)?),
-        )?))),
-        "HomingPigeon" => Ok(Box::new(CandleIn(wc::HomingPigeon::new()))),
-        "HtDcPhase" => Ok(Box::new(ScalarPrice(wc::HtDcPhase::new()))),
+        "HighWave" => Ok(Box::new(CandleIn {
+            inner: wc::HighWave::new(),
+        })),
+        "HighpassFilter" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::HighpassFilter::new(usize_param(params, 0, kind)?))?,
+        })),
+        "Hikkake" => Ok(Box::new(CandleIn {
+            inner: wc::Hikkake::new(),
+        })),
+        "HikkakeModified" => Ok(Box::new(CandleIn {
+            inner: wc::HikkakeModified::new(),
+        })),
+        "HilbertDominantCycle" => Ok(Box::new(ScalarPrice {
+            inner: wc::HilbertDominantCycle::new(),
+        })),
+        "HistoricalVolatility" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::HistoricalVolatility::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "Hma" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Hma::new(usize_param(params, 0, kind)?))?,
+        })),
+        "HoltWinters" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::HoltWinters::new(float_param(params, 0, kind)?, float_param(params, 1, kind)?),
+            )?,
+        })),
+        "HomingPigeon" => Ok(Box::new(CandleIn {
+            inner: wc::HomingPigeon::new(),
+        })),
+        "HtDcPhase" => Ok(Box::new(ScalarPrice {
+            inner: wc::HtDcPhase::new(),
+        })),
         "HtPhasor" => Ok(Box::new(ScalarPriceFields {
             inner: wc::HtPhasor::new(),
             last: None,
         })),
-        "HtTrendMode" => Ok(Box::new(ScalarPrice(wc::HtTrendMode::new()))),
+        "HtTrendMode" => Ok(Box::new(ScalarPrice {
+            inner: wc::HtTrendMode::new(),
+        })),
         "HurstChannel" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -3809,62 +4369,108 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "HurstExponent" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::HurstExponent::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
-        "IdenticalThreeCrows" => Ok(Box::new(CandleIn(wc::IdenticalThreeCrows::new()))),
-        "InNeck" => Ok(Box::new(CandleIn(wc::InNeck::new()))),
-        "Inertia" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::Inertia::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
+        "HurstExponent" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::HurstExponent::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "IdenticalThreeCrows" => Ok(Box::new(CandleIn {
+            inner: wc::IdenticalThreeCrows::new(),
+        })),
+        "InNeck" => Ok(Box::new(CandleIn {
+            inner: wc::InNeck::new(),
+        })),
+        "Inertia" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::Inertia::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
+            )?,
+        })),
+        "InformationRatio" => Ok(Box::new(PairIn {
+            inner: map_new(
+                kind,
+                wc::InformationRatio::new(usize_param(params, 0, kind)?),
+            )?,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
         "InitialBalance" => Ok(Box::new(CandleInFields {
             inner: map_new(kind, wc::InitialBalance::new(usize_param(params, 0, kind)?))?,
             last: None,
         })),
-        "InstantaneousTrendline" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::InstantaneousTrendline::new(usize_param(params, 0, kind)?),
-        )?))),
-        "IntradayIntensity" => Ok(Box::new(CandleIn(wc::IntradayIntensity::new()))),
-        "IntradayMomentumIndex" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::IntradayMomentumIndex::new(usize_param(params, 0, kind)?),
-        )?))),
-        "InverseFisherTransform" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::InverseFisherTransform::new(float_param(params, 0, kind)?),
-        )?))),
-        "InvertedHammer" => Ok(Box::new(CandleIn(wc::InvertedHammer::new()))),
-        "JarqueBera" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::JarqueBera::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Jma" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Jma::new(
-                usize_param(params, 0, kind)?,
-                float_param(params, 1, kind)?,
-                u32_param(params, 2, kind)?,
-            ),
-        )?))),
-        "JumpIndicator" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::JumpIndicator::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
-        )?))),
-        "KRatio" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::KRatio::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Kama" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Kama::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-                usize_param(params, 2, kind)?,
-            ),
-        )?))),
+        "InstantaneousTrendline" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::InstantaneousTrendline::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "IntradayIntensity" => Ok(Box::new(CandleIn {
+            inner: wc::IntradayIntensity::new(),
+        })),
+        "IntradayMomentumIndex" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::IntradayMomentumIndex::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "InverseFisherTransform" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::InverseFisherTransform::new(float_param(params, 0, kind)?),
+            )?,
+        })),
+        "InvertedHammer" => Ok(Box::new(CandleIn {
+            inner: wc::InvertedHammer::new(),
+        })),
+        "JarqueBera" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::JarqueBera::new(usize_param(params, 0, kind)?))?,
+        })),
+        "Jma" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::Jma::new(
+                    usize_param(params, 0, kind)?,
+                    float_param(params, 1, kind)?,
+                    u32_param(params, 2, kind)?,
+                ),
+            )?,
+        })),
+        "JumpIndicator" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::JumpIndicator::new(
+                    usize_param(params, 0, kind)?,
+                    float_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "KRatio" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::KRatio::new(usize_param(params, 0, kind)?))?,
+        })),
+        "KalmanHedgeRatio" => Ok(Box::new(PairInFields {
+            inner: map_new(
+                kind,
+                wc::KalmanHedgeRatio::new(
+                    float_param(params, 0, kind)?,
+                    float_param(params, 1, kind)?,
+                ),
+            )?,
+            last: None,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "Kama" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::Kama::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                    usize_param(params, 2, kind)?,
+                ),
+            )?,
+        })),
         "KaseDevStop" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -3882,10 +4488,9 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "KellyCriterion" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::KellyCriterion::new(usize_param(params, 0, kind)?),
-        )?))),
+        "KellyCriterion" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::KellyCriterion::new(usize_param(params, 0, kind)?))?,
+        })),
         "Keltner" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -3897,8 +4502,16 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "Kicking" => Ok(Box::new(CandleIn(wc::Kicking::new()))),
-        "KickingByLength" => Ok(Box::new(CandleIn(wc::KickingByLength::new()))),
+        "KendallTau" => Ok(Box::new(PairIn {
+            inner: map_new(kind, wc::KendallTau::new(usize_param(params, 0, kind)?))?,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "Kicking" => Ok(Box::new(CandleIn {
+            inner: wc::Kicking::new(),
+        })),
+        "KickingByLength" => Ok(Box::new(CandleIn {
+            inner: wc::KickingByLength::new(),
+        })),
         "Kst" => Ok(Box::new(ScalarPriceFields {
             inner: map_new(
                 kind,
@@ -3916,23 +4529,35 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "Kurtosis" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Kurtosis::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Kvo" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::Kvo::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
-        "LadderBottom" => Ok(Box::new(CandleIn(wc::LadderBottom::new()))),
-        "LaguerreRsi" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::LaguerreRsi::new(float_param(params, 0, kind)?),
-        )?))),
-        "LinRegAngle" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::LinRegAngle::new(usize_param(params, 0, kind)?),
-        )?))),
+        "Kurtosis" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Kurtosis::new(usize_param(params, 0, kind)?))?,
+        })),
+        "Kvo" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::Kvo::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
+            )?,
+        })),
+        "LadderBottom" => Ok(Box::new(CandleIn {
+            inner: wc::LadderBottom::new(),
+        })),
+        "LaguerreRsi" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::LaguerreRsi::new(float_param(params, 0, kind)?))?,
+        })),
+        "LeadLagCrossCorrelation" => Ok(Box::new(PairInFields {
+            inner: map_new(
+                kind,
+                wc::LeadLagCrossCorrelation::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+            last: None,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "LinRegAngle" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::LinRegAngle::new(usize_param(params, 0, kind)?))?,
+        })),
         "LinRegChannel" => Ok(Box::new(ScalarPriceFields {
             inner: map_new(
                 kind,
@@ -3943,32 +4568,40 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "LinRegIntercept" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::LinRegIntercept::new(usize_param(params, 0, kind)?),
-        )?))),
-        "LinRegSlope" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::LinRegSlope::new(usize_param(params, 0, kind)?),
-        )?))),
-        "LinearRegression" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::LinearRegression::new(usize_param(params, 0, kind)?),
-        )?))),
-        "LogReturn" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::LogReturn::new(usize_param(params, 0, kind)?),
-        )?))),
-        "LongLeggedDoji" => Ok(Box::new(CandleIn(wc::LongLeggedDoji::new()))),
-        "LongLine" => Ok(Box::new(CandleIn(wc::LongLine::new()))),
-        "M2Measure" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::M2Measure::new(
-                usize_param(params, 0, kind)?,
-                float_param(params, 1, kind)?,
-                float_param(params, 2, kind)?,
-            ),
-        )?))),
+        "LinRegIntercept" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::LinRegIntercept::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "LinRegSlope" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::LinRegSlope::new(usize_param(params, 0, kind)?))?,
+        })),
+        "LinearRegression" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::LinearRegression::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "LogReturn" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::LogReturn::new(usize_param(params, 0, kind)?))?,
+        })),
+        "LongLeggedDoji" => Ok(Box::new(CandleIn {
+            inner: wc::LongLeggedDoji::new(),
+        })),
+        "LongLine" => Ok(Box::new(CandleIn {
+            inner: wc::LongLine::new(),
+        })),
+        "M2Measure" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::M2Measure::new(
+                    usize_param(params, 0, kind)?,
+                    float_param(params, 1, kind)?,
+                    float_param(params, 2, kind)?,
+                ),
+            )?,
+        })),
         "MaEnvelope" => Ok(Box::new(ScalarPriceFields {
             inner: map_new(
                 kind,
@@ -3980,14 +4613,16 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             inner: map_new(kind, wc::MacdFix::new(usize_param(params, 0, kind)?))?,
             last: None,
         })),
-        "MacdHistogram" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::MacdHistogram::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-                usize_param(params, 2, kind)?,
-            ),
-        )?))),
+        "MacdHistogram" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::MacdHistogram::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                    usize_param(params, 2, kind)?,
+                ),
+            )?,
+        })),
         "MacdIndicator" => Ok(Box::new(ScalarPriceFields {
             inner: map_new(
                 kind,
@@ -4006,30 +4641,42 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "MarketFacilitationIndex" => Ok(Box::new(CandleIn(wc::MarketFacilitationIndex::new()))),
-        "MartinRatio" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::MartinRatio::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Marubozu" => Ok(Box::new(CandleIn(wc::Marubozu::new()))),
-        "MassIndex" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::MassIndex::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
-        "MatHold" => Ok(Box::new(CandleIn(wc::MatHold::new()))),
-        "MatchingLow" => Ok(Box::new(CandleIn(wc::MatchingLow::new()))),
-        "MaxDrawdown" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::MaxDrawdown::new(usize_param(params, 0, kind)?),
-        )?))),
-        "McGinleyDynamic" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::McGinleyDynamic::new(usize_param(params, 0, kind)?),
-        )?))),
-        "MedianAbsoluteDeviation" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::MedianAbsoluteDeviation::new(usize_param(params, 0, kind)?),
-        )?))),
+        "MarketFacilitationIndex" => Ok(Box::new(CandleIn {
+            inner: wc::MarketFacilitationIndex::new(),
+        })),
+        "MartinRatio" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::MartinRatio::new(usize_param(params, 0, kind)?))?,
+        })),
+        "Marubozu" => Ok(Box::new(CandleIn {
+            inner: wc::Marubozu::new(),
+        })),
+        "MassIndex" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::MassIndex::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
+            )?,
+        })),
+        "MatHold" => Ok(Box::new(CandleIn {
+            inner: wc::MatHold::new(),
+        })),
+        "MatchingLow" => Ok(Box::new(CandleIn {
+            inner: wc::MatchingLow::new(),
+        })),
+        "MaxDrawdown" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::MaxDrawdown::new(usize_param(params, 0, kind)?))?,
+        })),
+        "McGinleyDynamic" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::McGinleyDynamic::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "MedianAbsoluteDeviation" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::MedianAbsoluteDeviation::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
         "MedianChannel" => Ok(Box::new(ScalarPriceFields {
             inner: map_new(
                 kind,
@@ -4040,42 +4687,43 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "MedianMa" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::MedianMa::new(usize_param(params, 0, kind)?),
-        )?))),
-        "MedianPrice" => Ok(Box::new(CandleIn(wc::MedianPrice::new()))),
-        "Mfi" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::Mfi::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Microprice" => Ok(Box::new(BookIn(wc::Microprice::new()))),
-        "MidPoint" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::MidPoint::new(usize_param(params, 0, kind)?),
-        )?))),
-        "MidPrice" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::MidPrice::new(usize_param(params, 0, kind)?),
-        )?))),
-        "MinusDi" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::MinusDi::new(usize_param(params, 0, kind)?),
-        )?))),
-        "MinusDm" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::MinusDm::new(usize_param(params, 0, kind)?),
-        )?))),
+        "MedianMa" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::MedianMa::new(usize_param(params, 0, kind)?))?,
+        })),
+        "MedianPrice" => Ok(Box::new(CandleIn {
+            inner: wc::MedianPrice::new(),
+        })),
+        "Mfi" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::Mfi::new(usize_param(params, 0, kind)?))?,
+        })),
+        "Microprice" => Ok(Box::new(BookIn {
+            inner: wc::Microprice::new(),
+        })),
+        "MidPoint" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::MidPoint::new(usize_param(params, 0, kind)?))?,
+        })),
+        "MidPrice" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::MidPrice::new(usize_param(params, 0, kind)?))?,
+        })),
+        "MinusDi" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::MinusDi::new(usize_param(params, 0, kind)?))?,
+        })),
+        "MinusDm" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::MinusDm::new(usize_param(params, 0, kind)?))?,
+        })),
         "ModifiedMaStop" => Ok(Box::new(CandleInFields {
             inner: map_new(kind, wc::ModifiedMaStop::new(usize_param(params, 0, kind)?))?,
             last: None,
         })),
-        "Mom" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Mom::new(usize_param(params, 0, kind)?),
-        )?))),
-        "MorningDojiStar" => Ok(Box::new(CandleIn(wc::MorningDojiStar::new()))),
-        "MorningEveningStar" => Ok(Box::new(CandleIn(wc::MorningEveningStar::new()))),
+        "Mom" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Mom::new(usize_param(params, 0, kind)?))?,
+        })),
+        "MorningDojiStar" => Ok(Box::new(CandleIn {
+            inner: wc::MorningDojiStar::new(),
+        })),
+        "MorningEveningStar" => Ok(Box::new(CandleIn {
+            inner: wc::MorningEveningStar::new(),
+        })),
         "MurreyMathLines" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -4083,122 +4731,182 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "NakedPoc" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::NakedPoc::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
-        "Natr" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::Natr::new(usize_param(params, 0, kind)?),
-        )?))),
-        "NewPriceLines" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::NewPriceLines::new(usize_param(params, 0, kind)?),
-        )?))),
+        "NakedPoc" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::NakedPoc::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
+            )?,
+        })),
+        "Natr" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::Natr::new(usize_param(params, 0, kind)?))?,
+        })),
+        "NewPriceLines" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::NewPriceLines::new(usize_param(params, 0, kind)?))?,
+        })),
         "Nrtr" => Ok(Box::new(CandleInFields {
             inner: map_new(kind, wc::Nrtr::new(float_param(params, 0, kind)?))?,
             last: None,
         })),
-        "Nvi" => Ok(Box::new(CandleIn(wc::Nvi::new()))),
-        "Obv" => Ok(Box::new(CandleIn(wc::Obv::new()))),
-        "OmegaRatio" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::OmegaRatio::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
-        )?))),
-        "OnNeck" => Ok(Box::new(CandleIn(wc::OnNeck::new()))),
-        "OpeningMarubozu" => Ok(Box::new(CandleIn(wc::OpeningMarubozu::new()))),
+        "Nvi" => Ok(Box::new(CandleIn {
+            inner: wc::Nvi::new(),
+        })),
+        "Obv" => Ok(Box::new(CandleIn {
+            inner: wc::Obv::new(),
+        })),
+        "OmegaRatio" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::OmegaRatio::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
+            )?,
+        })),
+        "OnNeck" => Ok(Box::new(CandleIn {
+            inner: wc::OnNeck::new(),
+        })),
+        "OpeningMarubozu" => Ok(Box::new(CandleIn {
+            inner: wc::OpeningMarubozu::new(),
+        })),
         "OpeningRange" => Ok(Box::new(CandleInFields {
             inner: map_new(kind, wc::OpeningRange::new(usize_param(params, 0, kind)?))?,
             last: None,
         })),
-        "OrderBookImbalanceFull" => Ok(Box::new(BookIn(wc::OrderBookImbalanceFull::new()))),
-        "OrderBookImbalanceTop1" => Ok(Box::new(BookIn(wc::OrderBookImbalanceTop1::new()))),
-        "OrderBookImbalanceTopN" => Ok(Box::new(BookIn(map_new(
-            kind,
-            wc::OrderBookImbalanceTopN::new(usize_param(params, 0, kind)?),
-        )?))),
-        "OrderFlowImbalance" => Ok(Box::new(BookIn(map_new(
-            kind,
-            wc::OrderFlowImbalance::new(usize_param(params, 0, kind)?),
-        )?))),
-        "OvernightGap" => Ok(Box::new(CandleIn(wc::OvernightGap::new(i32_param(
-            params, 0, kind,
-        )?)))),
+        "OrderBookImbalanceFull" => Ok(Box::new(BookIn {
+            inner: wc::OrderBookImbalanceFull::new(),
+        })),
+        "OrderBookImbalanceTop1" => Ok(Box::new(BookIn {
+            inner: wc::OrderBookImbalanceTop1::new(),
+        })),
+        "OrderBookImbalanceTopN" => Ok(Box::new(BookIn {
+            inner: map_new(
+                kind,
+                wc::OrderBookImbalanceTopN::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "OrderFlowImbalance" => Ok(Box::new(BookIn {
+            inner: map_new(
+                kind,
+                wc::OrderFlowImbalance::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "OuHalfLife" => Ok(Box::new(PairIn {
+            inner: map_new(kind, wc::OuHalfLife::new(usize_param(params, 0, kind)?))?,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "OvernightGap" => Ok(Box::new(CandleIn {
+            inner: wc::OvernightGap::new(i32_param(params, 0, kind)?),
+        })),
         "OvernightIntradayReturn" => Ok(Box::new(CandleInFields {
             inner: wc::OvernightIntradayReturn::new(i32_param(params, 0, kind)?),
             last: None,
         })),
-        "PainIndex" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::PainIndex::new(usize_param(params, 0, kind)?),
-        )?))),
-        "ParkinsonVolatility" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::ParkinsonVolatility::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-            ),
-        )?))),
-        "PercentB" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::PercentB::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
-        )?))),
-        "PercentageTrailingStop" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::PercentageTrailingStop::new(float_param(params, 0, kind)?),
-        )?))),
-        "Pgo" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::Pgo::new(usize_param(params, 0, kind)?),
-        )?))),
-        "PiercingDarkCloud" => Ok(Box::new(CandleIn(wc::PiercingDarkCloud::new()))),
-        "Pin" => Ok(Box::new(TradeIn(map_new(
-            kind,
-            wc::Pin::new(usize_param(params, 0, kind)?),
-        )?))),
-        "PivotReversal" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::PivotReversal::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
-        "PlusDi" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::PlusDi::new(usize_param(params, 0, kind)?),
-        )?))),
-        "PlusDm" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::PlusDm::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Pmo" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Pmo::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
-        "PolarizedFractalEfficiency" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::PolarizedFractalEfficiency::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-            ),
-        )?))),
-        "Ppo" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Ppo::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
-        "PpoHistogram" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::PpoHistogram::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-                usize_param(params, 2, kind)?,
-            ),
-        )?))),
-        "ProfileShape" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::ProfileShape::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
-        "ProfitFactor" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::ProfitFactor::new(usize_param(params, 0, kind)?),
-        )?))),
+        "PainIndex" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::PainIndex::new(usize_param(params, 0, kind)?))?,
+        })),
+        "PairSpreadZScore" => Ok(Box::new(PairIn {
+            inner: map_new(
+                kind,
+                wc::PairSpreadZScore::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "PairwiseBeta" => Ok(Box::new(PairIn {
+            inner: map_new(kind, wc::PairwiseBeta::new(usize_param(params, 0, kind)?))?,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "ParkinsonVolatility" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::ParkinsonVolatility::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "PearsonCorrelation" => Ok(Box::new(PairIn {
+            inner: map_new(
+                kind,
+                wc::PearsonCorrelation::new(usize_param(params, 0, kind)?),
+            )?,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "PercentB" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::PercentB::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
+            )?,
+        })),
+        "PercentageTrailingStop" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::PercentageTrailingStop::new(float_param(params, 0, kind)?),
+            )?,
+        })),
+        "Pgo" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::Pgo::new(usize_param(params, 0, kind)?))?,
+        })),
+        "PiercingDarkCloud" => Ok(Box::new(CandleIn {
+            inner: wc::PiercingDarkCloud::new(),
+        })),
+        "Pin" => Ok(Box::new(TradeIn {
+            inner: map_new(kind, wc::Pin::new(usize_param(params, 0, kind)?))?,
+        })),
+        "PivotReversal" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::PivotReversal::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "PlusDi" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::PlusDi::new(usize_param(params, 0, kind)?))?,
+        })),
+        "PlusDm" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::PlusDm::new(usize_param(params, 0, kind)?))?,
+        })),
+        "Pmo" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::Pmo::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
+            )?,
+        })),
+        "PolarizedFractalEfficiency" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::PolarizedFractalEfficiency::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "Ppo" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::Ppo::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
+            )?,
+        })),
+        "PpoHistogram" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::PpoHistogram::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                    usize_param(params, 2, kind)?,
+                ),
+            )?,
+        })),
+        "ProfileShape" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::ProfileShape::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
+            )?,
+        })),
+        "ProfitFactor" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::ProfitFactor::new(usize_param(params, 0, kind)?))?,
+        })),
         "ProjectionBands" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -4206,19 +4914,25 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "ProjectionOscillator" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::ProjectionOscillator::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Psar" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::Psar::new(
-                float_param(params, 0, kind)?,
-                float_param(params, 1, kind)?,
-                float_param(params, 2, kind)?,
-            ),
-        )?))),
-        "Pvi" => Ok(Box::new(CandleIn(wc::Pvi::new()))),
+        "ProjectionOscillator" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::ProjectionOscillator::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "Psar" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::Psar::new(
+                    float_param(params, 0, kind)?,
+                    float_param(params, 1, kind)?,
+                    float_param(params, 2, kind)?,
+                ),
+            )?,
+        })),
+        "Pvi" => Ok(Box::new(CandleIn {
+            inner: wc::Pvi::new(),
+        })),
         "Qqe" => Ok(Box::new(ScalarPriceFields {
             inner: map_new(
                 kind,
@@ -4230,139 +4944,190 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "Qstick" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::Qstick::new(usize_param(params, 0, kind)?),
-        )?))),
+        "Qstick" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::Qstick::new(usize_param(params, 0, kind)?))?,
+        })),
         "QuartileBands" => Ok(Box::new(ScalarPriceFields {
             inner: map_new(kind, wc::QuartileBands::new(usize_param(params, 0, kind)?))?,
             last: None,
         })),
-        "QuotedSpread" => Ok(Box::new(BookIn(wc::QuotedSpread::new()))),
-        "RSquared" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::RSquared::new(usize_param(params, 0, kind)?),
-        )?))),
-        "RealizedVolatility" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::RealizedVolatility::new(usize_param(params, 0, kind)?),
-        )?))),
-        "RecoveryFactor" => Ok(Box::new(ScalarPrice(wc::RecoveryFactor::new()))),
-        "RectangleRange" => Ok(Box::new(CandleIn(wc::RectangleRange::new()))),
-        "Reflex" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Reflex::new(usize_param(params, 0, kind)?),
-        )?))),
-        "RegimeLabel" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::RegimeLabel::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
-        "RenkoTrailingStop" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::RenkoTrailingStop::new(float_param(params, 0, kind)?),
-        )?))),
-        "RickshawMan" => Ok(Box::new(CandleIn(wc::RickshawMan::new()))),
-        "RisingThreeMethods" => Ok(Box::new(CandleIn(wc::RisingThreeMethods::new()))),
-        "Rmi" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Rmi::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
-        "Roc" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Roc::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Rocp" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Rocp::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Rocr" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Rocr::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Rocr100" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Rocr100::new(usize_param(params, 0, kind)?),
-        )?))),
-        "RogersSatchellVolatility" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::RogersSatchellVolatility::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-            ),
-        )?))),
-        "RollMeasure" => Ok(Box::new(TradeIn(map_new(
-            kind,
-            wc::RollMeasure::new(usize_param(params, 0, kind)?),
-        )?))),
-        "RollingIqr" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::RollingIqr::new(usize_param(params, 0, kind)?),
-        )?))),
-        "RollingMinMaxScaler" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::RollingMinMaxScaler::new(usize_param(params, 0, kind)?),
-        )?))),
-        "RollingPercentileRank" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::RollingPercentileRank::new(usize_param(params, 0, kind)?),
-        )?))),
-        "RollingQuantile" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::RollingQuantile::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
-        )?))),
-        "RollingVwap" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::RollingVwap::new(usize_param(params, 0, kind)?),
-        )?))),
-        "RoofingFilter" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::RoofingFilter::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
-        "Rsi" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Rsi::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Rsx" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Rsx::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Rvi" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::Rvi::new(usize_param(params, 0, kind)?),
-        )?))),
-        "RviVolatility" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::RviVolatility::new(usize_param(params, 0, kind)?),
-        )?))),
+        "QuotedSpread" => Ok(Box::new(BookIn {
+            inner: wc::QuotedSpread::new(),
+        })),
+        "RSquared" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::RSquared::new(usize_param(params, 0, kind)?))?,
+        })),
+        "RealizedVolatility" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::RealizedVolatility::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "RecoveryFactor" => Ok(Box::new(ScalarPrice {
+            inner: wc::RecoveryFactor::new(),
+        })),
+        "RectangleRange" => Ok(Box::new(CandleIn {
+            inner: wc::RectangleRange::new(),
+        })),
+        "Reflex" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Reflex::new(usize_param(params, 0, kind)?))?,
+        })),
+        "RegimeLabel" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::RegimeLabel::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
+            )?,
+        })),
+        "RelativeStrengthAB" => Ok(Box::new(PairInFields {
+            inner: map_new(
+                kind,
+                wc::RelativeStrengthAB::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+            last: None,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "RenkoTrailingStop" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::RenkoTrailingStop::new(float_param(params, 0, kind)?),
+            )?,
+        })),
+        "RickshawMan" => Ok(Box::new(CandleIn {
+            inner: wc::RickshawMan::new(),
+        })),
+        "RisingThreeMethods" => Ok(Box::new(CandleIn {
+            inner: wc::RisingThreeMethods::new(),
+        })),
+        "Rmi" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::Rmi::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
+            )?,
+        })),
+        "Roc" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Roc::new(usize_param(params, 0, kind)?))?,
+        })),
+        "Rocp" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Rocp::new(usize_param(params, 0, kind)?))?,
+        })),
+        "Rocr" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Rocr::new(usize_param(params, 0, kind)?))?,
+        })),
+        "Rocr100" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Rocr100::new(usize_param(params, 0, kind)?))?,
+        })),
+        "RogersSatchellVolatility" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::RogersSatchellVolatility::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "RollMeasure" => Ok(Box::new(TradeIn {
+            inner: map_new(kind, wc::RollMeasure::new(usize_param(params, 0, kind)?))?,
+        })),
+        "RollingCorrelation" => Ok(Box::new(PairIn {
+            inner: map_new(
+                kind,
+                wc::RollingCorrelation::new(usize_param(params, 0, kind)?),
+            )?,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "RollingCovariance" => Ok(Box::new(PairIn {
+            inner: map_new(
+                kind,
+                wc::RollingCovariance::new(usize_param(params, 0, kind)?),
+            )?,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "RollingIqr" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::RollingIqr::new(usize_param(params, 0, kind)?))?,
+        })),
+        "RollingMinMaxScaler" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::RollingMinMaxScaler::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "RollingPercentileRank" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::RollingPercentileRank::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "RollingQuantile" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::RollingQuantile::new(
+                    usize_param(params, 0, kind)?,
+                    float_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "RollingVwap" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::RollingVwap::new(usize_param(params, 0, kind)?))?,
+        })),
+        "RoofingFilter" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::RoofingFilter::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "Rsi" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Rsi::new(usize_param(params, 0, kind)?))?,
+        })),
+        "Rsx" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Rsx::new(usize_param(params, 0, kind)?))?,
+        })),
+        "Rvi" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::Rvi::new(usize_param(params, 0, kind)?))?,
+        })),
+        "RviVolatility" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::RviVolatility::new(usize_param(params, 0, kind)?))?,
+        })),
         "Rwi" => Ok(Box::new(CandleInFields {
             inner: map_new(kind, wc::Rwi::new(usize_param(params, 0, kind)?))?,
             last: None,
         })),
-        "SampleEntropy" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::SampleEntropy::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-                float_param(params, 2, kind)?,
-            ),
-        )?))),
-        "SarExt" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::SarExt::new(
-                float_param(params, 0, kind)?,
-                float_param(params, 1, kind)?,
-                float_param(params, 2, kind)?,
-                float_param(params, 3, kind)?,
-                float_param(params, 4, kind)?,
-                float_param(params, 5, kind)?,
-                float_param(params, 6, kind)?,
-                float_param(params, 7, kind)?,
-            ),
-        )?))),
-        "SeasonalZScore" => Ok(Box::new(CandleIn(wc::SeasonalZScore::new(i32_param(
-            params, 0, kind,
-        )?)))),
-        "SeparatingLines" => Ok(Box::new(CandleIn(wc::SeparatingLines::new()))),
+        "SampleEntropy" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::SampleEntropy::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                    float_param(params, 2, kind)?,
+                ),
+            )?,
+        })),
+        "SarExt" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::SarExt::new(
+                    float_param(params, 0, kind)?,
+                    float_param(params, 1, kind)?,
+                    float_param(params, 2, kind)?,
+                    float_param(params, 3, kind)?,
+                    float_param(params, 4, kind)?,
+                    float_param(params, 5, kind)?,
+                    float_param(params, 6, kind)?,
+                    float_param(params, 7, kind)?,
+                ),
+            )?,
+        })),
+        "SeasonalZScore" => Ok(Box::new(CandleIn {
+            inner: wc::SeasonalZScore::new(i32_param(params, 0, kind)?),
+        })),
+        "SeparatingLines" => Ok(Box::new(CandleIn {
+            inner: wc::SeparatingLines::new(),
+        })),
         "SessionHighLow" => Ok(Box::new(CandleInFields {
             inner: wc::SessionHighLow::new(i32_param(params, 0, kind)?),
             last: None,
@@ -4371,50 +5136,67 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             inner: wc::SessionRange::new(i32_param(params, 0, kind)?),
             last: None,
         })),
-        "SessionVwap" => Ok(Box::new(CandleIn(wc::SessionVwap::new(i32_param(
-            params, 0, kind,
-        )?)))),
-        "ShannonEntropy" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::ShannonEntropy::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
-        "Shark" => Ok(Box::new(CandleIn(wc::Shark::new()))),
-        "SharpeRatio" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::SharpeRatio::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
-        )?))),
-        "ShootingStar" => Ok(Box::new(CandleIn(wc::ShootingStar::new()))),
-        "ShortLine" => Ok(Box::new(CandleIn(wc::ShortLine::new()))),
-        "SignedVolume" => Ok(Box::new(TradeIn(wc::SignedVolume::new()))),
-        "SineWave" => Ok(Box::new(ScalarPrice(wc::SineWave::new()))),
-        "SineWeightedMa" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::SineWeightedMa::new(usize_param(params, 0, kind)?),
-        )?))),
-        "SinglePrints" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::SinglePrints::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
-        "Skewness" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Skewness::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Sma" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Sma::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Smi" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::Smi::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-                usize_param(params, 2, kind)?,
-            ),
-        )?))),
-        "Smma" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Smma::new(usize_param(params, 0, kind)?),
-        )?))),
+        "SessionVwap" => Ok(Box::new(CandleIn {
+            inner: wc::SessionVwap::new(i32_param(params, 0, kind)?),
+        })),
+        "ShannonEntropy" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::ShannonEntropy::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "Shark" => Ok(Box::new(CandleIn {
+            inner: wc::Shark::new(),
+        })),
+        "SharpeRatio" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::SharpeRatio::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
+            )?,
+        })),
+        "ShootingStar" => Ok(Box::new(CandleIn {
+            inner: wc::ShootingStar::new(),
+        })),
+        "ShortLine" => Ok(Box::new(CandleIn {
+            inner: wc::ShortLine::new(),
+        })),
+        "SignedVolume" => Ok(Box::new(TradeIn {
+            inner: wc::SignedVolume::new(),
+        })),
+        "SineWave" => Ok(Box::new(ScalarPrice {
+            inner: wc::SineWave::new(),
+        })),
+        "SineWeightedMa" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::SineWeightedMa::new(usize_param(params, 0, kind)?))?,
+        })),
+        "SinglePrints" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::SinglePrints::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
+            )?,
+        })),
+        "Skewness" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Skewness::new(usize_param(params, 0, kind)?))?,
+        })),
+        "Sma" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Sma::new(usize_param(params, 0, kind)?))?,
+        })),
+        "Smi" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::Smi::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                    usize_param(params, 2, kind)?,
+                ),
+            )?,
+        })),
+        "Smma" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Smma::new(usize_param(params, 0, kind)?))?,
+        })),
         "SmoothedHeikinAshi" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -4422,16 +5204,50 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "SortinoRatio" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::SortinoRatio::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
-        )?))),
-        "SpinningTop" => Ok(Box::new(CandleIn(wc::SpinningTop::new()))),
-        "StalledPattern" => Ok(Box::new(CandleIn(wc::StalledPattern::new()))),
-        "StandardError" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::StandardError::new(usize_param(params, 0, kind)?),
-        )?))),
+        "SortinoRatio" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::SortinoRatio::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
+            )?,
+        })),
+        "SpearmanCorrelation" => Ok(Box::new(PairIn {
+            inner: map_new(
+                kind,
+                wc::SpearmanCorrelation::new(usize_param(params, 0, kind)?),
+            )?,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "SpinningTop" => Ok(Box::new(CandleIn {
+            inner: wc::SpinningTop::new(),
+        })),
+        "SpreadAr1Coefficient" => Ok(Box::new(PairIn {
+            inner: map_new(
+                kind,
+                wc::SpreadAr1Coefficient::new(usize_param(params, 0, kind)?),
+            )?,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "SpreadBollingerBands" => Ok(Box::new(PairInFields {
+            inner: map_new(
+                kind,
+                wc::SpreadBollingerBands::new(
+                    usize_param(params, 0, kind)?,
+                    float_param(params, 1, kind)?,
+                ),
+            )?,
+            last: None,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "SpreadHurst" => Ok(Box::new(PairIn {
+            inner: map_new(kind, wc::SpreadHurst::new(usize_param(params, 0, kind)?))?,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "StalledPattern" => Ok(Box::new(CandleIn {
+            inner: wc::StalledPattern::new(),
+        })),
+        "StandardError" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::StandardError::new(usize_param(params, 0, kind)?))?,
+        })),
         "StandardErrorBands" => Ok(Box::new(ScalarPriceFields {
             inner: map_new(
                 kind,
@@ -4453,32 +5269,38 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "Stc" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Stc::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-                usize_param(params, 2, kind)?,
-                float_param(params, 3, kind)?,
-            ),
-        )?))),
-        "StdDev" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::StdDev::new(usize_param(params, 0, kind)?),
-        )?))),
-        "StepTrailingStop" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::StepTrailingStop::new(float_param(params, 0, kind)?),
-        )?))),
-        "SterlingRatio" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::SterlingRatio::new(usize_param(params, 0, kind)?),
-        )?))),
-        "StickSandwich" => Ok(Box::new(CandleIn(wc::StickSandwich::new()))),
-        "StochRsi" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::StochRsi::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
+        "Stc" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::Stc::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                    usize_param(params, 2, kind)?,
+                    float_param(params, 3, kind)?,
+                ),
+            )?,
+        })),
+        "StdDev" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::StdDev::new(usize_param(params, 0, kind)?))?,
+        })),
+        "StepTrailingStop" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::StepTrailingStop::new(float_param(params, 0, kind)?),
+            )?,
+        })),
+        "SterlingRatio" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::SterlingRatio::new(usize_param(params, 0, kind)?))?,
+        })),
+        "StickSandwich" => Ok(Box::new(CandleIn {
+            inner: wc::StickSandwich::new(),
+        })),
+        "StochRsi" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::StochRsi::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
+            )?,
+        })),
         "Stochastic" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -4486,14 +5308,12 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "StochasticCci" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::StochasticCci::new(usize_param(params, 0, kind)?),
-        )?))),
-        "SuperSmoother" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::SuperSmoother::new(usize_param(params, 0, kind)?),
-        )?))),
+        "StochasticCci" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::StochasticCci::new(usize_param(params, 0, kind)?))?,
+        })),
+        "SuperSmoother" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::SuperSmoother::new(usize_param(params, 0, kind)?))?,
+        })),
         "SuperTrend" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -4501,46 +5321,61 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "T3" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::T3::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
-        )?))),
-        "TailRatio" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::TailRatio::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Takuri" => Ok(Box::new(CandleIn(wc::Takuri::new()))),
-        "TasukiGap" => Ok(Box::new(CandleIn(wc::TasukiGap::new()))),
-        "TdCamouflage" => Ok(Box::new(CandleIn(wc::TdCamouflage::new()))),
-        "TdClop" => Ok(Box::new(CandleIn(wc::TdClop::new()))),
-        "TdClopwin" => Ok(Box::new(CandleIn(wc::TdClopwin::new()))),
-        "TdCombo" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::TdCombo::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-                usize_param(params, 2, kind)?,
-                usize_param(params, 3, kind)?,
-            ),
-        )?))),
-        "TdCountdown" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::TdCountdown::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-                usize_param(params, 2, kind)?,
-                usize_param(params, 3, kind)?,
-            ),
-        )?))),
-        "TdDWave" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::TdDWave::new(usize_param(params, 0, kind)?),
-        )?))),
-        "TdDeMarker" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::TdDeMarker::new(usize_param(params, 0, kind)?),
-        )?))),
-        "TdDifferential" => Ok(Box::new(CandleIn(wc::TdDifferential::new()))),
+        "T3" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::T3::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
+            )?,
+        })),
+        "TailRatio" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::TailRatio::new(usize_param(params, 0, kind)?))?,
+        })),
+        "Takuri" => Ok(Box::new(CandleIn {
+            inner: wc::Takuri::new(),
+        })),
+        "TasukiGap" => Ok(Box::new(CandleIn {
+            inner: wc::TasukiGap::new(),
+        })),
+        "TdCamouflage" => Ok(Box::new(CandleIn {
+            inner: wc::TdCamouflage::new(),
+        })),
+        "TdClop" => Ok(Box::new(CandleIn {
+            inner: wc::TdClop::new(),
+        })),
+        "TdClopwin" => Ok(Box::new(CandleIn {
+            inner: wc::TdClopwin::new(),
+        })),
+        "TdCombo" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::TdCombo::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                    usize_param(params, 2, kind)?,
+                    usize_param(params, 3, kind)?,
+                ),
+            )?,
+        })),
+        "TdCountdown" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::TdCountdown::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                    usize_param(params, 2, kind)?,
+                    usize_param(params, 3, kind)?,
+                ),
+            )?,
+        })),
+        "TdDWave" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::TdDWave::new(usize_param(params, 0, kind)?))?,
+        })),
+        "TdDeMarker" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::TdDeMarker::new(usize_param(params, 0, kind)?))?,
+        })),
+        "TdDifferential" => Ok(Box::new(CandleIn {
+            inner: wc::TdDifferential::new(),
+        })),
         "TdLines" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -4558,20 +5393,22 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "TdOpen" => Ok(Box::new(CandleIn(wc::TdOpen::new()))),
-        "TdPressure" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::TdPressure::new(usize_param(params, 0, kind)?),
-        )?))),
-        "TdPropulsion" => Ok(Box::new(CandleIn(wc::TdPropulsion::new()))),
+        "TdOpen" => Ok(Box::new(CandleIn {
+            inner: wc::TdOpen::new(),
+        })),
+        "TdPressure" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::TdPressure::new(usize_param(params, 0, kind)?))?,
+        })),
+        "TdPropulsion" => Ok(Box::new(CandleIn {
+            inner: wc::TdPropulsion::new(),
+        })),
         "TdRangeProjection" => Ok(Box::new(CandleInFields {
             inner: wc::TdRangeProjection::new(),
             last: None,
         })),
-        "TdRei" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::TdRei::new(usize_param(params, 0, kind)?),
-        )?))),
+        "TdRei" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::TdRei::new(usize_param(params, 0, kind)?))?,
+        })),
         "TdRiskLevel" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -4591,35 +5428,54 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "TdSetup" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::TdSetup::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
-        "TdTrap" => Ok(Box::new(CandleIn(wc::TdTrap::new()))),
-        "Tema" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Tema::new(usize_param(params, 0, kind)?),
-        )?))),
-        "ThreeDrives" => Ok(Box::new(CandleIn(wc::ThreeDrives::new()))),
-        "ThreeInside" => Ok(Box::new(CandleIn(wc::ThreeInside::new()))),
-        "ThreeLineBreak" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::ThreeLineBreak::new(usize_param(params, 0, kind)?),
-        )?))),
-        "ThreeLineStrike" => Ok(Box::new(CandleIn(wc::ThreeLineStrike::new()))),
-        "ThreeOutside" => Ok(Box::new(CandleIn(wc::ThreeOutside::new()))),
-        "ThreeSoldiersOrCrows" => Ok(Box::new(CandleIn(wc::ThreeSoldiersOrCrows::new()))),
-        "ThreeStarsInSouth" => Ok(Box::new(CandleIn(wc::ThreeStarsInSouth::new()))),
-        "Thrusting" => Ok(Box::new(CandleIn(wc::Thrusting::new()))),
-        "Tii" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Tii::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
-        "TimeBasedStop" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::TimeBasedStop::new(usize_param(params, 0, kind)?),
-        )?))),
-        "TowerTopBottom" => Ok(Box::new(CandleIn(wc::TowerTopBottom::new()))),
+        "TdSetup" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::TdSetup::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
+            )?,
+        })),
+        "TdTrap" => Ok(Box::new(CandleIn {
+            inner: wc::TdTrap::new(),
+        })),
+        "Tema" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Tema::new(usize_param(params, 0, kind)?))?,
+        })),
+        "ThreeDrives" => Ok(Box::new(CandleIn {
+            inner: wc::ThreeDrives::new(),
+        })),
+        "ThreeInside" => Ok(Box::new(CandleIn {
+            inner: wc::ThreeInside::new(),
+        })),
+        "ThreeLineBreak" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::ThreeLineBreak::new(usize_param(params, 0, kind)?))?,
+        })),
+        "ThreeLineStrike" => Ok(Box::new(CandleIn {
+            inner: wc::ThreeLineStrike::new(),
+        })),
+        "ThreeOutside" => Ok(Box::new(CandleIn {
+            inner: wc::ThreeOutside::new(),
+        })),
+        "ThreeSoldiersOrCrows" => Ok(Box::new(CandleIn {
+            inner: wc::ThreeSoldiersOrCrows::new(),
+        })),
+        "ThreeStarsInSouth" => Ok(Box::new(CandleIn {
+            inner: wc::ThreeStarsInSouth::new(),
+        })),
+        "Thrusting" => Ok(Box::new(CandleIn {
+            inner: wc::Thrusting::new(),
+        })),
+        "Tii" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::Tii::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
+            )?,
+        })),
+        "TimeBasedStop" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::TimeBasedStop::new(usize_param(params, 0, kind)?))?,
+        })),
+        "TowerTopBottom" => Ok(Box::new(CandleIn {
+            inner: wc::TowerTopBottom::new(),
+        })),
         "TpoProfile" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -4627,58 +5483,73 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "TradeImbalance" => Ok(Box::new(TradeIn(map_new(
-            kind,
-            wc::TradeImbalance::new(usize_param(params, 0, kind)?),
-        )?))),
-        "TradeSignAutocorrelation" => Ok(Box::new(TradeIn(map_new(
-            kind,
-            wc::TradeSignAutocorrelation::new(usize_param(params, 0, kind)?),
-        )?))),
-        "TradeVolumeIndex" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::TradeVolumeIndex::new(float_param(params, 0, kind)?),
-        )?))),
-        "TrendLabel" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::TrendLabel::new(usize_param(params, 0, kind)?),
-        )?))),
-        "TrendStrengthIndex" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::TrendStrengthIndex::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Trendflex" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Trendflex::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Triangle" => Ok(Box::new(CandleIn(wc::Triangle::new()))),
-        "Trima" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Trima::new(usize_param(params, 0, kind)?),
-        )?))),
-        "TripleTopBottom" => Ok(Box::new(CandleIn(wc::TripleTopBottom::new()))),
-        "Tristar" => Ok(Box::new(CandleIn(wc::Tristar::new()))),
-        "Trix" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Trix::new(usize_param(params, 0, kind)?),
-        )?))),
-        "TrueRange" => Ok(Box::new(CandleIn(wc::TrueRange::new()))),
-        "Tsf" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Tsf::new(usize_param(params, 0, kind)?),
-        )?))),
-        "TsfOscillator" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::TsfOscillator::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Tsi" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Tsi::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
-        "Tsv" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::Tsv::new(usize_param(params, 0, kind)?),
-        )?))),
+        "TradeImbalance" => Ok(Box::new(TradeIn {
+            inner: map_new(kind, wc::TradeImbalance::new(usize_param(params, 0, kind)?))?,
+        })),
+        "TradeSignAutocorrelation" => Ok(Box::new(TradeIn {
+            inner: map_new(
+                kind,
+                wc::TradeSignAutocorrelation::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "TradeVolumeIndex" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::TradeVolumeIndex::new(float_param(params, 0, kind)?),
+            )?,
+        })),
+        "TrendLabel" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::TrendLabel::new(usize_param(params, 0, kind)?))?,
+        })),
+        "TrendStrengthIndex" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::TrendStrengthIndex::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "Trendflex" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Trendflex::new(usize_param(params, 0, kind)?))?,
+        })),
+        "TreynorRatio" => Ok(Box::new(PairIn {
+            inner: map_new(
+                kind,
+                wc::TreynorRatio::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
+            )?,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "Triangle" => Ok(Box::new(CandleIn {
+            inner: wc::Triangle::new(),
+        })),
+        "Trima" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Trima::new(usize_param(params, 0, kind)?))?,
+        })),
+        "TripleTopBottom" => Ok(Box::new(CandleIn {
+            inner: wc::TripleTopBottom::new(),
+        })),
+        "Tristar" => Ok(Box::new(CandleIn {
+            inner: wc::Tristar::new(),
+        })),
+        "Trix" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Trix::new(usize_param(params, 0, kind)?))?,
+        })),
+        "TrueRange" => Ok(Box::new(CandleIn {
+            inner: wc::TrueRange::new(),
+        })),
+        "Tsf" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Tsf::new(usize_param(params, 0, kind)?))?,
+        })),
+        "TsfOscillator" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::TsfOscillator::new(usize_param(params, 0, kind)?))?,
+        })),
+        "Tsi" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::Tsi::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
+            )?,
+        })),
+        "Tsv" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::Tsv::new(usize_param(params, 0, kind)?))?,
+        })),
         "TtmSqueeze" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -4690,51 +5561,71 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "TtmTrend" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::TtmTrend::new(usize_param(params, 0, kind)?),
-        )?))),
-        "TurnOfMonth" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::TurnOfMonth::new(
-                u32_param(params, 0, kind)?,
-                u32_param(params, 1, kind)?,
-                i32_param(params, 2, kind)?,
-            ),
-        )?))),
-        "Tweezer" => Ok(Box::new(CandleIn(wc::Tweezer::new()))),
-        "TwiggsMoneyFlow" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::TwiggsMoneyFlow::new(usize_param(params, 0, kind)?),
-        )?))),
-        "TwoCrows" => Ok(Box::new(CandleIn(wc::TwoCrows::new()))),
-        "TypicalPrice" => Ok(Box::new(CandleIn(wc::TypicalPrice::new()))),
-        "UlcerIndex" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::UlcerIndex::new(usize_param(params, 0, kind)?),
-        )?))),
-        "UltimateOscillator" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::UltimateOscillator::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-                usize_param(params, 2, kind)?,
-            ),
-        )?))),
-        "UniqueThreeRiver" => Ok(Box::new(CandleIn(wc::UniqueThreeRiver::new()))),
-        "UniversalOscillator" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::UniversalOscillator::new(usize_param(params, 0, kind)?),
-        )?))),
-        "UpsideGapThreeMethods" => Ok(Box::new(CandleIn(wc::UpsideGapThreeMethods::new()))),
-        "UpsideGapTwoCrows" => Ok(Box::new(CandleIn(wc::UpsideGapTwoCrows::new()))),
-        "UpsidePotentialRatio" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::UpsidePotentialRatio::new(
-                usize_param(params, 0, kind)?,
-                float_param(params, 1, kind)?,
-            ),
-        )?))),
+        "TtmTrend" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::TtmTrend::new(usize_param(params, 0, kind)?))?,
+        })),
+        "TurnOfMonth" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::TurnOfMonth::new(
+                    u32_param(params, 0, kind)?,
+                    u32_param(params, 1, kind)?,
+                    i32_param(params, 2, kind)?,
+                ),
+            )?,
+        })),
+        "Tweezer" => Ok(Box::new(CandleIn {
+            inner: wc::Tweezer::new(),
+        })),
+        "TwiggsMoneyFlow" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::TwiggsMoneyFlow::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "TwoCrows" => Ok(Box::new(CandleIn {
+            inner: wc::TwoCrows::new(),
+        })),
+        "TypicalPrice" => Ok(Box::new(CandleIn {
+            inner: wc::TypicalPrice::new(),
+        })),
+        "UlcerIndex" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::UlcerIndex::new(usize_param(params, 0, kind)?))?,
+        })),
+        "UltimateOscillator" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::UltimateOscillator::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                    usize_param(params, 2, kind)?,
+                ),
+            )?,
+        })),
+        "UniqueThreeRiver" => Ok(Box::new(CandleIn {
+            inner: wc::UniqueThreeRiver::new(),
+        })),
+        "UniversalOscillator" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::UniversalOscillator::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "UpsideGapThreeMethods" => Ok(Box::new(CandleIn {
+            inner: wc::UpsideGapThreeMethods::new(),
+        })),
+        "UpsideGapTwoCrows" => Ok(Box::new(CandleIn {
+            inner: wc::UpsideGapTwoCrows::new(),
+        })),
+        "UpsidePotentialRatio" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::UpsidePotentialRatio::new(
+                    usize_param(params, 0, kind)?,
+                    float_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
         "ValueArea" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -4746,22 +5637,37 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "ValueAtRisk" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::ValueAtRisk::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
-        )?))),
-        "Variance" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Variance::new(usize_param(params, 0, kind)?),
-        )?))),
-        "VerticalHorizontalFilter" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::VerticalHorizontalFilter::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Vidya" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Vidya::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
+        "ValueAtRisk" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::ValueAtRisk::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
+            )?,
+        })),
+        "Variance" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Variance::new(usize_param(params, 0, kind)?))?,
+        })),
+        "VarianceRatio" => Ok(Box::new(PairIn {
+            inner: map_new(
+                kind,
+                wc::VarianceRatio::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+            reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "VerticalHorizontalFilter" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::VerticalHorizontalFilter::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "Vidya" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::Vidya::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
+            )?,
+        })),
         "VolatilityCone" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -4772,26 +5678,39 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "VolatilityOfVolatility" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::VolatilityOfVolatility::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-            ),
-        )?))),
-        "VolatilityRatio" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::VolatilityRatio::new(usize_param(params, 0, kind)?),
-        )?))),
-        "VoltyStop" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::VoltyStop::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
-        )?))),
-        "VolumeOscillator" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::VolumeOscillator::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
-        "VolumePriceTrend" => Ok(Box::new(CandleIn(wc::VolumePriceTrend::new()))),
+        "VolatilityOfVolatility" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::VolatilityOfVolatility::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "VolatilityRatio" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::VolatilityRatio::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "VoltyStop" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::VoltyStop::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
+            )?,
+        })),
+        "VolumeOscillator" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::VolumeOscillator::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "VolumePriceTrend" => Ok(Box::new(CandleIn {
+            inner: wc::VolumePriceTrend::new(),
+        })),
         "VolumeProfile" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -4802,10 +5721,9 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "VolumeRsi" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::VolumeRsi::new(usize_param(params, 0, kind)?),
-        )?))),
+        "VolumeRsi" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::VolumeRsi::new(usize_param(params, 0, kind)?))?,
+        })),
         "VolumeWeightedMacd" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -4828,11 +5746,15 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             inner: map_new(kind, wc::Vortex::new(usize_param(params, 0, kind)?))?,
             last: None,
         })),
-        "Vpin" => Ok(Box::new(TradeIn(map_new(
-            kind,
-            wc::Vpin::new(float_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
-        "Vwap" => Ok(Box::new(CandleIn(wc::Vwap::new()))),
+        "Vpin" => Ok(Box::new(TradeIn {
+            inner: map_new(
+                kind,
+                wc::Vpin::new(float_param(params, 0, kind)?, usize_param(params, 1, kind)?),
+            )?,
+        })),
+        "Vwap" => Ok(Box::new(CandleIn {
+            inner: wc::Vwap::new(),
+        })),
         "VwapStdDevBands" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -4840,19 +5762,21 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "Vwma" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::Vwma::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Vzo" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::Vzo::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Wad" => Ok(Box::new(CandleIn(wc::Wad::new()))),
-        "WavePm" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::WavePm::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-        )?))),
+        "Vwma" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::Vwma::new(usize_param(params, 0, kind)?))?,
+        })),
+        "Vzo" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::Vzo::new(usize_param(params, 0, kind)?))?,
+        })),
+        "Wad" => Ok(Box::new(CandleIn {
+            inner: wc::Wad::new(),
+        })),
+        "WavePm" => Ok(Box::new(ScalarPrice {
+            inner: map_new(
+                kind,
+                wc::WavePm::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
+            )?,
+        })),
         "WaveTrend" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -4864,40 +5788,46 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             )?,
             last: None,
         })),
-        "Wedge" => Ok(Box::new(CandleIn(wc::Wedge::new()))),
-        "WeightedClose" => Ok(Box::new(CandleIn(wc::WeightedClose::new()))),
-        "WickRatio" => Ok(Box::new(CandleIn(wc::WickRatio::new()))),
-        "WilliamsR" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::WilliamsR::new(usize_param(params, 0, kind)?),
-        )?))),
-        "WinRate" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::WinRate::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Wma" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Wma::new(usize_param(params, 0, kind)?),
-        )?))),
+        "Wedge" => Ok(Box::new(CandleIn {
+            inner: wc::Wedge::new(),
+        })),
+        "WeightedClose" => Ok(Box::new(CandleIn {
+            inner: wc::WeightedClose::new(),
+        })),
+        "WickRatio" => Ok(Box::new(CandleIn {
+            inner: wc::WickRatio::new(),
+        })),
+        "WilliamsR" => Ok(Box::new(CandleIn {
+            inner: map_new(kind, wc::WilliamsR::new(usize_param(params, 0, kind)?))?,
+        })),
+        "WinRate" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::WinRate::new(usize_param(params, 0, kind)?))?,
+        })),
+        "Wma" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Wma::new(usize_param(params, 0, kind)?))?,
+        })),
         "WoodiePivots" => Ok(Box::new(CandleInFields {
             inner: wc::WoodiePivots::new(),
             last: None,
         })),
-        "YangZhangVolatility" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::YangZhangVolatility::new(
-                usize_param(params, 0, kind)?,
-                usize_param(params, 1, kind)?,
-            ),
-        )?))),
-        "YoyoExit" => Ok(Box::new(CandleIn(map_new(
-            kind,
-            wc::YoyoExit::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
-        )?))),
-        "ZScore" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::ZScore::new(usize_param(params, 0, kind)?),
-        )?))),
+        "YangZhangVolatility" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::YangZhangVolatility::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+        })),
+        "YoyoExit" => Ok(Box::new(CandleIn {
+            inner: map_new(
+                kind,
+                wc::YoyoExit::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
+            )?,
+        })),
+        "ZScore" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::ZScore::new(usize_param(params, 0, kind)?))?,
+        })),
         "ZeroLagMacd" => Ok(Box::new(ScalarPriceFields {
             inner: map_new(
                 kind,
@@ -4913,12 +5843,11 @@ pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {
             inner: map_new(kind, wc::ZigZag::new(float_param(params, 0, kind)?))?,
             last: None,
         })),
-        "Zlema" => Ok(Box::new(ScalarPrice(map_new(
-            kind,
-            wc::Zlema::new(usize_param(params, 0, kind)?),
-        )?))),
-        "Bollinger" => build("BollingerBands", params),
-        "Macd" => build("MacdIndicator", params),
+        "Zlema" => Ok(Box::new(ScalarPrice {
+            inner: map_new(kind, wc::Zlema::new(usize_param(params, 0, kind)?))?,
+        })),
+        "Bollinger" => build_inner("BollingerBands", params, reference),
+        "Macd" => build_inner("MacdIndicator", params, reference),
         _ => Err(Error::Config(format!("unknown indicator: {kind}"))),
     }
 }

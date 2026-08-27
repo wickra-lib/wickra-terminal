@@ -134,7 +134,7 @@ class GoldenTest {
         // A manifest that silently shrank to one entry would leave every parity test passing
         // while checking a fraction of what it used to.
         List<String> names = manifest().stream().map(Scenario::name).toList();
-        assertTrue(names.size() >= 6, "only " + names.size() + " scenarios");
+        assertTrue(names.size() >= 7, "only " + names.size() + " scenarios");
         for (String expected : List.of("basic", "book_deltas", "footprint", "indicators", "seek")) {
             assertTrue(names.contains(expected), expected + " missing from the manifest");
         }

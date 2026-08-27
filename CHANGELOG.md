@@ -33,11 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - One runnable example per language, a C/C++ CMake harness, and the full CI
   workflow matrix (all ten languages across three operating systems) plus
   CodeQL, Scorecard, zizmor and link checking.
-- Indicators: **436 of the wickra-core set**, constructible by name from a config
-  or at run time, across four input families — price, bar, tape and order book.
-  `tools/gen_registry.py` reads the library's sources and emits the registry, so
-  it cannot drift from what wickra actually offers; the 68 it cannot reach are
-  printed with a reason on every regeneration.
+- Indicators: **460 of the wickra-core set**, constructible by name from a config
+  or at run time, across five input families — price, bar, tape, order book and
+  pairwise. `tools/gen_registry.py` reads the library's sources and emits the
+  registry, so it cannot drift from what wickra actually offers; the 44 it cannot
+  reach are printed with a reason on every regeneration.
 - Tick-to-OHLCV aggregation (`CandleBuilder`, `Timeframe`), which is what makes
   the 262 bar-input indicators reachable at all. Only closed bars reach an
   indicator, so a reading never repaints as its bar fills.
@@ -45,6 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   terminal already keeps, converted into wickra-core's `Trade` and `OrderBook`
   once per tick and shared across the set. The book conversion is skipped
   entirely when no indicator in the set reads it.
+- The pairwise family compares two markets. `IndicatorSpec` gains a `reference`
+  symbol, which is part of the indicator's label because the same indicator
+  against a different market is a different reading. A pairwise kind with no
+  reference is refused rather than defaulted, and `ListIndicators` marks the
+  rows that need one.
 - Commands `AddIndicator`, `RemoveIndicator`, `ListIndicators` and
   `SetTimeframe`. The registry is reachable from every binding with no binding
   code, because the surface was already JSON in, JSON out.

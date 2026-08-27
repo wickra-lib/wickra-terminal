@@ -52,6 +52,7 @@ character, which needs no parser and no regular expression.
 | `book_deltas` | an L2 diff stream including level removals and new levels outside the previous range |
 | `footprint` | repeated prices on both sides, so the per-price volume accumulates rather than recording one entry per price |
 | `indicators` | a non-default indicator set (`Sma`, `Rsi`, `MacdIndicator`) driven far enough to produce real values, including the multi-output fields and the per-indicator series |
+| `pairwise` | a pairwise indicator across two markets: the reference price reaches it through the tick, and the label carries which market it is against |
 | `seek` | the time machine: drive to the end, rewind, drive forward again |
 | `multi_source` | two sources at once, with focus on the second |
 

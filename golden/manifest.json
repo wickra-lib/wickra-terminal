@@ -25,6 +25,12 @@
       "name": "indicators"
     },
     {
+      "commands": "commands/pairwise.txt",
+      "config": "configs/pairwise.json",
+      "expected": "expected/pairwise.min.json",
+      "name": "pairwise"
+    },
+    {
       "commands": "commands/seek.txt",
       "config": "configs/seek.json",
       "expected": "expected/seek.min.json",

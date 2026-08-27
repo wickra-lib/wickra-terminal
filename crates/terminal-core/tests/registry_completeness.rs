@@ -3,16 +3,45 @@
 //! `registry.rs` is generated, which moves the risk: a hand-written dispatch
 //! fails to compile when it is wrong, but a generated one compiles happily with
 //! an arm that constructs the wrong thing, or one that no input can ever satisfy.
-//! Nothing else in the suite touches more than a couple of the 436 arms, so this
+//! Nothing else in the suite touches more than a couple of the 460 arms, so this
 //! drives all of them.
 //!
 //! Parameters come from `DEFAULTS`, which the generator joins in from wickra's
 //! own golden manifest — the values the library pins its reference outputs with,
 //! rather than a guessed count that would make half the failures spurious.
 
-use terminal_core::registry::{build, DEFAULTS, KINDS};
+use terminal_core::registry::{build, build_paired, DEFAULTS, KINDS, PAIRWISE};
 use terminal_core::{CandleBuilder, TickInput, Timeframe};
 use wickra_core::{Candle, Level, OrderBook, Side, Trade};
+
+/// The market a pairwise indicator is compared against in this suite.
+const REFERENCE: &str = "ETH/USDT";
+
+/// Construct any registered kind, pairing the ones that need a second market.
+///
+/// `build` deliberately refuses a pairwise kind rather than defaulting its
+/// reference, so a suite that drives every arm has to say which market it means.
+fn build_any(kind: &str, params: &[f64]) -> Box<dyn terminal_core::TickIndicator> {
+    let built = if PAIRWISE.contains(&kind) {
+        build_paired(kind, params, REFERENCE)
+    } else {
+        build(kind, params)
+    };
+    built.unwrap_or_else(|err| panic!("{kind}: {err}"))
+}
+
+/// The reference market's price path.
+///
+/// Deliberately not a scaled copy of `price_at`: two series in lockstep have a
+/// correlation of exactly one and a spread of exactly zero, which is a
+/// degenerate input for the whole pairwise family -- cointegration, beta and the
+/// spread bands would all report a constant, and a mis-wired indicator would be
+/// indistinguishable from a correct one. A different level, amplitude and phase
+/// gives a real relationship to measure.
+fn reference_at(step: i64) -> f64 {
+    let t = step as f64;
+    1500.0 + 200.0 * (t * 0.05 + 0.9).sin() + 25.0 * (t * 0.55).sin()
+}
 
 /// A price path with genuine variation, on two timescales.
 ///
@@ -63,7 +92,7 @@ const BAR_MS: i64 = 86_400_000;
 
 /// Feed `bars` bars, each built from several trades, and count what came back.
 fn drive(kind: &str, params: &[f64], bars: i64) -> (usize, usize) {
-    let mut indicator = build(kind, params).unwrap_or_else(|err| panic!("{kind}: {err}"));
+    let mut indicator = build_any(kind, params);
     let mut builder = CandleBuilder::new(Timeframe::parse(BAR_SPACING).unwrap());
     let mut values = 0;
     let mut fields = 0;
@@ -80,6 +109,9 @@ fn drive(kind: &str, params: &[f64], bars: i64) -> (usize, usize) {
             input.candle = closed;
             input.trade = Some(trade_at(price, size, step, ts));
             input.book = Some(book_at(price, step));
+            input
+                .references
+                .insert(REFERENCE.to_string(), reference_at(step));
             if indicator.update(&input).is_some() {
                 values += 1;
             }
@@ -156,7 +188,12 @@ fn every_registered_kind_has_default_parameters() {
 fn every_registered_indicator_constructs() {
     let mut failures = Vec::new();
     for (kind, params) in DEFAULTS {
-        if let Err(err) = build(kind, params) {
+        let built = if PAIRWISE.contains(&kind) {
+            build_paired(kind, params, REFERENCE)
+        } else {
+            build(kind, params)
+        };
+        if let Err(err) = built {
             failures.push(format!("{kind}: {err}"));
         }
     }
@@ -321,7 +358,7 @@ fn a_candle_indicator_reads_the_bar_not_the_price() {
 /// The number is a floor rather than an equality, so adding indicators upstream
 /// does not fail the build; only losing them does. Raise it when a regeneration
 /// legitimately grows the set.
-const REGISTERED_FLOOR: usize = 436;
+const REGISTERED_FLOOR: usize = 460;
 
 #[test]
 fn the_registry_has_not_silently_shrunk() {
@@ -342,6 +379,7 @@ fn every_input_family_is_represented() {
     let mut bar = build("Atr", &[5.0]).unwrap();
     let mut tape = build("SignedVolume", &[]).unwrap();
     let mut book = build("Microprice", &[]).unwrap();
+    let mut pair = build_paired("PairwiseBeta", &[14.0], REFERENCE).unwrap();
 
     // A bare price tick: only the price family may move on it.
     let bare = TickInput::price(100.0);
@@ -350,6 +388,7 @@ fn every_input_family_is_represented() {
         bar.update(&bare);
         tape.update(&bare);
         book.update(&bare);
+        pair.update(&bare);
     }
     assert!(
         price.update(&bare).is_some(),
@@ -367,6 +406,10 @@ fn every_input_family_is_represented() {
         book.update(&bare).is_none(),
         "a book indicator advanced without a book: the OrderBook family is mis-wired"
     );
+    assert!(
+        pair.update(&bare).is_none(),
+        "a pairwise indicator advanced with no reference price: the (f64, f64) family is mis-wired"
+    );
 
     // Now a tick that carries a print and a book.
     let full = TickInput::price(100.0)
@@ -379,6 +422,75 @@ fn every_input_family_is_represented() {
     assert!(
         book.update(&full).is_some(),
         "the OrderBook family did not advance on a tick carrying a book"
+    );
+
+    // The pairwise family needs a reference to have moved, so drive it a while.
+    let mut advanced = None;
+    for step in 0..40_i64 {
+        let tick = TickInput::price(price_at(step)).with_reference(REFERENCE, reference_at(step));
+        advanced = pair.update(&tick).or(advanced);
+    }
+    assert!(
+        advanced.is_some(),
+        "the pairwise family did not advance on ticks carrying a reference price"
+    );
+}
+
+#[test]
+fn a_pairwise_indicator_is_refused_without_a_reference() {
+    // Defaulting the reference would produce a plausible number about the wrong
+    // pair, which is worse than refusing: the error has to name the indicator
+    // and say what is missing.
+    assert!(!PAIRWISE.is_empty(), "no pairwise kinds registered");
+    let kind = PAIRWISE[0];
+    // The kind's real parameters, so the refusal is about the missing reference
+    // and not about a parameter list this test happened to get wrong.
+    let params: &[f64] = DEFAULTS
+        .iter()
+        .find(|(k, _)| *k == kind)
+        .map_or(&[], |(_, p)| *p);
+    let Err(err) = build(kind, params) else {
+        panic!("{kind} was built with no reference market");
+    };
+    let err = err.to_string();
+    assert!(
+        err.contains(PAIRWISE[0]),
+        "error does not name the kind: {err}"
+    );
+    assert!(
+        err.contains("reference"),
+        "error does not say a reference is missing: {err}"
+    );
+}
+
+#[test]
+fn a_pairwise_indicator_reads_the_reference_it_was_given() {
+    // Two references, same primary price path. If the wrapper ignored its own
+    // reference and read whatever the tick happened to carry, both would report
+    // the same thing.
+    //
+    // The second series has its own frequency and phase rather than being the
+    // first one scaled: DistanceSsd normalises, so a pure scale factor cancels
+    // exactly and two references that differ only in units genuinely do produce
+    // the same reading. That would make this test pass for the wrong reason if
+    // it were wired correctly, and fail for the wrong reason if it were not.
+    let mut against_eth = build_paired("DistanceSsd", &[14.0], "ETH/USDT").unwrap();
+    let mut against_sol = build_paired("DistanceSsd", &[14.0], "SOL/USDT").unwrap();
+    let mut eth = None;
+    let mut sol = None;
+    for step in 0..40_i64 {
+        let other = 800.0 + 120.0 * ((step as f64) * 0.11 + 2.1).sin();
+        let tick = TickInput::price(price_at(step))
+            .with_reference("ETH/USDT", reference_at(step))
+            .with_reference("SOL/USDT", other);
+        eth = against_eth.update(&tick).or(eth);
+        sol = against_sol.update(&tick).or(sol);
+    }
+    let eth = eth.expect("no reading against ETH");
+    let sol = sol.expect("no reading against SOL");
+    assert!(
+        (eth - sol).abs() > 1e-9,
+        "both references produced {eth}, so the wrapper is not reading its own"
     );
 }
 

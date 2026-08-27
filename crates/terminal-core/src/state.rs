@@ -103,6 +103,17 @@ impl BookState {
 }
 
 /// Insert/remove changed levels into one side of a book.
+/// Build the indicator a spec asks for, pairing it when it names a reference.
+///
+/// A pairwise kind with no reference is rejected by the registry rather than
+/// here, so the error names the indicator and says what it wants.
+fn build_spec(spec: &IndicatorSpec) -> Result<Box<dyn TickIndicator>> {
+    match &spec.reference {
+        Some(reference) => registry::build_paired(&spec.kind, &spec.params, reference),
+        None => registry::build(&spec.kind, &spec.params),
+    }
+}
+
 /// Convert a print into the core's [`wc::Trade`], for the tape indicator family.
 ///
 /// `None` if the price or quantity does not survive the move from `Decimal` to
@@ -292,7 +303,7 @@ impl IndicatorSet {
             .map(|spec| {
                 Ok(IndicatorEntry {
                     label: spec.label(),
-                    indicator: registry::build(&spec.kind, &spec.params)?,
+                    indicator: build_spec(spec)?,
                     last: None,
                     fields: Vec::new(),
                     series: VecDeque::with_capacity(INDICATOR_SERIES),
@@ -310,7 +321,7 @@ impl IndicatorSet {
     pub fn push(&mut self, spec: &IndicatorSpec) -> Result<()> {
         self.entries.push(IndicatorEntry {
             label: spec.label(),
-            indicator: registry::build(&spec.kind, &spec.params)?,
+            indicator: build_spec(spec)?,
             last: None,
             fields: Vec::new(),
             series: VecDeque::with_capacity(INDICATOR_SERIES),
@@ -327,6 +338,15 @@ impl IndicatorSet {
     #[must_use]
     pub fn wants_book(&self) -> bool {
         self.entries.iter().any(|e| e.indicator.wants_book())
+    }
+
+    /// Whether any indicator in this set reads another market's price.
+    ///
+    /// Scanned rather than cached, for the same reason as
+    /// [`IndicatorSet::wants_book`].
+    #[must_use]
+    pub fn wants_references(&self) -> bool {
+        self.entries.iter().any(|e| e.indicator.wants_reference())
     }
 
     /// Drop the indicator with this label. Returns whether one was removed.
@@ -491,6 +511,19 @@ impl AppState {
     /// Fold one event for `(src, sym)` into state, in O(1) per event (bounded by
     /// the event's own size, never by history).
     pub fn fold(&mut self, src: SourceId, sym: &Symbol, event: &Event) {
+        // Collected before the market's own state is borrowed mutably, which is
+        // also the only order that gives the right answer: the reference markets
+        // are read as they stand now, while this market's last is still the
+        // previous print until this event is folded.
+        //
+        // Asked of the specs rather than of an indicator set because the sets
+        // all come from these specs, and this one is reachable without holding a
+        // borrow of any market.
+        let references = if self.indicators.iter().any(|s| s.reference.is_some()) {
+            self.reference_prices()
+        } else {
+            BTreeMap::new()
+        };
         // `expect` rather than a fallback: every spec in `self.indicators` was
         // accepted by the registry when it was set, so construction here cannot
         // fail. A silent `unwrap_or_default` would hide a market quietly losing
@@ -525,6 +558,7 @@ impl AppState {
                 tick.candle = closed;
                 tick.trade = core_trade(print);
                 tick.book = book;
+                tick.references = references;
                 state.indicators.update(&tick);
                 if state.history.len() == 512 {
                     state.history.pop_front();
@@ -541,6 +575,27 @@ impl AppState {
             | Event::Disconnected
             | Event::Reconnected => {}
         }
+    }
+
+    /// The last price of every tracked market, keyed by symbol.
+    ///
+    /// A market that has not printed yet is left out rather than entered at
+    /// zero, so a pairwise indicator waits for a real price instead of being
+    /// warmed up on a placeholder.
+    ///
+    /// Keyed by symbol alone, not by `(source, symbol)`: a reference is written
+    /// as `ETH/USDT` in a config, and the same market on two feeds is the same
+    /// price. When both carry it, the later one in iteration order wins, which
+    /// is arbitrary but not wrong -- they are quotes for the same thing.
+    #[must_use]
+    fn reference_prices(&self) -> BTreeMap<String, f64> {
+        self.symbols
+            .iter()
+            .filter_map(|((_, symbol), state)| {
+                state.last.to_f64().map(|price| (symbol.to_string(), price))
+            })
+            .filter(|(_, price)| *price > 0.0)
+            .collect()
     }
 
     /// Fresh state for a market, carrying the indicator set and bar size this
@@ -574,7 +629,7 @@ impl AppState {
         }
         // Build once before mutating anything, so a rejected spec cannot leave
         // some markets updated and others not.
-        registry::build(&spec.kind, &spec.params)?;
+        build_spec(spec)?;
         for state in self.symbols.values_mut() {
             state.indicators.push(spec)?;
         }

@@ -67,6 +67,7 @@ WRAPPERS = {
     "Candle": ("CandleIn", "CandleInFields"),
     "Trade": ("TradeIn", "TradeInFields"),
     "OrderBook": ("BookIn", "BookInFields"),
+    "(f64,f64)": ("PairIn", "PairInFields"),
 }
 
 SUPPORTED_INPUTS = set(WRAPPERS)
@@ -77,6 +78,14 @@ INPUT_TY = {
     "Candle": "Candle",
     "Trade": "wc::Trade",
     "OrderBook": "wc::OrderBook",
+    "(f64,f64)": "(f64, f64)",
+}
+
+# Extra state a wrapper carries beyond the indicator itself. Only the pairwise
+# family needs any: it has to remember which market its second input comes from,
+# because that is a property of the spec rather than of the tick.
+EXTRA_FIELDS = {
+    "(f64,f64)": (("reference", "String"),),
 }
 
 # How each family reaches its value out of a `&TickInput` and feeds it. A tick
@@ -84,10 +93,17 @@ INPUT_TY = {
 # indicator, which is what keeps a bar indicator on bars and a book indicator on
 # book updates while they all share one tick.
 UPDATE_EXPR = {
-    "f64": "self.{recv}.update(input.price)",
-    "Candle": "input.candle.and_then(|c| self.{recv}.update(c))",
-    "Trade": "input.trade.and_then(|t| self.{recv}.update(t))",
-    "OrderBook": "input.book.clone().and_then(|b| self.{recv}.update(b))",
+    "f64": "self.inner.update(input.price)",
+    "Candle": "input.candle.and_then(|c| self.inner.update(c))",
+    "Trade": "input.trade.and_then(|t| self.inner.update(t))",
+    "OrderBook": "input.book.clone().and_then(|b| self.inner.update(b))",
+    "(f64,f64)": (
+        "input"
+        + chr(10)
+        + "            .reference(&self.reference)"
+        + chr(10)
+        + "            .and_then(|other| self.inner.update((input.price, other)))"
+    ),
 }
 
 
@@ -157,6 +173,8 @@ HEAD = '''//! Indicator registry: constructs `wickra-core` indicators by name an
 //!
 //! Multi-output indicators expose their fields by name.
 
+use std::collections::BTreeMap;
+
 use wickra_core::{self as wc, Candle, Indicator};
 
 use crate::error::{Error, Result};
@@ -182,6 +200,12 @@ pub struct TickInput {
     pub trade: Option<wc::Trade>,
     /// The order book as of this tick, if it has both a bid and an ask side.
     pub book: Option<wc::OrderBook>,
+    /// The last price of every other market this terminal tracks, by symbol.
+    ///
+    /// Populated only when some indicator in the set reads another market, so a
+    /// configuration with no pairwise indicator — the usual one — never builds
+    /// it. Keyed by the symbol as it is written in a config, `BTC/USDT`.
+    pub references: BTreeMap<String, f64>,
 }
 
 impl TickInput {
@@ -198,6 +222,7 @@ impl TickInput {
             candle: None,
             trade: None,
             book: None,
+            references: BTreeMap::new(),
         }
     }
 
@@ -221,6 +246,23 @@ impl TickInput {
         self.book = Some(book);
         self
     }
+
+    /// This tick, with `symbol` last trading at `price`.
+    #[must_use]
+    pub fn with_reference(mut self, symbol: impl Into<String>, price: f64) -> Self {
+        self.references.insert(symbol.into(), price);
+        self
+    }
+
+    /// The last price of another market, or `None` if it has not printed yet.
+    ///
+    /// A reference that is absent rather than stale is the point: a pairwise
+    /// indicator fed a placeholder would produce a number that looks like a
+    /// reading, so it is given nothing and does not advance.
+    #[must_use]
+    pub fn reference(&self, symbol: &str) -> Option<f64> {
+        self.references.get(symbol).copied()
+    }
 }
 
 /// A uniform, object-safe indicator the terminal drives one tick at a time.
@@ -232,6 +274,14 @@ pub trait TickIndicator: Send {
     fn fields(&self) -> Vec<(&'static str, f64)>;
     /// Number of inputs required before the first value.
     fn warmup(&self) -> usize;
+    /// Whether this indicator reads another market's price.
+    ///
+    /// Asked for the same reason as [`TickIndicator::wants_book`]: collecting
+    /// every tracked market's last price is work no ordinary configuration
+    /// needs.
+    fn wants_reference(&self) -> bool {
+        false
+    }
     /// Whether this indicator reads the order book.
     ///
     /// The terminal asks the set before converting its book into the core's
@@ -261,6 +311,11 @@ WRAPPER_DOC = {
         "Wraps a book (`Input = OrderBook`) single-output indicator. Ticks whose",
         "book is one-sided yield `None` without advancing it.",
     ),
+    "(f64,f64)": (
+        "Wraps a pairwise (`Input = (f64, f64)`) single-output indicator: this",
+        "market's price against a reference market's. Ticks on which the reference",
+        "has not printed yet yield `None` without advancing it.",
+    ),
 }
 
 # Prose for the struct-output wrappers, mirroring WRAPPER_DOC.
@@ -272,6 +327,9 @@ FIELD_WRAPPER_DOC = {
     "Candle": ("Wraps a bar indicator whose output is a struct of `f64` fields.",),
     "Trade": ("Wraps a tape indicator whose output is a struct of `f64` fields.",),
     "OrderBook": ("Wraps a book indicator whose output is a struct of `f64` fields.",),
+    "(f64,f64)": (
+        "Wraps a pairwise indicator whose output is a struct of `f64` fields.",
+    ),
 }
 
 
@@ -294,28 +352,51 @@ def wants_book(family: str) -> str:
     )
 
 
+def extra_decls(family: str) -> str:
+    """Struct fields this family's wrapper carries beyond `inner`."""
+    return "".join(
+        chr(10) + f"    {name}: {ty}," for name, ty in EXTRA_FIELDS.get(family, ())
+    )
+
+
+def wants_reference(family: str) -> str:
+    """The `wants_reference` override, for the family that reads another market."""
+    if family != "(f64,f64)":
+        return ""
+    return (
+        chr(10)
+        + "    fn wants_reference(&self) -> bool {"
+        + chr(10)
+        + "        true"
+        + chr(10)
+        + "    }"
+    )
+
+
 def emit_scalar_wrappers() -> str:
-    """One tuple wrapper per input family, for `Output = f64` indicators."""
+    """One wrapper per input family, for `Output = f64` indicators."""
     out = []
     for family, (wrapper, _) in WRAPPERS.items():
         out.append(
             f"""
 /// {doc(WRAPPER_DOC[family])}
-struct {wrapper}<I>(I);
+struct {wrapper}<I> {{
+    inner: I,{extra_decls(family)}
+}}
 
 impl<I> TickIndicator for {wrapper}<I>
 where
     I: Indicator<Input = {INPUT_TY[family]}, Output = f64> + Send,
 {{
     fn update(&mut self, input: &TickInput) -> Option<f64> {{
-        {UPDATE_EXPR[family].format(recv="0")}
+        {UPDATE_EXPR[family]}
     }}
     fn fields(&self) -> Vec<(&'static str, f64)> {{
         Vec::new()
     }}
     fn warmup(&self) -> usize {{
-        self.0.warmup_period()
-    }}{wants_book(family)}
+        self.inner.warmup_period()
+    }}{wants_book(family)}{wants_reference(family)}
 }}
 """
         )
@@ -337,7 +418,7 @@ def emit_field_structs(families: set[str]) -> str:
 /// {doc(FIELD_WRAPPER_DOC[family])}
 struct {wrapper}<I, O> {{
     inner: I,
-    last: Option<O>,
+    last: Option<O>,{extra_decls(family)}
 }}
 """
         )
@@ -365,7 +446,7 @@ where
     I: Indicator<Input = {INPUT_TY[family]}, Output = wc::{struct}> + Send,
 {{
     fn update(&mut self, input: &TickInput) -> Option<f64> {{
-        let out = {UPDATE_EXPR[family].format(recv="inner")};
+        let out = {UPDATE_EXPR[family]};
         self.last = out;
         self.last.as_ref().map(|last| last.{primary})
     }}
@@ -377,7 +458,7 @@ where
     }}
     fn warmup(&self) -> usize {{
         self.inner.warmup_period()
-    }}{wants_book(family)}
+    }}{wants_book(family)}{wants_reference(family)}
 }}
 """
         )
@@ -501,15 +582,23 @@ def main() -> None:
         scalar_wrapper, field_wrapper = WRAPPERS[inp]
         ctor = f"wc::{ty}::new({readers(argtypes)})" if argtypes else f"wc::{ty}::new()"
         made = f"map_new(kind, {ctor})?" if returns_result else ctor
+        extra = "".join(
+            f", {name}: pair_reference(kind, reference)?.to_string()"
+            if name == "reference"
+            else ""
+            for name, _ in EXTRA_FIELDS.get(inp, ())
+        )
         if fields:
-            body = f"Ok(Box::new({field_wrapper} {{ inner: {made}, last: None }}))"
+            body = f"Ok(Box::new({field_wrapper} {{ inner: {made}, last: None{extra} }}))"
         else:
-            body = f"Ok(Box::new({scalar_wrapper}({made})))"
+            body = f"Ok(Box::new({scalar_wrapper} {{ inner: {made}{extra} }}))"
         arms.append(f'        "{ty}" => {body},')
 
     for alias, canonical in sorted(ALIASES.items()):
         if any(e[0] == canonical for e in entries):
-            arms.append(f'        "{alias}" => build("{canonical}", params),')
+            arms.append(
+                f'        "{alias}" => build_inner("{canonical}", params, reference),'
+            )
 
     names = sorted([e[0] for e in entries] + [a for a in ALIASES if any(e[0] == ALIASES[a] for e in entries)])
 
@@ -532,6 +621,8 @@ def main() -> None:
         vals = ", ".join(f"{v:?}".replace("?", "") if False else repr(float(v)) for v in defaults[name])
         default_rows.append(f'    ("{name}", &[{vals}]),')
 
+    pairwise = sorted(e[0] for e in entries if e[1] == "(f64,f64)")
+
     build_fn = f"""
 /// Every registered indicator name, sorted.
 pub const KINDS: [&str; {len(names)}] = [
@@ -546,13 +637,58 @@ pub const DEFAULTS: [(&str, &[f64]); {len(default_rows)}] = [
 {chr(10).join(default_rows)}
 ];
 
+/// Every registered indicator that reads a second market, sorted.
+///
+/// These are the kinds [`build`] refuses: they need a reference symbol, which is
+/// a property of the spec rather than of the parameters. Exposed so a caller can
+/// tell a user which indicators need one before they try.
+pub const PAIRWISE: [&str; {len(pairwise)}] = [
+{chr(10).join(f'    "{n}",' for n in pairwise)}
+];
+
+/// The reference symbol a pairwise indicator was configured with.
+fn pair_reference<'a>(kind: &str, reference: Option<&'a str>) -> Result<&'a str> {{
+    reference.ok_or_else(|| {{
+        Error::Config(format!(
+            "{{kind}} compares two markets, so it needs a reference symbol"
+        ))
+    }})
+}}
+
 /// Construct an indicator by name with positional parameters.
+///
+/// A pairwise indicator is rejected here rather than given a default reference:
+/// which market it compares against changes what it measures, so guessing one
+/// would produce a plausible number about the wrong thing. Use [`build_paired`].
 ///
 /// # Errors
 ///
 /// Returns [`Error::Config`] if the name is unknown, a parameter is missing or
-/// out of range, or wickra-core rejects the parameters.
+/// out of range, wickra-core rejects the parameters, or the kind is one of
+/// [`PAIRWISE`].
 pub fn build(kind: &str, params: &[f64]) -> Result<Box<dyn TickIndicator>> {{
+    build_inner(kind, params, None)
+}}
+
+/// Construct an indicator that compares this market against `reference`.
+///
+/// # Errors
+///
+/// As [`build`]. A kind that is not pairwise ignores the reference rather than
+/// failing, so a caller may pass one uniformly.
+pub fn build_paired(
+    kind: &str,
+    params: &[f64],
+    reference: &str,
+) -> Result<Box<dyn TickIndicator>> {{
+    build_inner(kind, params, Some(reference))
+}}
+
+fn build_inner(
+    kind: &str,
+    params: &[f64],
+    reference: Option<&str>,
+) -> Result<Box<dyn TickIndicator>> {{
     match kind {{
 {chr(10).join(arms)}
         _ => Err(Error::Config(format!("unknown indicator: {{kind}}"))),

@@ -109,7 +109,7 @@ func TestCorpusCoversMoreThanOneScenario(t *testing.T) {
 	// A manifest that silently shrank to one entry would leave every parity test
 	// passing while checking a fraction of what it used to.
 	_, scenarios := manifest(t)
-	if len(scenarios) < 6 {
+	if len(scenarios) < 7 {
 		t.Fatalf("only %d scenarios in the manifest", len(scenarios))
 	}
 	names := map[string]bool{}

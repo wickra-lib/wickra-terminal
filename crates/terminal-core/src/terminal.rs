@@ -113,6 +113,13 @@ pub struct CatalogueEntry {
     pub kind: String,
     /// The parameters wickra uses for it.
     pub params: Vec<f64>,
+    /// Whether this indicator compares two markets, so a spec must name a
+    /// `reference` symbol for it. False for all but the pairwise family.
+    ///
+    /// Reported rather than left for a caller to discover by being refused: the
+    /// catalogue is how a binding tells a user what it can build, and "this one
+    /// needs a second market" is part of that.
+    pub needs_reference: bool,
 }
 
 impl Catalogue {
@@ -125,6 +132,7 @@ impl Catalogue {
                 .map(|(kind, params)| CatalogueEntry {
                     kind: (*kind).to_string(),
                     params: params.to_vec(),
+                    needs_reference: registry::PAIRWISE.contains(kind),
                 })
                 .collect(),
         }

@@ -118,6 +118,14 @@ pub struct IndicatorSpec {
     /// Positional constructor parameters.
     #[serde(default)]
     pub params: Vec<f64>,
+    /// The market this indicator compares against, for the pairwise family.
+    ///
+    /// Written as a symbol, `ETH/USDT`. Required by the kinds in
+    /// `registry::PAIRWISE` and ignored by every other, so a spec that carries
+    /// one where it means nothing is accepted rather than rejected: it is a
+    /// harmless leftover, not a mistake worth failing a config over.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
 }
 
 impl IndicatorSpec {
@@ -127,30 +135,50 @@ impl IndicatorSpec {
         Self {
             kind: kind.into(),
             params,
+            reference: None,
         }
     }
 
-    /// The label a renderer shows: `Sma(20)`, or just `Sma` with no parameters.
+    /// A spec for a pairwise `kind`, comparing this market against `reference`.
+    #[must_use]
+    pub fn paired(kind: impl Into<String>, params: Vec<f64>, reference: impl Into<String>) -> Self {
+        Self {
+            kind: kind.into(),
+            params,
+            reference: Some(reference.into()),
+        }
+    }
+
+    /// The label a renderer shows: `Sma(20)`, or just `Sma` with no parameters,
+    /// or `Beta(20) vs ETH/USDT` for a pairwise one.
     ///
     /// A whole-number parameter prints without a trailing `.0`, so a period reads
     /// as the count it is rather than as a float that happens to be round.
     #[must_use]
     pub fn label(&self) -> String {
-        if self.params.is_empty() {
-            return self.kind.clone();
+        let base = if self.params.is_empty() {
+            self.kind.clone()
+        } else {
+            let params: Vec<String> = self
+                .params
+                .iter()
+                .map(|p| {
+                    if p.fract() == 0.0 {
+                        format!("{p:.0}")
+                    } else {
+                        p.to_string()
+                    }
+                })
+                .collect();
+            format!("{}({})", self.kind, params.join(","))
+        };
+        // The reference belongs in the label: `Beta(20)` against BTC and the same
+        // against ETH are different readings, and the label is what identifies a
+        // row to the chart panel and to RemoveIndicator.
+        match &self.reference {
+            Some(reference) => format!("{base} vs {reference}"),
+            None => base,
         }
-        let params: Vec<String> = self
-            .params
-            .iter()
-            .map(|p| {
-                if p.fract() == 0.0 {
-                    format!("{p:.0}")
-                } else {
-                    p.to_string()
-                }
-            })
-            .collect();
-        format!("{}({})", self.kind, params.join(","))
     }
 }
 

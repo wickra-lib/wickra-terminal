@@ -138,6 +138,34 @@ fn indicator_feed() -> Vec<Event> {
         .collect()
 }
 
+/// Two markets moving together, for the pairwise family.
+///
+/// The reference prints before this market on every step, which is the order
+/// that gives a defined answer: `fold` reads the reference markets as they stand
+/// before folding the current event, so a reference that printed after would be
+/// one step stale.
+///
+/// The paths are sine waves rather than ramps. A straight line has constant
+/// first differences, which drives the variance of the differences to zero and
+/// makes correlation undefined -- reported as `0.0`, which looks exactly like a
+/// dead wiring. Both move on the same wave, so the correlation is a clean +1 and
+/// a regression in the pairing shows up as a number that is not 1.
+fn pairwise_feed() -> Vec<Event> {
+    let mut feed = Vec::new();
+    for step in 0..40_i64 {
+        let wave = if step < 20 { step } else { 40 - step };
+        feed.push(Event::Trade(TradePrint {
+            symbol: Symbol::new("ETH", "USDT"),
+            price: Decimal::new(1_500 + wave * 7, 0),
+            quantity: Decimal::new(10, 2),
+            aggressor: OrderSide::Buy,
+            timestamp: step * 2 + 1,
+        }));
+        feed.push(trade(20_000 + wave * 3, 10, true, step * 2 + 2));
+    }
+    feed
+}
+
 /// One scenario: a config, the commands to drive it, and the name its fixtures
 /// carry.
 struct Scenario {
@@ -179,6 +207,15 @@ fn scenarios() -> Vec<Scenario> {
     ];
     with_indicators.timeframe = Timeframe::parse("1s").unwrap();
 
+    let pairwise = pairwise_feed();
+    let mut with_pair = replay_config(&pairwise);
+    with_pair.indicators = vec![IndicatorSpec::paired(
+        "RollingCorrelation",
+        vec![20.0],
+        "ETH/USDT",
+    )];
+    with_pair.timeframe = Timeframe::parse("1s").unwrap();
+
     let mut multi = Config::default_layout();
     multi.sources = vec![
         SourceSpec::Replay {
@@ -215,6 +252,25 @@ fn scenarios() -> Vec<Scenario> {
             commands: [vec![subscribe(0)], tick(indicators.len())].concat(),
             replay_path: Some("replay/indicators.json"),
             feed: Some(indicators),
+        },
+        Scenario {
+            // A pairwise indicator across two markets: the reference has to reach
+            // it through the tick, and the label has to carry which market it is
+            // against, because the same indicator against another one is a
+            // different reading.
+            name: "pairwise",
+            config: with_pair,
+            commands: [
+                vec![
+                    subscribe(0),
+                    r#"{"type":"Subscribe","source":0,"symbol":"ETH/USDT"}"#.to_string(),
+                    format!(r#"{{"type":"SetFocus","source":0,"symbol":"{SYMBOL}"}}"#),
+                ],
+                tick(pairwise.len()),
+            ]
+            .concat(),
+            replay_path: Some("replay/pairwise.json"),
+            feed: Some(pairwise),
         },
         Scenario {
             // Drive to the end, rewind, and drive forward again: the frame after

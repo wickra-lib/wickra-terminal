@@ -63,6 +63,6 @@ def test_the_corpus_covers_more_than_one_scenario():
     # A manifest that silently shrank to one entry would leave every parity test
     # passing while checking a fraction of what it used to.
     names = [s["name"] for _, s in _scenarios()]
-    assert len(names) >= 6, names
+    assert len(names) >= 7, names
     for expected in ("basic", "book_deltas", "footprint", "indicators", "seek"):
         assert expected in names
