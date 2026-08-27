@@ -6,7 +6,7 @@ the runnable [examples](../examples/) for full programs per language.
 ## Run the TUI over a live feed
 
 ```bash
-cargo run -p wickra-terminal -- --render tui --source live:binance:BTC/USDT
+cargo run -p wickra-terminal -- --source live:binance:BTC/USDT
 ```
 
 Keys: `s` add a source · `a` subscribe a symbol · `d` unsubscribe · `x` remove a
@@ -15,7 +15,7 @@ source · `←/→` cycle the focused symbol · `q` quit.
 ## Run the TUI over a deterministic synthetic feed (no network)
 
 ```bash
-cargo run -p wickra-terminal -- --render tui --source synth:1
+cargo run -p wickra-terminal -- --source synth:1
 ```
 
 ## Drive the core from a config file

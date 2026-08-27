@@ -3,7 +3,8 @@
 `wickra-terminal` is **one product with a selectable renderer**. A single
 data-driven core (`terminal-core`) folds market events into state and emits
 view-models; two reference front-ends render those view-models — a native TUI
-(ratatui) and a Web app (WASM + Vue) — chosen with `--render tui|web`. The core
+(ratatui) and a Web app (WASM + Vue). They are separate programs over one
+core, not two modes of one binary. The core
 is exposed as a JSON-over-C-ABI data API in ten languages, so a developer in any
 language can build their own front-end on the same core.
 

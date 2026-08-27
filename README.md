@@ -19,7 +19,7 @@
 **One core. Ten languages. Two renderers.** A streaming trading terminal built on
 the [Wickra](https://github.com/wickra-lib/wickra) core — live charts, order-book,
 tape and 514 streaming indicators — with a native **TUI** and a **Web** front-end
-as a *selectable renderer* of the same logic (`--render tui|web`).
+as a *second renderer* of the same logic, driven by the same config.
 
 > **▶ Live demo:** all 514 indicators over real Binance market data, computed live in your browser — **[live.wickra.org](https://live.wickra.org)** · zero backend, powered by `wickra-wasm`.
 
@@ -66,18 +66,18 @@ track progress in [ROADMAP.md](ROADMAP.md).
 
 ```bash
 # Native TUI renderer over a live Binance feed:
-cargo run -p wickra-terminal -- --render tui --source live:binance:BTC/USDT
+cargo run -p wickra-terminal -- --source live:binance:BTC/USDT
 
 # Or a deterministic synthetic feed (no network):
-cargo run -p wickra-terminal -- --render tui --source synth:1
+cargo run -p wickra-terminal -- --source synth:1
 ```
 
 ## Renderers
 
 | Renderer | Where | How |
 |---|---|---|
-| **TUI** | native terminal | `crates/ui-tui` (ratatui), `--render tui` |
-| **Web** | browser | `web/` (Vue) over `bindings/wasm`, `--render web` |
+| **TUI** | native terminal | `crates/ui-tui` (ratatui), `cargo run -p wickra-terminal` |
+| **Web** | browser | `web/` (Vue) over `bindings/wasm`, `cd web && npm run dev` |
 
 Both consume the identical `Frame` of view-models from `terminal-core`.
 
@@ -112,7 +112,7 @@ docs/                  indicators, panels, sources, renderers, streaming, cookbo
 cargo build --workspace
 cargo test  --workspace --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo run -p wickra-terminal -- --render tui --source synth:1
+cargo run -p wickra-terminal -- --source synth:1
 ```
 
 ## Requirements
