@@ -477,11 +477,19 @@ jobs:
         with:
           tool: cargo-llvm-cov
       - name: Generate coverage (lcov)
-        # Measure the core without the `live` feature: LiveSource is the thin
-        # real-socket path, exercised by gated live tests, not the offline suite.
+        # Both product crates, not just the core: ui-tui is a thousand lines of
+        # renderer with its own tests, and measuring only terminal-core reported a
+        # number for a third of the code while the rest went unseen. terminal-bench
+        # stays out — benches are not product code, and neither sibling repo
+        # measures its bench crate.
+        #
+        # `--no-default-features` drops the `live` feature on purpose: LiveSource is
+        # the thin real-socket path, exercised by the gated live tests rather than
+        # the offline suite, so counting it would only report a hole the offline run
+        # can never fill. Revisit when it grows a mock-socket suite.
         run: >
           cargo llvm-cov --no-default-features
-          -p terminal-core
+          -p terminal-core -p wickra-terminal
           --lcov --output-path lcov.info
       - name: Upload to Codecov
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
