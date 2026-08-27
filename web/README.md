@@ -23,6 +23,17 @@ npm install
 npm run dev        # http://localhost:5173
 ```
 
+## Test
+
+```bash
+npm test           # vitest, no browser and no WASM needed
+```
+
+The suite covers the pure mappings: config rects to CSS placement, and Binance
+stream messages to the core's event JSON. Anything that needs the real core is
+tested in the WASM binding's own suite, which drives the module through the same
+JSON boundary every other language uses.
+
 ## Build
 
 ```bash

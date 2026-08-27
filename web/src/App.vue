@@ -6,12 +6,12 @@ import type {
   ChartView,
   FootprintView,
   Frame,
-  PanelKind,
   PanelSpec,
   PanelView,
   TapeView,
   WatchlistView,
 } from './types'
+import { placementsFor, readLayout } from './layout'
 import { drawChart } from './render/chart'
 import { openBinanceFeed } from './binance'
 
@@ -154,36 +154,11 @@ function findPanel<T extends PanelView['panel']>(
 // this renderer, which is the whole point of the panels being data rather than
 // markup -- one config drives both front-ends, and a layout the config can
 // express but a renderer cannot is a layout the terminal does not really have.
+//
+// The mapping itself lives in ./layout so it can be tested without mounting a
+// component.
 const layout = ref<PanelSpec[]>([])
-
-function readLayout(cfg: string): PanelSpec[] {
-  const parsed = JSON.parse(cfg) as { layout?: { panels?: PanelSpec[] } }
-  return parsed.layout?.panels ?? []
-}
-
-/**
- * Absolute placement per panel kind, computed once per layout change.
- *
- * A kind missing from the map is missing from the layout, and is then not
- * rendered at all rather than rendered somewhere arbitrary.
- *
- * Percentages rather than a CSS grid: a grid template can only express a layout
- * that decomposes into rows and columns, and `RectSpec` can express any
- * rectangle. Hard-coding a template made four of the five panels unmovable and
- * the fifth impossible to remove.
- */
-const placements = computed<Partial<Record<PanelKind, Record<string, string>>>>(() => {
-  const out: Partial<Record<PanelKind, Record<string, string>>> = {}
-  for (const spec of layout.value) {
-    out[spec.kind] = {
-      left: `${spec.rect.x}%`,
-      top: `${spec.rect.y}%`,
-      width: `${spec.rect.w}%`,
-      height: `${spec.rect.h}%`,
-    }
-  }
-  return out
-})
+const placements = computed(() => placementsFor(layout.value))
 
 const chart = computed<ChartView | undefined>(() => findPanel('chart'))
 const book = computed<BookView | undefined>(() => findPanel('book'))
