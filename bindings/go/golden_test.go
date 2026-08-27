@@ -1,17 +1,30 @@
 package wickraterminal
 
-// Cross-language golden parity: build the terminal from the committed
-// golden/config.json, replay the feed, and assert the frame equals
-// golden/expected/basic.min.json byte-for-byte. The binding returns the core's
-// compact command_json string verbatim, so byte equality against that one file is
-// the exact cross-language parity check.
-
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// Cross-language golden parity, driven by golden/manifest.json.
+//
+// Each scenario names a config and a command sequence; replaying it must produce
+// the frame in its expected file, byte for byte. Because the binding returns the
+// core's compact command_json string verbatim, byte equality against that one
+// file is the exact parity check.
+//
+// Reading the manifest rather than naming one scenario is what makes the corpus
+// extensible: a scenario added in the Rust suite is picked up here, and in the
+// seven other language suites, with no change to any of them.
+
+type scenario struct {
+	Name     string `json:"name"`
+	Config   string `json:"config"`
+	Expected string `json:"expected"`
+	Commands string `json:"commands"`
+}
 
 func goldenDir(t *testing.T) string {
 	t.Helper()
@@ -20,9 +33,9 @@ func goldenDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	for i := 0; i < 8; i++ {
-		g := filepath.Join(dir, "golden")
-		if _, err := os.Stat(filepath.Join(g, "config.json")); err == nil {
-			return g
+		candidate := filepath.Join(dir, "golden")
+		if _, err := os.Stat(filepath.Join(candidate, "manifest.json")); err == nil {
+			return candidate
 		}
 		dir = filepath.Dir(dir)
 	}
@@ -30,35 +43,82 @@ func goldenDir(t *testing.T) string {
 	return ""
 }
 
+func manifest(t *testing.T) (string, []scenario) {
+	t.Helper()
+	golden := goldenDir(t)
+	raw, err := os.ReadFile(filepath.Join(golden, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		Scenarios []scenario `json:"scenarios"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	return golden, parsed.Scenarios
+}
+
 func TestGoldenParity(t *testing.T) {
-	g := goldenDir(t)
-	config, err := os.ReadFile(filepath.Join(g, "config.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	expectedBytes, err := os.ReadFile(filepath.Join(g, "expected", "basic.min.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	expected := strings.TrimSpace(string(expectedBytes))
+	golden, scenarios := manifest(t)
+	for _, sc := range scenarios {
+		t.Run(sc.Name, func(t *testing.T) {
+			config, err := os.ReadFile(filepath.Join(golden, filepath.FromSlash(sc.Config)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			expected, err := os.ReadFile(filepath.Join(golden, filepath.FromSlash(sc.Expected)))
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	term, err := New(string(config))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer term.Close()
+			raw, err := os.ReadFile(filepath.Join(golden, filepath.FromSlash(sc.Commands)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var commands []string
+			for _, line := range strings.Split(string(raw), "\n") {
+				if trimmed := strings.TrimSpace(line); trimmed != "" {
+					commands = append(commands, trimmed)
+				}
+			}
+			if len(commands) == 0 {
+				t.Fatalf("%s: no commands", sc.Name)
+			}
 
-	if _, err := term.Command(`{"type":"Subscribe","source":0,"symbol":"BTC/USDT"}`); err != nil {
-		t.Fatal(err)
+			term, err := New(string(config))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer term.Close()
+
+			var frame string
+			for _, command := range commands {
+				if frame, err = term.Command(command); err != nil {
+					t.Fatalf("%s: %v", command, err)
+				}
+			}
+			if strings.TrimSpace(frame) != strings.TrimSpace(string(expected)) {
+				t.Fatalf("frame does not match %s", sc.Expected)
+			}
+		})
 	}
-	var frame string
-	for i := 0; i < 32; i++ {
-		frame, err = term.Command(`{"type":"Tick"}`)
-		if err != nil {
-			t.Fatal(err)
+}
+
+func TestCorpusCoversMoreThanOneScenario(t *testing.T) {
+	// A manifest that silently shrank to one entry would leave every parity test
+	// passing while checking a fraction of what it used to.
+	_, scenarios := manifest(t)
+	if len(scenarios) < 6 {
+		t.Fatalf("only %d scenarios in the manifest", len(scenarios))
+	}
+	names := map[string]bool{}
+	for _, sc := range scenarios {
+		names[sc.Name] = true
+	}
+	for _, want := range []string{"basic", "book_deltas", "footprint", "indicators", "seek"} {
+		if !names[want] {
+			t.Fatalf("%s missing from the manifest", want)
 		}
-	}
-	if strings.TrimSpace(frame) != expected {
-		t.Fatalf("frame mismatch\n got: %s\nwant: %s", frame, expected)
 	}
 }

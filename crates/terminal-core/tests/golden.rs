@@ -1,33 +1,57 @@
-//! Golden-fixture parity: a committed recorded feed (`golden/replay/basic.json`)
-//! drives the terminal and must produce the byte-identical frame view-models in
-//! `golden/expected/basic.json`, so the deterministic feed-to-frame pipeline can
-//! never drift silently — and every language binding can be checked against the
-//! same fixture. Regenerate the fixtures with `WICKRA_REGEN=1 cargo test`.
+//! Golden-fixture parity: committed configs and command sequences drive the
+//! terminal and must produce byte-identical frames, so the deterministic
+//! feed-to-frame pipeline can never drift silently — and every language binding
+//! is checked against the same files.
 //!
-//! Three artifacts back the cross-language parity check (`golden/`):
-//! - `replay/basic.json` — the recorded feed (human-readable, pretty).
-//! - `expected/basic.json` — the frame view-models (human-readable, pretty).
-//! - `config.json` — the complete `Terminal::new` config (a `Replay` source with
-//!   the feed embedded + the default layout), so every binding constructs the
-//!   identical terminal from one committed file with no JSON assembly.
-//! - `expected/basic.min.json` — the frame exactly as `command_json` emits it
-//!   (compact `serde_json::to_string`). Because every binding returns that string
-//!   verbatim, a binding is at parity iff its frame equals this file byte-for-byte
-//!   — no per-language JSON deep-equal needed. See `docs/STREAMING.md`.
+//! Regenerate with `WICKRA_REGEN=1 cargo test -p terminal-core --test golden`.
+//!
+//! # The corpus
+//!
+//! `golden/manifest.json` lists every scenario, and that is what makes the corpus
+//! extensible: a binding reads the manifest, replays each scenario's commands
+//! against its config, and compares. Adding a scenario is one entry in
+//! `SCENARIOS` below plus a regeneration — no binding test changes, in any of the
+//! nine languages.
+//!
+//! Per scenario:
+//! - `configs/<name>.json` — the complete `Terminal::new` config, so every binding
+//!   constructs the identical terminal from one committed file with no JSON
+//!   assembly.
+//! - `commands/<name>.txt` — the command sequence, one per line. A file rather
+//!   than an array in the manifest, so every manifest value stays a plain path:
+//!   a command is a JSON string full of quotes, and embedding it would leave the
+//!   manifest full of escapes for the two bindings that carry no JSON dependency
+//!   to unpick by hand.
+//! - `expected/<name>.min.json` — the frame exactly as `command_json` emits it
+//!   (compact `serde_json::to_string`). Every binding returns that string
+//!   verbatim, so a binding is at parity iff its frame matches byte-for-byte,
+//!   with no per-language JSON deep-equal needed.
+//! - `expected/<name>.json` — the same frame pretty-printed, for a human reading
+//!   a diff.
+//!
+//! `config.json`, `replay/basic.json` and `expected/basic*.json` are kept at
+//! their original paths: they are what the first corpus shipped, and moving them
+//! would break every binding at once for no gain.
 
 use std::fs;
 
 use rust_decimal::Decimal;
-use terminal_core::{Config, SourceSpec, Symbol, Terminal};
-use wickra_exchange_core::{BookLevel, Event, OrderBookSnapshot, OrderSide, TradePrint};
+use terminal_core::{Config, IndicatorSpec, SourceSpec, Symbol, Terminal, Timeframe};
+use wickra_exchange_core::{BookDelta, BookLevel, Event, OrderBookSnapshot, OrderSide, TradePrint};
 
 fn golden_dir() -> String {
     format!("{}/../../golden", env!("CARGO_MANIFEST_DIR"))
 }
 
-fn trade(sym: &Symbol, price: i64, qty: i64, buy: bool, ts: i64) -> Event {
+const SYMBOL: &str = "BTC/USDT";
+
+fn sym() -> Symbol {
+    Symbol::new("BTC", "USDT")
+}
+
+fn trade(price: i64, qty: i64, buy: bool, ts: i64) -> Event {
     Event::Trade(TradePrint {
-        symbol: sym.clone(),
+        symbol: sym(),
         price: Decimal::new(price, 0),
         quantity: Decimal::new(qty, 2),
         aggressor: if buy { OrderSide::Buy } else { OrderSide::Sell },
@@ -35,128 +59,378 @@ fn trade(sym: &Symbol, price: i64, qty: i64, buy: bool, ts: i64) -> Event {
     })
 }
 
+fn level(price: i64, qty: i64) -> BookLevel {
+    BookLevel::new(Decimal::new(price, 0), Decimal::new(qty, 1))
+}
+
 /// The canonical recorded feed: a handful of prints plus a book snapshot.
-fn canonical_feed(sym: &Symbol) -> Vec<Event> {
+fn canonical_feed() -> Vec<Event> {
     vec![
-        trade(sym, 20_000, 50, true, 1),
-        trade(sym, 20_001, 30, true, 2),
-        trade(sym, 19_999, 40, false, 3),
+        trade(20_000, 50, true, 1),
+        trade(20_001, 30, true, 2),
+        trade(19_999, 40, false, 3),
         Event::BookSnapshot(OrderBookSnapshot {
-            symbol: sym.clone(),
+            symbol: sym(),
             last_update_id: 10,
-            bids: vec![
-                BookLevel::new(Decimal::new(19_999, 0), Decimal::new(15, 1)),
-                BookLevel::new(Decimal::new(19_998, 0), Decimal::new(25, 1)),
-            ],
-            asks: vec![
-                BookLevel::new(Decimal::new(20_001, 0), Decimal::new(12, 1)),
-                BookLevel::new(Decimal::new(20_002, 0), Decimal::new(30, 1)),
-            ],
+            bids: vec![level(19_999, 15), level(19_998, 25)],
+            asks: vec![level(20_001, 12), level(20_002, 30)],
         }),
-        trade(sym, 20_002, 20, true, 4),
-        trade(sym, 20_000, 10, false, 5),
+        trade(20_002, 20, true, 4),
+        trade(20_000, 10, false, 5),
     ]
 }
 
-#[test]
-fn golden_basic_frame_is_byte_exact() {
-    let dir = golden_dir();
-    let sym = Symbol::new("BTC", "USDT");
-    let feed = canonical_feed(&sym);
+/// A snapshot followed by diffs, including removals — the highest-rate message
+/// on a live feed and the one the basic scenario never exercises.
+fn book_delta_feed() -> Vec<Event> {
+    vec![
+        Event::BookSnapshot(OrderBookSnapshot {
+            symbol: sym(),
+            last_update_id: 1,
+            bids: vec![level(19_999, 10), level(19_998, 20), level(19_997, 30)],
+            asks: vec![level(20_001, 10), level(20_002, 20), level(20_003, 30)],
+        }),
+        // Re-price the top of book and remove a level a side.
+        Event::BookDelta(BookDelta {
+            symbol: sym(),
+            first_update_id: 2,
+            final_update_id: 2,
+            bids: vec![level(19_999, 55), level(19_998, 0)],
+            asks: vec![level(20_001, 45), level(20_002, 0)],
+        }),
+        // Add a new level outside the previous range on each side.
+        Event::BookDelta(BookDelta {
+            symbol: sym(),
+            first_update_id: 3,
+            final_update_id: 3,
+            bids: vec![level(19_996, 5)],
+            asks: vec![level(20_004, 5)],
+        }),
+        trade(20_000, 25, true, 4),
+    ]
+}
 
-    let feed_pretty = format!("{}\n", serde_json::to_string_pretty(&feed).unwrap());
-    let dataset = serde_json::to_string(&feed).unwrap();
+/// Repeated prices on both sides, so the footprint accumulates rather than just
+/// recording one entry per price.
+fn footprint_feed() -> Vec<Event> {
+    vec![
+        trade(20_000, 10, true, 1),
+        trade(20_000, 15, true, 2),
+        trade(20_000, 5, false, 3),
+        trade(20_001, 20, true, 4),
+        trade(20_001, 30, false, 5),
+        trade(19_999, 40, false, 6),
+        trade(19_999, 10, false, 7),
+        trade(20_000, 25, true, 8),
+    ]
+}
 
+/// A price path long enough to warm up a short moving average and an RSI, so the
+/// scenario pins real indicator values rather than a row of nulls.
+fn indicator_feed() -> Vec<Event> {
+    (0..40)
+        .map(|step| {
+            // A rising then falling path: a flat one drives RSI to a degenerate
+            // value and pins nothing useful.
+            let wave = if step < 20 { step } else { 40 - step };
+            trade(20_000 + wave * 3, 10, step % 3 != 0, step + 1)
+        })
+        .collect()
+}
+
+/// One scenario: a config, the commands to drive it, and the name its fixtures
+/// carry.
+struct Scenario {
+    name: &'static str,
+    config: Config,
+    commands: Vec<String>,
+    /// Where the recorded feed lives, when the scenario has one.
+    replay_path: Option<&'static str>,
+    feed: Option<Vec<Event>>,
+}
+
+fn tick(n: usize) -> Vec<String> {
+    (0..n).map(|_| r#"{"type":"Tick"}"#.to_string()).collect()
+}
+
+fn subscribe(source: u32) -> String {
+    format!(r#"{{"type":"Subscribe","source":{source},"symbol":"{SYMBOL}"}}"#)
+}
+
+fn replay_config(feed: &[Event]) -> Config {
     let mut config = Config::default_layout();
     config.sources = vec![SourceSpec::Replay {
-        dataset: dataset.clone(),
+        dataset: serde_json::to_string(feed).unwrap(),
     }];
+    config
+}
+
+fn scenarios() -> Vec<Scenario> {
+    let basic = canonical_feed();
+    let deltas = book_delta_feed();
+    let footprint = footprint_feed();
+    let indicators = indicator_feed();
+
+    let mut with_indicators = replay_config(&indicators);
+    with_indicators.indicators = vec![
+        IndicatorSpec::new("Sma", vec![5.0]),
+        IndicatorSpec::new("Rsi", vec![14.0]),
+        IndicatorSpec::new("MacdIndicator", vec![12.0, 26.0, 9.0]),
+    ];
+    with_indicators.timeframe = Timeframe::parse("1s").unwrap();
+
+    let mut multi = Config::default_layout();
+    multi.sources = vec![
+        SourceSpec::Replay {
+            dataset: serde_json::to_string(&basic).unwrap(),
+        },
+        SourceSpec::Synth { seed: 7 },
+    ];
+
+    vec![
+        Scenario {
+            name: "basic",
+            config: replay_config(&basic),
+            commands: [vec![subscribe(0)], tick(basic.len())].concat(),
+            replay_path: Some("replay/basic.json"),
+            feed: Some(basic),
+        },
+        Scenario {
+            name: "book_deltas",
+            config: replay_config(&deltas),
+            commands: [vec![subscribe(0)], tick(deltas.len())].concat(),
+            replay_path: Some("replay/book_deltas.json"),
+            feed: Some(deltas),
+        },
+        Scenario {
+            name: "footprint",
+            config: replay_config(&footprint),
+            commands: [vec![subscribe(0)], tick(footprint.len())].concat(),
+            replay_path: Some("replay/footprint.json"),
+            feed: Some(footprint),
+        },
+        Scenario {
+            name: "indicators",
+            config: with_indicators,
+            commands: [vec![subscribe(0)], tick(indicators.len())].concat(),
+            replay_path: Some("replay/indicators.json"),
+            feed: Some(indicators),
+        },
+        Scenario {
+            // Drive to the end, rewind, and drive forward again: the frame after
+            // a seek must equal the frame at that point the first time through,
+            // which is the whole promise of the time machine.
+            name: "seek",
+            config: replay_config(&canonical_feed()),
+            commands: [
+                vec![subscribe(0)],
+                tick(6),
+                vec![r#"{"type":"Seek","source":0,"index":2}"#.to_string()],
+                tick(2),
+            ]
+            .concat(),
+            replay_path: None,
+            feed: None,
+        },
+        Scenario {
+            // Two sources at once, with the second subscribed and focused, so the
+            // watchlist carries both and the panels follow the focused one.
+            name: "multi_source",
+            config: multi,
+            commands: [
+                vec![
+                    subscribe(0),
+                    subscribe(1),
+                    format!(r#"{{"type":"SetFocus","source":1,"symbol":"{SYMBOL}"}}"#),
+                ],
+                tick(6),
+            ]
+            .concat(),
+            replay_path: None,
+            feed: None,
+        },
+    ]
+}
+
+/// Drive one scenario and return its compact frame.
+fn run(scenario: &Scenario) -> String {
+    let mut terminal = Terminal::new(&scenario.config)
+        .unwrap_or_else(|err| panic!("{}: config rejected: {err}", scenario.name));
+    let mut frame = String::new();
+    for command in &scenario.commands {
+        frame = terminal
+            .command_json(command)
+            .unwrap_or_else(|err| panic!("{}: {command} rejected: {err}", scenario.name));
+    }
+    frame
+}
+
+/// The config as a binding reads it: sources, layout, indicators and timeframe.
+/// Keybinds are omitted — they carry a non-deterministic map order and never
+/// affect a frame, and `Terminal::new` fills the defaults.
+fn config_json(config: &Config) -> serde_json::Value {
+    serde_json::json!({
+        "sources": config.sources,
+        "layout": { "panels": config.layout.panels },
+        "indicators": config.indicators,
+        "timeframe": config.timeframe,
+    })
+}
+
+fn write_or_compare(path: &str, content: &str, regen: bool) {
+    if regen {
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, content).unwrap();
+        return;
+    }
+    let committed = fs::read_to_string(path)
+        .unwrap_or_else(|_| panic!("missing {path}; regenerate with WICKRA_REGEN=1"));
+    assert_eq!(
+        content.trim_end(),
+        committed.trim_end(),
+        "{path} drifted — regenerate with WICKRA_REGEN=1"
+    );
+}
+
+#[test]
+fn golden_corpus_is_byte_exact() {
+    let dir = golden_dir();
+    let regen = std::env::var("WICKRA_REGEN").is_ok();
+    let scenarios = scenarios();
+
+    let mut manifest = Vec::new();
+    for scenario in &scenarios {
+        let frame_min = run(scenario);
+        // Parsed back into the typed `Frame`, not into a `Value`: a Value is a
+        // map and pretty-printing it sorts the keys, so the human-readable copy
+        // would lose the field order the wire form has.
+        let frame: terminal_core::Frame = serde_json::from_str(&frame_min)
+            .unwrap_or_else(|err| panic!("{}: frame does not round-trip: {err}", scenario.name));
+
+        let config_rel = format!("configs/{}.json", scenario.name);
+        let expected_rel = format!("expected/{}.min.json", scenario.name);
+        let commands_rel = format!("commands/{}.txt", scenario.name);
+
+        write_or_compare(
+            &format!("{dir}/{config_rel}"),
+            &format!(
+                "{}\n",
+                serde_json::to_string_pretty(&config_json(&scenario.config)).unwrap()
+            ),
+            regen,
+        );
+        write_or_compare(&format!("{dir}/{expected_rel}"), &frame_min, regen);
+        write_or_compare(
+            &format!("{dir}/expected/{}.json", scenario.name),
+            &format!("{}\n", serde_json::to_string_pretty(&frame).unwrap()),
+            regen,
+        );
+        if let (Some(rel), Some(feed)) = (scenario.replay_path, scenario.feed.as_ref()) {
+            write_or_compare(
+                &format!("{dir}/{rel}"),
+                &format!("{}\n", serde_json::to_string_pretty(feed).unwrap()),
+                regen,
+            );
+        }
+
+        // The commands live in a file of their own, one per line, rather than as
+        // an array in the manifest. A command is a JSON string full of quotes,
+        // and embedding it would fill the manifest with escapes -- which the two
+        // bindings that deliberately carry no JSON dependency would then have to
+        // unescape by hand. With the sequence in a text file, every value in the
+        // manifest is a plain path and reading it needs no parser at all.
+        write_or_compare(
+            &format!("{dir}/{commands_rel}"),
+            &format!(
+                "{}
+",
+                scenario.commands.join(
+                    "
+"
+                )
+            ),
+            regen,
+        );
+
+        manifest.push(serde_json::json!({
+            "name": scenario.name,
+            "config": config_rel,
+            "expected": expected_rel,
+            "commands": commands_rel,
+        }));
+    }
+
+    write_or_compare(
+        &format!("{dir}/manifest.json"),
+        &format!(
+            "{}\n",
+            serde_json::to_string_pretty(&serde_json::json!({ "scenarios": manifest })).unwrap()
+        ),
+        regen,
+    );
+
+    // `config.json` at the root is what the first corpus shipped and what several
+    // bindings still open by name. It stays a copy of the basic scenario's config
+    // rather than a second source of truth.
+    write_or_compare(
+        &format!("{dir}/config.json"),
+        &format!(
+            "{}\n",
+            serde_json::to_string_pretty(&config_json(&scenarios[0].config)).unwrap()
+        ),
+        regen,
+    );
+}
+
+#[test]
+fn a_drained_replay_holds_its_frame() {
+    // The bindings tick a fixed count past the feed length and rely on the frame
+    // being stable once the replay is drained; without that, every binding's
+    // expected file would depend on exactly how far it over-ticked.
+    let feed = canonical_feed();
+    let config = replay_config(&feed);
     let mut terminal = Terminal::new(&config).unwrap();
-    terminal.subscribe(0, &sym).unwrap();
+    terminal.subscribe(0, &sym()).unwrap();
     for _ in 0..feed.len() {
         terminal.tick();
     }
-    let frame_pretty = format!(
-        "{}\n",
-        serde_json::to_string_pretty(&terminal.frame()).unwrap()
-    );
-    // The compact frame exactly as `command_json` emits it — the byte-for-byte
-    // artifact every binding compares against.
-    let frame_min = serde_json::to_string(&terminal.frame()).unwrap();
-
-    // Over-ticking past the exhausted feed must not change the frame: the
-    // bindings tick a fixed count (> the feed length) and rely on the frame being
-    // stable once the replay is drained.
+    let drained = serde_json::to_string(&terminal.frame()).unwrap();
     for _ in 0..16 {
         terminal.tick();
     }
     assert_eq!(
-        frame_min,
+        drained,
         serde_json::to_string(&terminal.frame()).unwrap(),
-        "frame changed after the replay was exhausted; bindings over-tick and rely on stability"
+        "frame changed after the replay was exhausted"
     );
+}
 
-    // The full binding config: a Replay source with the feed embedded plus the
-    // default layout. Keybinds are omitted (they carry a non-deterministic map
-    // order and never affect the frame); `Terminal::new` fills the defaults.
-    let config_json = serde_json::json!({
-        "sources": config.sources,
-        "layout": { "panels": config.layout.panels },
-    });
-    let config_pretty = format!("{}\n", serde_json::to_string_pretty(&config_json).unwrap());
+#[test]
+fn seeking_back_reproduces_the_earlier_frame() {
+    // What the `seek` scenario pins, asserted directly rather than only through
+    // its fixture: rewinding and re-folding must land on the same state the
+    // forward pass had at that point.
+    let feed = canonical_feed();
+    let config = replay_config(&feed);
 
-    let replay_path = format!("{dir}/replay/basic.json");
-    let expected_path = format!("{dir}/expected/basic.json");
-    let expected_min_path = format!("{dir}/expected/basic.min.json");
-    let config_path = format!("{dir}/config.json");
-
-    if std::env::var("WICKRA_REGEN").is_ok() {
-        fs::create_dir_all(format!("{dir}/replay")).unwrap();
-        fs::create_dir_all(format!("{dir}/expected")).unwrap();
-        fs::write(&replay_path, &feed_pretty).unwrap();
-        fs::write(&expected_path, &frame_pretty).unwrap();
-        fs::write(&expected_min_path, &frame_min).unwrap();
-        fs::write(&config_path, &config_pretty).unwrap();
+    let mut forward = Terminal::new(&config).unwrap();
+    forward.subscribe(0, &sym()).unwrap();
+    for _ in 0..2 {
+        forward.tick();
     }
+    let at_two = serde_json::to_string(&forward.frame()).unwrap();
 
-    let committed_feed = fs::read_to_string(&replay_path)
-        .unwrap_or_else(|_| panic!("missing {replay_path}; regenerate with WICKRA_REGEN=1"));
-    let committed_frame = fs::read_to_string(&expected_path)
-        .unwrap_or_else(|_| panic!("missing {expected_path}; regenerate with WICKRA_REGEN=1"));
-    let committed_frame_min = fs::read_to_string(&expected_min_path)
-        .unwrap_or_else(|_| panic!("missing {expected_min_path}; regenerate with WICKRA_REGEN=1"));
-    let committed_config = fs::read_to_string(&config_path)
-        .unwrap_or_else(|_| panic!("missing {config_path}; regenerate with WICKRA_REGEN=1"));
-
-    assert_eq!(
-        feed_pretty, committed_feed,
-        "recorded feed drifted from golden/replay/basic.json"
-    );
-    assert_eq!(
-        frame_pretty, committed_frame,
-        "frame drifted from golden/expected/basic.json — regenerate with WICKRA_REGEN=1"
-    );
-    assert_eq!(
-        frame_min,
-        committed_frame_min.trim_end(),
-        "compact frame drifted from golden/expected/basic.min.json — regenerate with WICKRA_REGEN=1"
-    );
-    assert_eq!(
-        config_pretty, committed_config,
-        "binding config drifted from golden/config.json — regenerate with WICKRA_REGEN=1"
-    );
-
-    // The committed config must actually reproduce the golden frame, exactly as a
-    // binding will drive it from `golden/config.json`.
-    let mut from_file = Terminal::new(&Config::from_json(committed_config.trim_end()).unwrap())
-        .expect("golden/config.json is a valid terminal config");
-    from_file.subscribe(0, &sym).unwrap();
+    let mut rewound = Terminal::new(&config).unwrap();
+    rewound.subscribe(0, &sym()).unwrap();
     for _ in 0..feed.len() {
-        from_file.tick();
+        rewound.tick();
     }
+    rewound.seek(0, 2).unwrap();
     assert_eq!(
-        frame_min,
-        serde_json::to_string(&from_file.frame()).unwrap(),
-        "golden/config.json does not reproduce the golden frame"
+        at_two,
+        serde_json::to_string(&rewound.frame()).unwrap(),
+        "a seek to index 2 did not reproduce the frame after two ticks"
     );
 }

@@ -30,16 +30,27 @@ stopifnot(inherits(
   "try-error"
 ))
 
-## cross-language golden parity: build the terminal from the committed
-## golden/config.json, replay the feed, and assert the frame equals
-## golden/expected/basic.min.json byte-for-byte. The binding returns the core's
+## Cross-language golden parity, driven by golden/manifest.json.
+##
+## Each scenario names a config and a command sequence; replaying it must produce
+## the frame in its expected file, byte for byte. The binding returns the core's
 ## compact command output verbatim, so byte equality against that one file is the
-## exact cross-language parity check.
+## exact parity check.
+##
+## Reading the manifest rather than naming one scenario is what makes the corpus
+## extensible: a scenario added in the Rust suite is picked up here, and in the
+## seven other language suites, with no change to any of them.
+##
+## The manifest is walked by splitting on the quote character rather than with a
+## JSON parser, because this package deliberately has no dependencies and adding
+## one for a test would be the tail wagging the dog. Splitting on quotes needs no
+## regular expressions and is enough here: every value in the manifest is a
+## plain path, and none of them contains a quote.
 golden_dir <- function() {
   d <- normalizePath(getwd(), mustWork = FALSE)
   for (i in seq_len(8)) {
     g <- file.path(d, "golden")
-    if (file.exists(file.path(g, "config.json"))) {
+    if (file.exists(file.path(g, "manifest.json"))) {
       return(g)
     }
     d <- dirname(d)
@@ -47,24 +58,73 @@ golden_dir <- function() {
   stop("golden/ not found")
 }
 
-g <- golden_dir()
-golden_config <- paste(
-  readLines(file.path(g, "config.json"), warn = FALSE),
-  collapse = "\n"
-)
-golden_expected <- trimws(paste(
-  readLines(file.path(g, "expected", "basic.min.json"), warn = FALSE),
-  collapse = "\n"
-))
-gterm <- wkterm_new(golden_config)
-invisible(wkterm_command(
-  gterm, '{"type":"Subscribe","source":0,"symbol":"BTC/USDT"}'
-))
-golden_frame <- ""
-for (i in seq_len(32)) {
-  golden_frame <- wkterm_command(gterm, '{"type":"Tick"}')
+slurp <- function(path) {
+  paste(readLines(path, warn = FALSE), collapse = "\n")
 }
-stopifnot(identical(trimws(golden_frame), golden_expected))
+
+## Every quoted token in the manifest, in document order. Splitting on the quote
+## character puts the quoted values at the even positions of the result.
+quoted_tokens <- function(text) {
+  parts <- strsplit(text, '"', fixed = TRUE)[[1]]
+  if (length(parts) < 2) {
+    return(character(0))
+  }
+  parts[seq(2, length(parts), by = 2)]
+}
+
+## Read the manifest as a list of scenarios. The token stream is a flat sequence
+## of keys and values; a key switches what the following tokens mean, and a
+## scenario ends when its last key has been read.
+parse_manifest <- function(text) {
+  keys <- c("scenarios", "commands", "config", "expected", "name")
+  tokens <- quoted_tokens(text)
+  scenarios <- list()
+  current <- list()
+  key <- NULL
+  for (token in tokens) {
+    if (token %in% keys) {
+      key <- token
+      next
+    }
+    if (is.null(key)) {
+      next
+    }
+    current[[key]] <- token
+    if (identical(key, "name")) {
+      scenarios[[length(scenarios) + 1L]] <- current
+      current <- list()
+      key <- NULL
+    }
+  }
+  scenarios
+}
+
+g <- golden_dir()
+scenarios <- parse_manifest(slurp(file.path(g, "manifest.json")))
+stopifnot(length(scenarios) >= 6)
+
+scenario_names <- character(0)
+for (scenario in scenarios) {
+  commands <- readLines(file.path(g, scenario$commands), warn = FALSE)
+  commands <- commands[nzchar(commands)]
+  stopifnot(length(commands) > 0)
+  cfg <- slurp(file.path(g, scenario$config))
+  expected <- trimws(slurp(file.path(g, scenario$expected)))
+  gterm <- wkterm_new(cfg)
+  frame <- ""
+  for (command in commands) {
+    frame <- wkterm_command(gterm, command)
+  }
+  stopifnot(identical(trimws(frame), expected))
+  scenario_names <- c(scenario_names, scenario$name)
+  cat("  golden parity:", scenario$name, "ok\n")
+}
+
+## A manifest that silently shrank to one entry would leave every parity check
+## passing while covering a fraction of what it used to.
+for (required in c("basic", "book_deltas", "footprint", "indicators", "seek")) {
+  stopifnot(required %in% scenario_names)
+}
 
 ## The indicator registry is reachable from R.
 ##
@@ -73,10 +133,6 @@ stopifnot(identical(trimws(golden_frame), golden_expected))
 ## worth checking: "no code changed" is also what a broken pass-through looks
 ## like. A non-default indicator is used, so finding it proves the config
 ## reached the registry rather than the built-in overlay looking right by chance.
-##
-## The frame is inspected with fixed substring matches rather than a JSON
-## parser, because the package deliberately has no dependencies and adding one
-## for a test would be the tail wagging the dog.
 registry_config <- paste0(
   '{"sources":[{"Synth":{"seed":1}}],',
   '"indicators":[{"kind":"Rsi","params":[14]}]}'
