@@ -259,9 +259,24 @@ jobs:
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: wasm-pack
-      - name: Build the wasm binding
+      # Two targets, two consumers: `web` is what the Vue renderer imports and
+      # what web-deploy.yml ships; `nodejs` is the only form `require()` can
+      # load, so the test suite needs it. Building both also proves a change
+      # has not broken either output shape.
+      - name: Build the wasm binding (web target)
         run: wasm-pack build --target web
         working-directory: bindings/wasm
+      - name: Build the wasm binding (nodejs target, for the test suite)
+        run: wasm-pack build --target nodejs --release --out-dir pkg-node
+        working-directory: bindings/wasm
+      - name: Verify generated artefacts
+        run: |
+          test -f bindings/wasm/pkg/wickra_terminal_wasm.js
+          test -f bindings/wasm/pkg/wickra_terminal_wasm_bg.wasm
+          test -f bindings/wasm/pkg/wickra_terminal_wasm.d.ts
+          test -f bindings/wasm/pkg-node/wickra_terminal_wasm.js
+      - name: WASM tests (node)
+        run: node --test bindings/wasm/tests/*.test.cjs
 
   web:
     name: Web renderer
@@ -284,7 +299,7 @@ jobs:
           tool: wasm-pack
       # The web app depends on the wasm binding's pkg/ via a file: dependency, so
       # build it before installing web dependencies.
-      - name: Build the wasm binding
+      - name: Build the wasm binding (web target)
         run: wasm-pack build --target web
         working-directory: bindings/wasm
       - name: Set up Node
