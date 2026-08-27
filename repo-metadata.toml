@@ -5,7 +5,7 @@
 org          = "wickra-lib"
 name         = "wickra-terminal"
 url          = "https://github.com/wickra-lib/wickra-terminal"
-homepage     = "https://wickra.org"
+homepage     = "https://terminal.wickra.org"
 issues_url   = "https://github.com/wickra-lib/wickra-terminal/issues"
 security_url = "https://github.com/wickra-lib/wickra-terminal/security/advisories/new"
 

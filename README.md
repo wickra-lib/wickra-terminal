@@ -11,7 +11,7 @@
 [![OpenSSF Scorecard](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/scorecard.svg)](https://scorecard.dev/viewer/?uri=github.com/wickra-lib/wickra-terminal)
 [![OpenSSF Best Practices](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/best-practices.svg)](https://www.bestpractices.dev/)
 [![Build provenance](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/provenance.svg)](https://github.com/wickra-lib/wickra-terminal/attestations)
-[![Docs](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/docs.svg)](https://wickra.org)
+[![Docs](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/docs.svg)](https://terminal.wickra.org)
 [![Live demo](https://img.shields.io/badge/live%20demo-live.wickra.org-3b82f6)](https://live.wickra.org)
 
 ---
@@ -46,12 +46,16 @@ any language builds their own front-end on the same core.
 
 ## Status
 
-**Pre-release — functionally complete, CI-verified, not yet published.** The core,
-both renderers (TUI + Web), all ten language bindings, the runtime source/symbol
-toggle, the panel set, the byte-exact golden corpus, property + fuzz tests,
-benchmarks and one runnable example per language are in place and green across
-the full CI matrix (10 languages × 3 OS). Not yet released to any registry —
-track progress in [ROADMAP.md](ROADMAP.md).
+**Pre-release — CI-verified, not yet published.** The core, both renderers, all
+ten language bindings, the indicator registry, the runtime source/symbol toggle,
+the panel set, the byte-exact golden corpus, property and fuzz tests, benchmarks
+and one runnable example per language are in place and green across the full CI
+matrix (10 languages x 3 OS).
+
+Not yet on any registry: the terminal depends on `wickra-exchange` as a git
+dependency and `cargo publish` rejects those, so the first release waits on that
+crate. [ROADMAP.md](ROADMAP.md) has what is done, what is open and what is not
+planned.
 
 > **Read-only.** The terminal renders market data. It places no orders, holds no
 > credentials and keeps no position — the live source connects to public
