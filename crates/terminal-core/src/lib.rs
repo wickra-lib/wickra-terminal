@@ -28,6 +28,7 @@
 //! assert_eq!(frame.panels.len(), 5);
 //! ```
 
+pub mod candle;
 pub mod config;
 pub mod error;
 pub mod panels;
@@ -36,6 +37,7 @@ pub mod state;
 pub mod terminal;
 pub mod view;
 
+pub use candle::{CandleBuilder, Timeframe};
 pub use config::{Config, Keybinds, Layout, PanelSpec, RectSpec, SourceSpec};
 pub use error::{Error, Result};
 pub use panels::{build_panel, Panel, PanelKind};
