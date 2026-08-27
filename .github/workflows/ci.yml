@@ -460,6 +460,12 @@ jobs:
         run: cargo build -p wickra-terminal-c
       - name: Test the C# binding
         run: dotnet test bindings/csharp/WickraTerminal.Tests/WickraTerminal.Tests.csproj -c Release
+      # Built here rather than in a separate job because this one already has
+      # dotnet and the native library staged on all three runners. macOS is the
+      # reason it matters: the example's library copy is per-platform, and a
+      # missing entry only shows up as a DllNotFoundException at run time.
+      - name: Build and run the C# example
+        run: dotnet run --project examples/csharp -c Release
 
   java:
     name: Java on ${{ matrix.os }}
@@ -640,3 +646,98 @@ jobs:
           # Keep this file set in step with links.yml.
           args: --config lychee.toml --no-progress --root-dir "${{ github.workspace }}" "*.md" "docs/*.md" "bindings/*/README.md" "bindings/csharp/WickraTerminal/README.md" "examples/README.md" "golden/README.md" "web/README.md"
           fail: true
+
+  # Syntax-only, and deliberately so: it needs no native library, so it stays a
+  # fast guard against the common breakage (a bad edit to an example nobody
+  # runs). It does NOT prove an example works -- the C example is built and run
+  # by the c-abi job, the C# one by the csharp job, and the Rust one is a
+  # workspace member, so `cargo build --workspace` compiles it.
+  examples-smoke:
+    name: Examples (syntax smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15 # a parse check; if it is not done in fifteen minutes it is stuck
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        id: setup_node_examples
+        continue-on-error: true
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Wait before Node retry
+        if: steps.setup_node_examples.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::warning::setup-node failed (likely CDN flake), waiting 30s before retry..."
+          sleep 30
+
+      - name: Set up Node (retry)
+        if: steps.setup_node_examples.outcome == 'failure'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Set up Python
+        id: setup_python_examples
+        continue-on-error: true
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Wait before Python retry
+        if: steps.setup_python_examples.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::warning::setup-python failed (likely CDN flake), waiting 30s before retry..."
+          sleep 30
+
+      - name: Set up Python (retry)
+        if: steps.setup_python_examples.outcome == 'failure'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Node examples, syntax check
+        shell: bash
+        run: |
+          shopt -s nullglob
+          count=0
+          for f in examples/node/*.js; do
+            echo "node --check $f"
+            node --check "$f"
+            count=$((count + 1))
+          done
+          test "$count" -gt 0 || { echo "::error::no Node examples found to check"; exit 1; }
+          echo "checked $count Node .js files"
+
+      - name: Python examples, byte-compile
+        shell: bash
+        run: |
+          shopt -s nullglob
+          count=0
+          for f in examples/python/*.py; do
+            echo "py_compile $f"
+            python -m py_compile "$f"
+            count=$((count + 1))
+          done
+          test "$count" -gt 0 || { echo "::error::no Python examples found to check"; exit 1; }
+          echo "compiled $count Python files"
+
+      - name: Go examples, parse check
+        shell: bash
+        # gofmt parses without building, so this needs neither cgo nor the native
+        # library the Go example links against at run time.
+        run: |
+          shopt -s nullglob
+          count=0
+          for f in examples/go/*.go; do
+            echo "gofmt -e $f"
+            gofmt -e "$f" > /dev/null
+            count=$((count + 1))
+          done
+          test "$count" -gt 0 || { echo "::error::no Go examples found to check"; exit 1; }
+          echo "checked $count Go files"
