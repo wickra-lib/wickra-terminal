@@ -31,5 +31,5 @@ plain, language-neutral JSON document.
 
 The core stays the single source of truth; the renderers only render.
 
-See also: [SOURCES.md](SOURCES.md) · [RENDERERS.md](RENDERERS.md) ·
+See also: [INDICATORS.md](INDICATORS.md) · [SOURCES.md](SOURCES.md) · [RENDERERS.md](RENDERERS.md) ·
 [../ARCHITECTURE.md](../ARCHITECTURE.md).

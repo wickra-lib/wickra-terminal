@@ -114,5 +114,5 @@ Public market data only — no API keys. See
 ( cd web && npm install && npm run dev )   # http://localhost:5173
 ```
 
-See also: [PANELS.md](PANELS.md) · [SOURCES.md](SOURCES.md) ·
+See also: [INDICATORS.md](INDICATORS.md) · [PANELS.md](PANELS.md) · [SOURCES.md](SOURCES.md) ·
 [STREAMING.md](STREAMING.md).

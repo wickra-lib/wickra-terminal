@@ -75,4 +75,4 @@ synthetic source (which keep no recorded history) is an error. Because it is jus
 another command on the [data-driven boundary](RENDERERS.md), every binding and
 both renderers get the time-machine for free.
 
-See also: [PANELS.md](PANELS.md) · [STREAMING.md](STREAMING.md).
+See also: [INDICATORS.md](INDICATORS.md) · [PANELS.md](PANELS.md) · [STREAMING.md](STREAMING.md).

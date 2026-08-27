@@ -59,7 +59,7 @@ track progress in [ROADMAP.md](ROADMAP.md).
 ## Documentation
 
 - [Architecture](ARCHITECTURE.md) — the core, the renderer split, the data-driven boundary.
-- [docs/PANELS.md](docs/PANELS.md) · [docs/SOURCES.md](docs/SOURCES.md) · [docs/RENDERERS.md](docs/RENDERERS.md) · [docs/STREAMING.md](docs/STREAMING.md) · [docs/Cookbook.md](docs/Cookbook.md).
+- [docs/INDICATORS.md](docs/INDICATORS.md) · [docs/PANELS.md](docs/PANELS.md) · [docs/SOURCES.md](docs/SOURCES.md) · [docs/RENDERERS.md](docs/RENDERERS.md) · [docs/STREAMING.md](docs/STREAMING.md) · [docs/Cookbook.md](docs/Cookbook.md).
 - [ROADMAP.md](ROADMAP.md) · [BENCHMARKS.md](BENCHMARKS.md) · [SECURITY.md](SECURITY.md).
 
 ## Quickstart
@@ -103,7 +103,7 @@ web/                   the Vue/Vite Web renderer over the WASM binding
 golden/                recorded feeds + byte-exact expected frames (cross-language parity)
 fuzz/                  cargo-fuzz targets (feed_event, state_fold, view_model, config_parse)
 examples/              one runnable example per language
-docs/                  architecture, panels, sources, renderers, streaming, cookbook
+docs/                  indicators, panels, sources, renderers, streaming, cookbook
 ```
 
 ## Building from source
