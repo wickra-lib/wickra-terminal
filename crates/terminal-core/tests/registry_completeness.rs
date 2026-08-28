@@ -3,12 +3,14 @@
 //! `registry.rs` is generated, which moves the risk: a hand-written dispatch
 //! fails to compile when it is wrong, but a generated one compiles happily with
 //! an arm that constructs the wrong thing, or one that no input can ever satisfy.
-//! Nothing else in the suite touches more than a couple of the 460 arms, so this
-//! drives all of them.
+//! Nothing else in the suite touches more than a couple of the registry's arms,
+//! so this drives all of them.
 //!
 //! Parameters come from `DEFAULTS`, which the generator joins in from wickra's
 //! own golden manifest — the values the library pins its reference outputs with,
 //! rather than a guessed count that would make half the failures spurious.
+
+use std::collections::BTreeSet;
 
 use terminal_core::registry::{build, build_paired, DEFAULTS, KINDS, PAIRWISE};
 use terminal_core::{CandleBuilder, TickInput, Timeframe};
@@ -279,28 +281,272 @@ fn no_indicator_ever_reports_a_non_finite_value() {
     );
 }
 
-#[test]
-fn multi_output_indicators_expose_their_fields() {
-    // MACD is the canonical multi-output shape: a line, a signal and a histogram.
-    let (values, fields) = drive("MacdIndicator", &[12.0, 26.0, 9.0], 400);
-    assert!(values > 0, "MACD produced no value");
-    assert!(fields > 0, "MACD exposed no named fields");
+/// Every registered indicator whose output is a struct, with the field names that
+/// struct declares in wickra-core.
+///
+/// Read from the library sources, not from the registry this checks, which is the
+/// whole point: the registry is generated, so asking it what fields it has and
+/// then asserting it has them proves nothing. `VolumeProfile` and `TpoProfile`
+/// shipped for four phases reporting `price_low` -- a price -- under a profile's
+/// name, because the only multi-output assertion in this suite drove MACD and
+/// asked whether the field list was non-empty.
+const STRUCT_OUTPUT_FIELDS: [(&str, &[&str]); 88] = [
+    ("AccelerationBands", &["upper", "middle", "lower"]),
+    ("Adx", &["plus_di", "minus_di", "adx"]),
+    ("Alligator", &["jaw", "teeth", "lips"]),
+    ("AndrewsPitchfork", &["median", "upper", "lower"]),
+    ("Aroon", &["up", "down"]),
+    ("AtrBands", &["upper", "middle", "lower"]),
+    ("AtrRatchet", &["value", "direction"]),
+    (
+        "AutoFib",
+        &[
+            "level_0",
+            "level_236",
+            "level_382",
+            "level_500",
+            "level_618",
+            "level_786",
+            "level_1000",
+        ],
+    ),
+    ("BollingerBands", &["upper", "middle", "lower", "stddev"]),
+    ("BomarBands", &["upper", "middle", "lower"]),
+    (
+        "Camarilla",
+        &["pp", "r1", "r2", "r3", "r4", "s1", "s2", "s3", "s4"],
+    ),
+    ("CandleVolume", &["body", "width"]),
+    ("CentralPivotRange", &["pivot", "tc", "bc"]),
+    ("ChandeKrollStop", &["stop_long", "stop_short"]),
+    ("ChandelierExit", &["long_stop", "short_stop"]),
+    ("ClassicPivots", &["pp", "r1", "r2", "r3", "s1", "s2", "s3"]),
+    ("Cointegration", &["hedge_ratio", "spread", "adf_stat"]),
+    ("CompositeProfile", &["poc", "vah", "val"]),
+    ("DemarkPivots", &["pp", "r1", "s1"]),
+    ("Donchian", &["upper", "middle", "lower"]),
+    ("DonchianStop", &["stop_long", "stop_short"]),
+    (
+        "DoubleBollinger",
+        &[
+            "upper_outer",
+            "upper_inner",
+            "middle",
+            "lower_inner",
+            "lower_outer",
+        ],
+    ),
+    ("ElderRay", &["bull_power", "bear_power"]),
+    ("ElderSafeZone", &["value", "direction"]),
+    ("Equivolume", &["height", "width"]),
+    ("FibArcs", &["arc_382", "arc_500", "arc_618"]),
+    (
+        "FibChannel",
+        &["base", "level_618", "level_1000", "level_1618"],
+    ),
+    ("FibConfluence", &["price", "strength"]),
+    (
+        "FibExtension",
+        &[
+            "level_1272",
+            "level_1414",
+            "level_1618",
+            "level_2000",
+            "level_2618",
+        ],
+    ),
+    ("FibFan", &["fan_382", "fan_500", "fan_618"]),
+    (
+        "FibProjection",
+        &["level_618", "level_1000", "level_1618", "level_2618"],
+    ),
+    (
+        "FibRetracement",
+        &[
+            "level_0",
+            "level_236",
+            "level_382",
+            "level_500",
+            "level_618",
+            "level_786",
+            "level_1000",
+        ],
+    ),
+    ("FibTimeZones", &["on_zone", "bars_to_next"]),
+    (
+        "FibonacciPivots",
+        &["pp", "r1", "r2", "r3", "s1", "s2", "s3"],
+    ),
+    ("FractalChaosBands", &["upper", "lower"]),
+    ("GatorOscillator", &["upper", "lower"]),
+    ("GoldenPocket", &["low", "mid", "high"]),
+    ("HeikinAshi", &["open", "high", "low", "close"]),
+    ("HighLowVolumeNodes", &["hvn", "lvn"]),
+    ("HtPhasor", &["inphase", "quadrature"]),
+    ("HurstChannel", &["upper", "middle", "lower"]),
+    ("InitialBalance", &["high", "low"]),
+    ("KalmanHedgeRatio", &["hedge_ratio", "intercept", "spread"]),
+    ("KaseDevStop", &["value", "direction"]),
+    ("KasePermissionStochastic", &["fast", "slow"]),
+    ("Keltner", &["upper", "middle", "lower"]),
+    ("Kst", &["kst", "signal"]),
+    ("LeadLagCrossCorrelation", &["lag", "correlation"]),
+    ("LinRegChannel", &["upper", "middle", "lower"]),
+    ("MaEnvelope", &["upper", "middle", "lower"]),
+    ("MacdFix", &["macd", "signal", "histogram"]),
+    ("MacdIndicator", &["macd", "signal", "histogram"]),
+    ("Mama", &["mama", "fama"]),
+    ("MedianChannel", &["upper", "middle", "lower"]),
+    ("ModifiedMaStop", &["value", "direction"]),
+    (
+        "MurreyMathLines",
+        &[
+            "mm8_8", "mm7_8", "mm6_8", "mm5_8", "mm4_8", "mm3_8", "mm2_8", "mm1_8", "mm0_8",
+        ],
+    ),
+    ("Nrtr", &["value", "direction"]),
+    ("OpeningRange", &["high", "low", "breakout_distance"]),
+    ("OvernightIntradayReturn", &["overnight", "intraday"]),
+    ("ProjectionBands", &["upper", "middle", "lower"]),
+    ("Qqe", &["rsi_ma", "trailing_line"]),
+    ("QuartileBands", &["upper", "middle", "lower"]),
+    ("RelativeStrengthAB", &["ratio", "ratio_ma", "ratio_rsi"]),
+    ("Rwi", &["high", "low"]),
+    ("SessionHighLow", &["high", "low"]),
+    ("SessionRange", &["asia", "eu", "us"]),
+    ("SmoothedHeikinAshi", &["open", "high", "low", "close"]),
+    (
+        "SpreadBollingerBands",
+        &["middle", "upper", "lower", "percent_b"],
+    ),
+    ("StandardErrorBands", &["upper", "middle", "lower"]),
+    ("StarcBands", &["upper", "middle", "lower"]),
+    ("Stochastic", &["k", "d"]),
+    ("SuperTrend", &["value", "direction"]),
+    ("TdLines", &["resistance", "support"]),
+    ("TdMovingAverage", &["st1", "st2"]),
+    ("TdRangeProjection", &["high", "low"]),
+    ("TdRiskLevel", &["buy_risk", "sell_risk"]),
+    ("TdSequential", &["setup", "countdown", "direction"]),
+    ("TtmSqueeze", &["squeeze", "momentum"]),
+    ("ValueArea", &["poc", "vah", "val"]),
+    (
+        "VolatilityCone",
+        &["current", "min", "median", "max", "percentile"],
+    ),
+    ("VolumeWeightedMacd", &["macd", "signal", "histogram"]),
+    ("VolumeWeightedSr", &["support", "resistance"]),
+    ("Vortex", &["plus", "minus"]),
+    ("VwapStdDevBands", &["upper", "middle", "lower", "stddev"]),
+    ("WaveTrend", &["wt1", "wt2"]),
+    ("WoodiePivots", &["pp", "r1", "r2", "s1", "s2"]),
+    ("ZeroLagMacd", &["macd", "signal", "histogram"]),
+    ("ZigZag", &["swing", "direction"]),
+];
 
-    let mut macd = build("MacdIndicator", &[12.0, 26.0, 9.0]).unwrap();
+/// The last reading and field list an indicator produces over `bars` bars.
+fn last_reading(kind: &str, params: &[f64], bars: i64) -> (Option<f64>, Vec<&'static str>) {
+    let mut indicator = build_any(kind, params);
     let mut builder = CandleBuilder::new(Timeframe::parse(BAR_SPACING).unwrap());
-    for bar in 0..400 {
+    let mut value = None;
+    let mut names = Vec::new();
+
+    for bar in 0..bars {
         for trade in 0..TRADES_PER_BAR {
             let step = bar * TRADES_PER_BAR + trade;
             let price = price_at(step) + intrabar_offset(trade);
             let ts = bar * BAR_MS + trade * (BAR_MS / TRADES_PER_BAR);
-            let closed = builder.update(price, 1.0, ts);
-            let mut tick = TickInput::price(price);
-            tick.candle = closed;
-            macd.update(&tick);
+            let size = VOLUME_SCALE * (1.0 + (step % 7) as f64);
+            let closed = builder.update(price, size, ts);
+            let mut input = TickInput::price(price);
+            input.candle = closed;
+            input.trade = Some(trade_at(price, size, step, ts));
+            input.book = Some(book_at(price, step));
+            input
+                .references
+                .insert(REFERENCE.to_string(), reference_at(step));
+            if let Some(latest) = indicator.update(&input) {
+                value = Some(latest);
+                names = indicator.fields().iter().map(|(name, _)| *name).collect();
+            }
         }
     }
-    let names: Vec<&str> = macd.fields().iter().map(|(n, _)| *n).collect();
-    assert!(!names.is_empty(), "MACD exposed no fields after warmup");
+    (value, names)
+}
+
+#[test]
+fn every_multi_output_indicator_exposes_every_field_its_output_declares() {
+    let mut checked = 0;
+    for (kind, expected) in STRUCT_OUTPUT_FIELDS {
+        let Some((_, params)) = DEFAULTS.iter().find(|(k, _)| *k == kind) else {
+            panic!("{kind} has a struct output but is not registered");
+        };
+        let (value, names) = last_reading(kind, params, 400);
+        assert!(value.is_some(), "{kind} produced no reading in 400 bars");
+        assert_eq!(
+            names, expected,
+            "{kind} exposes a different field set than its Output struct declares"
+        );
+        checked += 1;
+    }
+    assert_eq!(
+        checked,
+        STRUCT_OUTPUT_FIELDS.len(),
+        "not every struct-output indicator was checked"
+    );
+
+    // And the converse, or the table would be a list of what already passes: an
+    // indicator that starts exposing fields without being added here would slip
+    // through the check above by simply not being in it.
+    let listed: BTreeSet<&str> = STRUCT_OUTPUT_FIELDS.iter().map(|(kind, _)| *kind).collect();
+    for (kind, params) in DEFAULTS {
+        let (_, names) = last_reading(kind, params, 400);
+        assert!(
+            names.is_empty() || listed.contains(kind),
+            "{kind} exposes fields but is not in STRUCT_OUTPUT_FIELDS; add it with the           field names its wickra-core Output struct declares"
+        );
+    }
+}
+
+#[test]
+fn a_multi_output_reading_is_its_first_field() {
+    // The documented contract: the value a frame shows for a multi-output
+    // indicator is the first field of its output, and `fields` carries the rest.
+    // Nothing asserted it, so a generator that reordered them would be silent.
+    for (kind, _) in STRUCT_OUTPUT_FIELDS {
+        let Some((_, params)) = DEFAULTS.iter().find(|(k, _)| *k == kind) else {
+            panic!("{kind} is not registered");
+        };
+        let mut indicator = build_any(kind, params);
+        let mut builder = CandleBuilder::new(Timeframe::parse(BAR_SPACING).unwrap());
+        for bar in 0..400 {
+            for trade in 0..TRADES_PER_BAR {
+                let step = bar * TRADES_PER_BAR + trade;
+                let price = price_at(step) + intrabar_offset(trade);
+                let ts = bar * BAR_MS + trade * (BAR_MS / TRADES_PER_BAR);
+                let size = VOLUME_SCALE * (1.0 + (step % 7) as f64);
+                let closed = builder.update(price, size, ts);
+                let mut input = TickInput::price(price);
+                input.candle = closed;
+                input.trade = Some(trade_at(price, size, step, ts));
+                input.book = Some(book_at(price, step));
+                input
+                    .references
+                    .insert(REFERENCE.to_string(), reference_at(step));
+                if let Some(value) = indicator.update(&input) {
+                    let fields = indicator.fields();
+                    // Bit equality, not a tolerance: the reading and the first
+                    // field are the same expression, so anything but the identical
+                    // value means they stopped being the same field.
+                    assert_eq!(
+                        fields[0].1.to_bits(),
+                        value.to_bits(),
+                        "{kind} does not report its first field"
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[test]
@@ -413,7 +659,13 @@ fn a_candle_indicator_reads_the_bar_not_the_price() {
 /// The number is a floor rather than an equality, so adding indicators upstream
 /// does not fail the build; only losing them does. Raise it when a regeneration
 /// legitimately grows the set.
-const REGISTERED_FLOOR: usize = 457;
+///
+/// Lowered from 457 to 455 on purpose: `VolumeProfile` and `TpoProfile` were
+/// registered with only the two prices from an output whose third field is the
+/// variable-length bin list the profile exists for, so each reported `price_low`
+/// under a profile's name. They are now skipped like `Footprint`, whose output is
+/// the same shape. See `docs/INDICATORS.md`.
+const REGISTERED_FLOOR: usize = 455;
 
 #[test]
 fn the_registry_has_not_silently_shrunk() {

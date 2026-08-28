@@ -1,7 +1,7 @@
 # Indicators
 
 The terminal drives the [Wickra](https://github.com/wickra-lib/wickra) indicator
-set directly: **<!--indicator-count-->457<!--/indicator-count--> of them**, constructible by name from a config or at run
+set directly: **<!--indicator-count-->455<!--/indicator-count--> of them**, constructible by name from a config or at run
 time, in every binding.
 
 ## Naming one
@@ -158,7 +158,7 @@ it saw before.
 
 ## What is not registered, and why
 
-47 of the 504 indicators in `wickra-core` are not reachable from the terminal
+49 of the 504 indicators in `wickra-core` are not reachable from the terminal
 yet. They are listed with a reason every time the registry is regenerated, rather
 than quietly dropped:
 
@@ -167,12 +167,20 @@ than quietly dropped:
 | derivatives tick | 17 | no funding/open-interest feed in this repository |
 | cross-section | 15 | no market-wide breadth feed |
 | trade-quote | 3 | no quote feed |
-| output or constructor shape | 9 | profile outputs, `u32` outputs, `Footprint`'s variable-length level list, and one constructor the parameter reader does not handle |
+| return-only input | 3 | the input is a per-period return and the terminal has only a price |
+| output or constructor shape | 11 | profile outputs, `u32` outputs, variable-length level and bin lists, and one constructor the parameter reader does not handle |
 
 `Footprint` is the one that looks like an omission and is not: its output is a
 list of price levels whose length changes bar to bar, which does not fit the
 fixed named-field shape the registry exposes. The terminal renders a footprint
 from its own panel instead, which is what the `footprint` panel is.
+
+`VolumeProfile` and `TpoProfile` are unreachable for exactly that reason and used
+to be registered anyway. Their outputs pair two prices with a variable-length bin
+list, and the generator kept the prices and dropped the list -- so the reading
+under a profile's name was `price_low`, a price, while the bins that ARE the
+profile were not carried at all. A partial answer under a name that promises a
+whole one is worse than an honest absence, so they are skipped like `Footprint`.
 
 ## Regenerating the registry
 

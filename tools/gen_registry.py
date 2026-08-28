@@ -86,7 +86,8 @@ SUPPORTED_INPUTS = set(WRAPPERS)
 # needs a returns input family, which is a feature rather than a fix.
 #
 # Only these three are excluded because only these three are provably broken --
-# the completeness suite drives all 460 and exactly these produce no finite value.
+# driving every indicator the terminal can feed, exactly these produce no finite
+# value.
 # Other return-documented indicators compute their own returns internally and do
 # work on a price.
 RETURN_INPUT_ONLY = {
@@ -159,12 +160,48 @@ def find_new(text: str, ty: str) -> tuple[list[str], bool] | None:
     return None
 
 
-def out_fields(text: str, out: str) -> list[str] | None:
-    """The `pub <name>: f64` field names of an Output struct."""
+# How each Output field type is read as the `f64` the terminal's boundary carries.
+#
+# `i64` is exact here: these are lags and counts, orders of magnitude below the
+# 2^53 at which an integer stops surviving the round trip.
+FIELD_READERS = {
+    "f64": "last.{name}",
+    "i64": "last.{name} as f64",
+}
+
+
+def out_fields(text: str, out: str) -> list[tuple[str, str, bool]] | None:
+    """An Output struct's fields as `(name, expression, needs a finite check)`.
+
+    `None` when the terminal cannot carry the struct -- when ANY field has a type
+    outside `FIELD_READERS`, not merely when no field is an `f64`. The weaker test
+    was the bug: it skipped only structs that were entirely unrepresentable, so a
+    struct mixing carryable and uncarryable fields registered with a partial set
+    and silently dropped the rest. `VolumeProfile` and `TpoProfile` reported
+    `price_low` -- a price, under a profile's name -- and lost the bins that ARE
+    the profile. Skipping them is the call P4.3d already made for `Footprint`,
+    whose sole field is the same shape; this only states the criterion that skip
+    was always about.
+
+    The field list is read line by line rather than with a pattern, because a
+    declaration is one per line and the types here are worth reading verbatim.
+    """
     m = re.search(r"pub\s+struct\s+" + re.escape(out) + r"\s*\{(.*?)\n\}", text, re.S)
     if not m:
         return None
-    return re.findall(r"pub\s+(\w+)\s*:\s*f64\b", m.group(1))
+    declared = []
+    for line in m.group(1).splitlines():
+        text_line = line.strip().rstrip(",")
+        if not text_line.startswith("pub "):
+            continue
+        name, _, ty = text_line[4:].partition(":")
+        declared.append((name.strip(), ty.strip()))
+    if not declared or any(ty not in FIELD_READERS for _, ty in declared):
+        return None
+    return [
+        (name, FIELD_READERS[ty].format(name=name), ty == "f64")
+        for name, ty in declared
+    ]
 
 
 def readers(argtypes: list[str]) -> str:
@@ -448,7 +485,9 @@ struct {wrapper}<I, O> {{
     return "".join(out)
 
 
-def emit_field_impls(structs: dict[tuple[str, str], list[str]]) -> str:
+def emit_field_impls(
+    structs: dict[tuple[str, str], list[tuple[str, str, bool]]],
+) -> str:
     """One `TickIndicator` impl per (input family, Output struct) pair in use.
 
     A blanket impl cannot reach the fields: they are named differently on every
@@ -460,9 +499,12 @@ def emit_field_impls(structs: dict[tuple[str, str], list[str]]) -> str:
     out = []
     for (family, struct), fields in sorted(structs.items()):
         wrapper = WRAPPERS[family][1]
-        pairs = ", ".join(f'("{f}", last.{f})' for f in fields)
-        primary = fields[0]
-        finite_check = " && ".join(f"last.{f}.is_finite()" for f in fields)
+        pairs = ", ".join(f'("{name}", {expr})' for name, expr, _ in fields)
+        primary = fields[0][1]
+        # Only a float can be non-finite; an integer field is finite by its type.
+        finite_check = " && ".join(
+            f"{expr}.is_finite()" for _, expr, is_float in fields if is_float
+        )
         out.append(
             f"""
 impl<I> TickIndicator for {wrapper}<I, wc::{struct}>
@@ -473,7 +515,7 @@ where
         let out = {UPDATE_EXPR[family]}
             .filter(|last| {finite_check});
         self.last = out;
-        self.last.as_ref().map(|last| last.{primary})
+        self.last.as_ref().map(|last| {primary})
     }}
     fn fields(&self) -> Vec<(&'static str, f64)> {{
         self.last
@@ -588,7 +630,7 @@ def main() -> None:
                 skipped["unreadable constructor argument"] += 1
                 skipped_names.setdefault("unreadable constructor argument", []).append(ty)
                 continue
-            fields: list[str] = []
+            fields: list[tuple[str, str, bool]] = []
             if out != "f64":
                 got = out_fields(bigtext, out)
                 if not got:
@@ -601,7 +643,7 @@ def main() -> None:
     entries.sort(key=lambda e: e[0])
 
     # (input family, Output struct) pairs that need a generated impl.
-    structs: dict[tuple[str, str], list[str]] = {}
+    structs: dict[tuple[str, str], list[tuple[str, str, bool]]] = {}
     for _, inp, out, _, _, fields in entries:
         if fields:
             structs[(inp, out)] = fields

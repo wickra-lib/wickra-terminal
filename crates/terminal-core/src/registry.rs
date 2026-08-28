@@ -369,12 +369,12 @@ where
             .and_then(|other| self.inner.update((input.price, other)))
             .filter(|last| last.correlation.is_finite());
         self.last = out;
-        self.last.as_ref().map(|last| last.correlation)
+        self.last.as_ref().map(|last| last.lag as f64)
     }
     fn fields(&self) -> Vec<(&'static str, f64)> {
         self.last
             .as_ref()
-            .map(|last| vec![("correlation", last.correlation)])
+            .map(|last| vec![("lag", last.lag as f64), ("correlation", last.correlation)])
             .unwrap_or_default()
     }
     fn warmup(&self) -> usize {
@@ -2104,34 +2104,6 @@ where
     }
 }
 
-impl<I> TickIndicator for CandleInFields<I, wc::TpoProfileOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::TpoProfileOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input
-            .candle
-            .and_then(|c| self.inner.update(c))
-            .filter(|last| last.price_low.is_finite() && last.price_high.is_finite());
-        self.last = out;
-        self.last.as_ref().map(|last| last.price_low)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("price_low", last.price_low),
-                    ("price_high", last.price_high),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
 impl<I> TickIndicator for CandleInFields<I, wc::TtmSqueezeOutput>
 where
     I: Indicator<Input = Candle, Output = wc::TtmSqueezeOutput> + Send,
@@ -2206,34 +2178,6 @@ where
                     ("median", last.median),
                     ("max", last.max),
                     ("percentile", last.percentile),
-                ]
-            })
-            .unwrap_or_default()
-    }
-    fn warmup(&self) -> usize {
-        self.inner.warmup_period()
-    }
-}
-
-impl<I> TickIndicator for CandleInFields<I, wc::VolumeProfileOutput>
-where
-    I: Indicator<Input = Candle, Output = wc::VolumeProfileOutput> + Send,
-{
-    fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input
-            .candle
-            .and_then(|c| self.inner.update(c))
-            .filter(|last| last.price_low.is_finite() && last.price_high.is_finite());
-        self.last = out;
-        self.last.as_ref().map(|last| last.price_low)
-    }
-    fn fields(&self) -> Vec<(&'static str, f64)> {
-        self.last
-            .as_ref()
-            .map(|last| {
-                vec![
-                    ("price_low", last.price_low),
-                    ("price_high", last.price_high),
                 ]
             })
             .unwrap_or_default()
@@ -2876,7 +2820,7 @@ fn map_new<T>(kind: &str, made: core::result::Result<T, wc::Error>) -> Result<T>
 }
 
 /// Every registered indicator name, sorted.
-pub const KINDS: [&str; 459] = [
+pub const KINDS: [&str; 457] = [
     "AbandonedBaby",
     "Abcd",
     "AccelerationBands",
@@ -3266,7 +3210,6 @@ pub const KINDS: [&str; 459] = [
     "Tii",
     "TimeBasedStop",
     "TowerTopBottom",
-    "TpoProfile",
     "TradeImbalance",
     "TradeSignAutocorrelation",
     "TradeVolumeIndex",
@@ -3310,7 +3253,6 @@ pub const KINDS: [&str; 459] = [
     "VoltyStop",
     "VolumeOscillator",
     "VolumePriceTrend",
-    "VolumeProfile",
     "VolumeRsi",
     "VolumeWeightedMacd",
     "VolumeWeightedSr",
@@ -3342,7 +3284,7 @@ pub const KINDS: [&str; 459] = [
 /// same values the library pins its own reference outputs with. Used by the
 /// build-all test so every registered indicator is constructed the way wickra
 /// constructs it, rather than with a guessed parameter count.
-pub const DEFAULTS: [(&str, &[f64]); 457] = [
+pub const DEFAULTS: [(&str, &[f64]); 455] = [
     ("AbandonedBaby", &[]),
     ("Abcd", &[]),
     ("AccelerationBands", &[14.0, 2.0]),
@@ -3730,7 +3672,6 @@ pub const DEFAULTS: [(&str, &[f64]); 457] = [
     ("Tii", &[3.0, 7.0]),
     ("TimeBasedStop", &[14.0]),
     ("TowerTopBottom", &[]),
-    ("TpoProfile", &[30.0, 50.0]),
     ("TradeImbalance", &[20.0]),
     ("TradeSignAutocorrelation", &[20.0]),
     ("TradeVolumeIndex", &[2.0]),
@@ -3774,7 +3715,6 @@ pub const DEFAULTS: [(&str, &[f64]); 457] = [
     ("VoltyStop", &[14.0, 2.0]),
     ("VolumeOscillator", &[3.0, 7.0]),
     ("VolumePriceTrend", &[]),
-    ("VolumeProfile", &[20.0, 50.0]),
     ("VolumeRsi", &[14.0]),
     ("VolumeWeightedMacd", &[3.0, 7.0, 14.0]),
     ("VolumeWeightedSr", &[14.0]),
@@ -5861,13 +5801,6 @@ fn build_inner(
         "TowerTopBottom" => Ok(Box::new(CandleIn {
             inner: wc::TowerTopBottom::new(),
         })),
-        "TpoProfile" => Ok(Box::new(CandleInFields {
-            inner: map_new(
-                kind,
-                wc::TpoProfile::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
-            )?,
-            last: None,
-        })),
         "TradeImbalance" => Ok(Box::new(TradeIn {
             inner: map_new(kind, wc::TradeImbalance::new(usize_param(params, 0, kind)?))?,
         })),
@@ -6095,16 +6028,6 @@ fn build_inner(
         })),
         "VolumePriceTrend" => Ok(Box::new(CandleIn {
             inner: wc::VolumePriceTrend::new(),
-        })),
-        "VolumeProfile" => Ok(Box::new(CandleInFields {
-            inner: map_new(
-                kind,
-                wc::VolumeProfile::new(
-                    usize_param(params, 0, kind)?,
-                    usize_param(params, 1, kind)?,
-                ),
-            )?,
-            last: None,
         })),
         "VolumeRsi" => Ok(Box::new(CandleIn {
             inner: map_new(kind, wc::VolumeRsi::new(usize_param(params, 0, kind)?))?,
