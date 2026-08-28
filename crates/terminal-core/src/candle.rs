@@ -79,14 +79,36 @@ impl Timeframe {
         self.millis
     }
 
-    /// The opening timestamp of the bar `ts` falls into.
+    /// The opening timestamp of the bar `ts` falls into, or `None` if that
+    /// timestamp has no bar.
     ///
     /// Uses Euclidean division so pre-epoch timestamps floor downwards like every
     /// other one, rather than truncating towards zero and putting a negative
     /// timestamp in the *following* bar.
+    ///
+    /// `None` rather than a saturated answer near `i64::MIN`, because a saturated
+    /// bucket is not aligned to the timeframe and every caller here relies on
+    /// `bucket(bucket(ts)) == bucket(ts)`. The multiplication overflows only for
+    /// timestamps within one bar of `i64::MIN` -- roughly 292 million years before
+    /// the epoch -- which no feed produces and no bar can represent.
+    #[must_use]
+    pub const fn checked_bucket(self, ts: i64) -> Option<i64> {
+        ts.div_euclid(self.millis).checked_mul(self.millis)
+    }
+
+    /// The opening timestamp of the bar `ts` falls into.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `ts` is within one bar of `i64::MIN`, where the bar's opening
+    /// timestamp is not representable. Use [`Timeframe::checked_bucket`] on a
+    /// path that must not panic; the fold does.
     #[must_use]
     pub const fn bucket(self, ts: i64) -> i64 {
-        ts.div_euclid(self.millis) * self.millis
+        match self.checked_bucket(ts) {
+            Some(open) => open,
+            None => panic!("timestamp has no representable bar opening"),
+        }
     }
 
     /// The compact notation this timeframe was parsed from, normalised to the
@@ -170,7 +192,12 @@ impl CandleBuilder {
     /// — are folded into the current bar rather than reopening the old one, which
     /// would emit bars out of order and desynchronise every indicator behind it.
     pub fn update(&mut self, price: f64, quantity: f64, timestamp: i64) -> Option<Candle> {
-        let bucket = self.timeframe.bucket(timestamp);
+        // A timestamp whose bar opening is not representable is skipped rather
+        // than bucketed. Before this, the multiplication wrapped in release and
+        // opened a bar near `i64::MAX`, after which every real timestamp landed
+        // inside it and no bar ever closed again -- every candle-input indicator
+        // for that market went silent while still showing its last value.
+        let bucket = self.timeframe.checked_bucket(timestamp)?;
         match self.open_ts {
             None => {
                 self.start(bucket, price, quantity);
@@ -225,6 +252,34 @@ impl CandleBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_timestamp_with_no_representable_bar_is_skipped_not_bucketed() {
+        // `div_euclid(m) * m` overflows within one bar of i64::MIN: it panicked
+        // in debug and, worse, wrapped in release to a large POSITIVE bucket.
+        // The bar then opened near i64::MAX, every later timestamp landed inside
+        // it, and no bar ever closed again -- so all 256 candle-input indicators
+        // for that market went permanently silent while still showing their last
+        // warm-up value. Reachable from `Feed`, a replay dataset, or a venue with
+        // a bad stamp.
+        let timeframe = Timeframe::parse("1m").expect("1m parses");
+        assert_eq!(timeframe.checked_bucket(i64::MIN), None);
+        assert_eq!(timeframe.checked_bucket(i64::MIN + 1), None);
+        assert_eq!(timeframe.checked_bucket(0), Some(0));
+
+        let mut builder = CandleBuilder::new(timeframe);
+        assert!(builder.update(100.0, 1.0, i64::MIN).is_none());
+        // The skipped trade must leave no bar in progress, or it would poison
+        // the next one.
+        assert!(builder.partial().is_none());
+
+        // A normal feed after the bad stamp still opens and closes bars.
+        assert!(builder.update(100.0, 1.0, 0).is_none());
+        let closed = builder
+            .update(101.0, 1.0, 60_000)
+            .expect("crossing a minute boundary closes the first bar");
+        assert_eq!(closed.timestamp, 0);
+    }
 
     /// Assert two prices/volumes are equal.
     ///
