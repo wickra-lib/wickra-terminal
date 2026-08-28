@@ -174,4 +174,30 @@ unknown <- try(
 stopifnot(inherits(unknown, "try-error"))
 stopifnot(grepl("NotReal", conditionMessage(attr(unknown, "condition")), fixed = TRUE))
 
+## Arguments are checked before they are dereferenced.
+##
+## `.Call` hands over whatever the caller wrote, and the shim used to index a
+## character vector and take CHAR() of the result without asking whether it was
+## a character vector or how long it was. Recent R checks both itself, so on
+## R 4.6 this surfaced as "attempt access index 0/0 in STRING_ELT" rather than a
+## crash -- an internal message naming neither the package nor the argument --
+## and older R, which this package declares support for, does not check at all.
+## NA was worse than either: CHAR(NA_STRING) is the string "NA", so it reached
+## the config parser and came back as "invalid config".
+bad_arg <- function(expr) {
+  caught <- try(expr, silent = TRUE)
+  stopifnot(inherits(caught, "try-error"))
+  conditionMessage(attr(caught, "condition"))
+}
+
+stopifnot(grepl("config must be a single string", bad_arg(wkterm_new(character(0))), fixed = TRUE))
+stopifnot(grepl("config must be a single string", bad_arg(wkterm_new(c("{}", "{}"))), fixed = TRUE))
+stopifnot(grepl("config must be a character vector", bad_arg(wkterm_new(42)), fixed = TRUE))
+stopifnot(grepl("config must not be NA", bad_arg(wkterm_new(NA_character_)), fixed = TRUE))
+stopifnot(grepl("command must be a single string", bad_arg(wkterm_command(rterm, character(0))), fixed = TRUE))
+stopifnot(grepl("not a terminal handle", bad_arg(wkterm_command("nope", '{"type":"Tick"}')), fixed = TRUE))
+
+## The guards must not disturb a well-formed call.
+stopifnot(grepl('"panels"', wkterm_command(rterm, '{"type":"Tick"}'), fixed = TRUE))
+
 cat("wickra-terminal R tests passed\n")
