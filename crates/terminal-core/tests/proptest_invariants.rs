@@ -122,15 +122,21 @@ proptest! {
         // bucket, so the buckets must sum to what was fed. Repeated prices at the
         // same price are the interesting case, which the narrow price range makes
         // frequent.
+        //
+        // The 49 distinct prices here stay far under the footprint's level cap, so
+        // nothing is evicted and the sum is exact. Conservation is a property of
+        // the accumulation, not a promise the profile keeps every price forever.
         let sym = Symbol::new("BTC", "USDT");
         let mut state = AppState::default();
         for (i, price) in prices.iter().enumerate() {
             state.fold(0, &sym, &trade(&sym, *price, i % 3 != 0));
         }
         let st = state.get(&(0, sym)).unwrap();
+        // Asking for as many levels as there are returns all of them, whatever
+        // the anchor.
         let booked: Decimal = st
             .footprint
-            .top(st.footprint.len())
+            .around(st.last, st.footprint.len())
             .into_iter()
             .map(|(_, buy, sell)| buy + sell)
             .sum();

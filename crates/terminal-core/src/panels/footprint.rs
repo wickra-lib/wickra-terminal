@@ -23,7 +23,7 @@ impl Panel for FootprintPanel {
             .get(&(focus.0, focus.1.clone()))
             .map(|st| {
                 st.footprint
-                    .top(DEFAULT_DEPTH)
+                    .around(st.last, DEFAULT_DEPTH)
                     .into_iter()
                     .map(|(price, buy, sell)| FootprintLevel {
                         price: price.to_f64().unwrap_or(0.0),
@@ -49,6 +49,43 @@ mod tests {
             price,
             quantity: dec!(2),
             aggressor: side,
+            timestamp: 0,
+        })
+    }
+
+    #[test]
+    fn the_panel_follows_the_market_rather_than_the_high() {
+        // The symptom this fixes: the panel showed the highest prices ever
+        // traded, so after a move it displayed a ladder the market had left. On a
+        // synthetic 200k-print walk it read 513.03 down to 512.81 against a last
+        // trade of 495.19.
+        let sym = Symbol::new("BTC", "USDT");
+        let mut state = AppState::default();
+        for cents in 0..400 {
+            let price = rust_decimal::Decimal::from(50_000 - cents) / dec!(100);
+            state.fold(0, &sym, &trade_at(&sym, price));
+        }
+
+        let PanelView::Footprint(view) = FootprintPanel.view(&state, (0, &sym)) else {
+            panic!("expected a footprint view");
+        };
+        let last = 496.01;
+        assert_eq!(view.levels.len(), DEFAULT_DEPTH);
+        for level in &view.levels {
+            assert!(
+                (level.price - last).abs() < 1.0,
+                "the panel shows {} against a last of {last}",
+                level.price
+            );
+        }
+    }
+
+    fn trade_at(sym: &Symbol, price: rust_decimal::Decimal) -> Event {
+        Event::Trade(TradePrint {
+            symbol: sym.clone(),
+            price,
+            quantity: dec!(1),
+            aggressor: OrderSide::Buy,
             timestamp: 0,
         })
     }

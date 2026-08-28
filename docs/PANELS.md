@@ -40,7 +40,9 @@ a `price`, a `quantity`, a `side` (`"buy"` or `"sell"`, the aggressor) and a
 `timestamp`.
 
 **`footprint`** — `symbol` and `levels`, each a `price` with its accumulated
-`buy` and `sell` volume, highest price first.
+`buy` and `sell` volume, highest price first. The levels are the ones nearest the
+last trade, not the highest ever traded: anchoring them is what keeps the ladder
+on the market after a move.
 
 **`watchlist`** — `rows`, one per tracked market, each a `source` id, a `symbol`
 and its `last` price. This is the only panel that does not render the focused

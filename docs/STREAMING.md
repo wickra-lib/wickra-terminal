@@ -20,10 +20,15 @@ to one `(SourceId, Symbol)`'s state incrementally:
 - Account / lifecycle events do not affect per-symbol market state.
 
 Every buffer is bounded — the tape ring at 256 prints, the price history at 512,
-each indicator's series at 120 — so memory is bounded regardless of session
-length. The book and the footprint are bounded by the market rather than by a
-constant: a book holds the levels a venue publishes, and the footprint one entry
-per price traded.
+each indicator's series at 120, the footprint at 1,024 price levels — so memory
+is bounded regardless of session length. The book is bounded by the market rather
+than by a constant: it holds the levels a venue publishes.
+
+The footprint was the exception until recently, keeping an entry per distinct
+price ever traded. A 200k-print walk left 2,926 levels still climbing, and a
+BTC/USDT feed quoting to the cent gives hundreds of thousands. It now evicts
+whichever end is furthest from the price being traded, so the profile follows the
+market instead of accumulating every price a session has touched.
 
 ## Bars, from the same fold
 
