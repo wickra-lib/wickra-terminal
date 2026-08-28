@@ -197,6 +197,17 @@ impl CandleBuilder {
         // opened a bar near `i64::MAX`, after which every real timestamp landed
         // inside it and no bar ever closed again -- every candle-input indicator
         // for that market went silent while still showing its last value.
+        // A print that cannot be part of a valid bar is dropped, the same way and
+        // for the same reason as the timestamp above: folding it produces a bar
+        // that is wrong rather than absent, and a wrong bar is what the
+        // indicators downstream read.
+        //
+        // Zero quantity is accepted. `Candle::new` requires non-negative volume,
+        // not positive, and a zero-size print still carries a price that belongs
+        // in the high, the low and the close.
+        if !price.is_finite() || !quantity.is_finite() || quantity < 0.0 {
+            return None;
+        }
         let bucket = self.timeframe.checked_bucket(timestamp)?;
         match self.open_ts {
             None => {
@@ -241,9 +252,15 @@ impl CandleBuilder {
     /// `new_unchecked` rather than `new`: the invariants `Candle::new` validates
     /// (finite prices, `low <= open/close <= high`, non-negative volume) hold by
     /// construction here — `high` and `low` are running max/min over the same
-    /// prices `open` and `close` are drawn from, and volume only ever accumulates
-    /// non-negative quantities. Going through the checked constructor would add an
-    /// error arm no input can reach.
+    /// prices `open` and `close` are drawn from, and volume accumulates only the
+    /// non-negative finite quantities [`CandleBuilder::update`] admits. Going
+    /// through the checked constructor would add an error arm no input can reach.
+    ///
+    /// That last clause used to be an assumption rather than a fact: `update` is
+    /// `pub` and a `TradePrint.quantity` is a `Decimal` nothing in this repository
+    /// validated, so quantities of -5, -5 and 1 closed a bar with a volume of -9
+    /// that `Candle::new` would have rejected — and every volume-reading bar
+    /// indicator read it. `update` now rejects such a print.
     fn finish(&self, ts: i64) -> Candle {
         Candle::new_unchecked(self.open, self.high, self.low, self.close, self.volume, ts)
     }
@@ -422,5 +439,56 @@ mod tests {
     fn no_partial_before_the_first_trade() {
         let builder = CandleBuilder::new(Timeframe::default());
         assert!(builder.partial().is_none());
+    }
+    #[test]
+    fn a_negative_quantity_cannot_drive_a_bar_volume_negative() {
+        // `finish` builds with `new_unchecked` on the claim that volume "only ever
+        // accumulates non-negative quantities". Nothing enforced that: a
+        // `TradePrint.quantity` is a `Decimal` no code in this repository
+        // validates, so a venue sending a signed quantity produced a closed bar
+        // `Candle::new` would have rejected, and it fed every volume-reading bar
+        // indicator -- VWAP, OBV, MFI, CMF.
+        let mut builder = CandleBuilder::new(Timeframe::parse("1m").unwrap());
+        builder.update(100.0, -5.0, 0);
+        builder.update(100.0, -5.0, 1_000);
+        builder.update(100.0, 1.0, 2_000);
+        let bar = builder.partial().expect("a bar is forming");
+        assert!(bar.volume >= 0.0, "volume went negative: {}", bar.volume);
+    }
+
+    #[test]
+    fn a_non_finite_price_cannot_poison_a_bar() {
+        // `update` is `pub`, and `f64::max` returns the other operand for a NaN,
+        // so a NaN could not raise the high -- but it could open a bar, and then
+        // open, high, low and close were all NaN.
+        let mut builder = CandleBuilder::new(Timeframe::parse("1m").unwrap());
+        assert!(builder.update(f64::NAN, 1.0, 0).is_none());
+        assert!(builder.update(f64::INFINITY, 1.0, 1_000).is_none());
+        let bar = builder.partial();
+        let ok = bar.is_none_or(|bar| {
+            bar.open.is_finite()
+                && bar.high.is_finite()
+                && bar.low.is_finite()
+                && bar.close.is_finite()
+        });
+        assert!(ok, "a non-finite price reached a bar");
+    }
+
+    #[test]
+    fn a_rejected_trade_does_not_close_the_bar_it_arrives_in() {
+        // Rejection must not become a second failure mode: the bar in progress
+        // stays exactly as it was, and the next valid print still closes it.
+        let mut builder = CandleBuilder::new(Timeframe::parse("1m").unwrap());
+        builder.update(100.0, 2.0, 0);
+        assert!(builder.update(f64::NAN, 1.0, 60_000).is_none());
+        assert!(builder.update(50.0, -1.0, 60_000).is_none());
+        let forming = builder.partial().expect("the first bar is still forming");
+        assert_eq!(forming.timestamp, 0, "a rejected print moved the bar");
+        eq(forming.volume, 2.0);
+        let closed = builder
+            .update(110.0, 1.0, 60_000)
+            .expect("a valid print closes it");
+        assert_eq!(closed.timestamp, 0);
+        eq(closed.volume, 2.0);
     }
 }

@@ -571,6 +571,16 @@ impl AppState {
         // accepted by the registry when it was set, so construction here cannot
         // fail. A silent `unwrap_or_default` would hide a market quietly losing
         // its indicators.
+        // A print claiming a negative size is malformed, and folding any part of it
+        // invents data: the footprint would subtract it from the volume already
+        // traded at that price, and the bar builder carried it into a candle
+        // `Candle::new` would reject -- which every volume-reading bar indicator
+        // then read. Nothing validates a `TradePrint.quantity`; it is a `Decimal`
+        // off the wire. Checked before the entry below, so a market is not brought
+        // into existence by an event that is then discarded.
+        if matches!(event, Event::Trade(print) if print.quantity < Decimal::ZERO) {
+            return;
+        }
         let state = self.symbols.entry((src, sym.clone())).or_insert_with(|| {
             SymbolState::new(&self.indicators, self.timeframe)
                 .expect("indicator specs are validated before they reach the state")
@@ -803,6 +813,39 @@ mod tests {
         assert_eq!(st.footprint.at(dec!(100)), Some((dec!(2), dec!(0))));
         assert_eq!(st.footprint.at(dec!(101)), Some((dec!(0), dec!(2))));
         assert_eq!(st.series(10), vec![100.0, 101.0]);
+    }
+
+    #[test]
+    fn a_negative_size_print_is_not_folded_at_all() {
+        // The footprint accumulates with `checked_add`, so a negative quantity
+        // subtracted from the volume already traded at that price: two prints of
+        // 2 and -2 left a level reading zero, as if nothing had traded there.
+        let sym = Symbol::new("BTC", "USDT");
+        let mut state = AppState::default();
+        state.fold(0, &sym, &trade(&sym, dec!(100), OrderSide::Buy));
+        let mut bad = trade(&sym, dec!(100), OrderSide::Buy);
+        if let Event::Trade(print) = &mut bad {
+            print.quantity = dec!(-2);
+        }
+        state.fold(0, &sym, &bad);
+        let st = state.get(&(0, sym.clone())).unwrap();
+        assert_eq!(st.footprint.at(dec!(100)), Some((dec!(2), dec!(0))));
+        assert_eq!(st.tape.len(), 1, "a malformed print reached the tape");
+    }
+
+    #[test]
+    fn a_rejected_print_does_not_bring_a_market_into_existence() {
+        let sym = Symbol::new("BTC", "USDT");
+        let mut state = AppState::default();
+        let mut bad = trade(&sym, dec!(100), OrderSide::Buy);
+        if let Event::Trade(print) = &mut bad {
+            print.quantity = dec!(-1);
+        }
+        state.fold(0, &sym, &bad);
+        assert!(
+            state.get(&(0, sym)).is_none(),
+            "an empty market was created"
+        );
     }
 
     #[test]
