@@ -248,6 +248,67 @@ fn the_unreachable_indicator_count_adds_up() {
     assert!(checked > 0, "no unreachable-count claim found to check");
 }
 
+/// `CITATION.cff` states the count in prose, and nothing checked it.
+///
+/// It cannot carry the marker the other documents use: that marker is an HTML
+/// comment, and this is YAML whose abstract is rendered verbatim by GitHub's
+/// "Cite this repository" widget and by Zenodo. So the phrase itself is the
+/// anchor. It had drifted to 457 while the registry held 455, which is the whole
+/// reason the other six documents are guarded rather than trusted.
+#[test]
+fn the_citation_abstract_states_the_real_indicator_count() {
+    // Anchored on the phrase alone, not on the line break before it: the
+    // abstract is a folded YAML scalar, so where it wraps is a formatting
+    // detail and the count sits on the other side of it.
+    const PHRASE: &str = "the Wickra indicators are constructible";
+
+    let root = repo_root();
+    let text = read(&root, "CITATION.cff");
+    let actual = terminal_core::registry::DEFAULTS.len().to_string();
+
+    let before = text
+        .split(PHRASE)
+        .next()
+        .unwrap_or_else(|| panic!("CITATION.cff no longer says \"{PHRASE}\""));
+    assert_ne!(
+        before, text,
+        "CITATION.cff no longer states an indicator count"
+    );
+    let claimed: String = before
+        .chars()
+        .rev()
+        .skip_while(|c| !c.is_ascii_digit())
+        .take_while(char::is_ascii_digit)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    assert_eq!(
+        claimed, actual,
+        "CITATION.cff claims {claimed} indicators; the registry has {actual}"
+    );
+}
+
+/// The citation must not date a release that has not happened.
+///
+/// `version` and `date-released` are what the citation widget and Zenodo present
+/// as the thing being cited. This file carried `0.1.0` and a date against zero
+/// tags and zero releases. Both keys are optional in CFF, and the wickra library
+/// omits them even though it has released thirty times, so omitting them here is
+/// the convention as well as the truth.
+#[test]
+fn the_citation_claims_no_release() {
+    let root = repo_root();
+    let text = read(&root, "CITATION.cff");
+    // Line-anchored: `cff-version:` is the schema version and belongs here.
+    for key in ["version:", "date-released:"] {
+        assert!(
+            !text.lines().any(|line| line.starts_with(key)),
+            "CITATION.cff carries {key}, which cites a release that does not exist"
+        );
+    }
+}
+
 const OPEN: &str = "<!--indicator-count-->";
 const CLOSE: &str = "<!--/indicator-count-->";
 
