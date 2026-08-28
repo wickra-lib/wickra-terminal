@@ -87,6 +87,15 @@ roughly the order they would pay off.
   So the pipeline has never run, and a dispatch would not tell us much: it would
   stop at its first job. It is verified structurally instead, which is what
   catches the faults a run that dies early never reaches.
+
+  Nine badges wait on that tag rather than sitting in the README claiming
+  something. Eight are the registry badges -- crates.io, PyPI, npm and the rest --
+  which would render as 404s until the packages exist. The ninth was in the README
+  and read "provenance: attested", against zero releases, zero tags and an
+  attestations API that answers 404: the artefacts it attests to are produced by
+  `release.yml`, so the claim becomes true at exactly the moment the rest do. They
+  are added together, in the `.github` profile repository where the badge assets
+  live, when the release actually happens.
 - **Panel-local keys.** Panel focus moves and is drawn; nothing acts on it yet —
   scrolling the tape or the book would be the first use.
 
