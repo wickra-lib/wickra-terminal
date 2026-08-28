@@ -1,7 +1,7 @@
 # Indicators
 
 The terminal drives the [Wickra](https://github.com/wickra-lib/wickra) indicator
-set directly: **<!--indicator-count-->460<!--/indicator-count--> of them**, constructible by name from a config or at run
+set directly: **<!--indicator-count-->457<!--/indicator-count--> of them**, constructible by name from a config or at run
 time, in every binding.
 
 ## Naming one
@@ -158,7 +158,7 @@ it saw before.
 
 ## What is not registered, and why
 
-44 of the 504 indicators in `wickra-core` are not reachable from the terminal
+47 of the 504 indicators in `wickra-core` are not reachable from the terminal
 yet. They are listed with a reason every time the registry is regenerated, rather
 than quietly dropped:
 

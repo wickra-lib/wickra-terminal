@@ -152,7 +152,9 @@ where
     I: Indicator<Input = f64, Output = f64> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        self.inner.update(input.price)
+        self.inner
+            .update(input.price)
+            .filter(|value| value.is_finite())
     }
     fn fields(&self) -> Vec<(&'static str, f64)> {
         Vec::new()
@@ -173,7 +175,10 @@ where
     I: Indicator<Input = Candle, Output = f64> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        input.candle.and_then(|c| self.inner.update(c))
+        input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|value| value.is_finite())
     }
     fn fields(&self) -> Vec<(&'static str, f64)> {
         Vec::new()
@@ -194,7 +199,10 @@ where
     I: Indicator<Input = wc::Trade, Output = f64> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        input.trade.and_then(|t| self.inner.update(t))
+        input
+            .trade
+            .and_then(|t| self.inner.update(t))
+            .filter(|value| value.is_finite())
     }
     fn fields(&self) -> Vec<(&'static str, f64)> {
         Vec::new()
@@ -215,7 +223,11 @@ where
     I: Indicator<Input = wc::OrderBook, Output = f64> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        input.book.clone().and_then(|b| self.inner.update(b))
+        input
+            .book
+            .clone()
+            .and_then(|b| self.inner.update(b))
+            .filter(|value| value.is_finite())
     }
     fn fields(&self) -> Vec<(&'static str, f64)> {
         Vec::new()
@@ -244,6 +256,7 @@ where
         input
             .reference(&self.reference)
             .and_then(|other| self.inner.update((input.price, other)))
+            .filter(|value| value.is_finite())
     }
     fn fields(&self) -> Vec<(&'static str, f64)> {
         Vec::new()
@@ -283,7 +296,10 @@ where
     fn update(&mut self, input: &TickInput) -> Option<f64> {
         let out = input
             .reference(&self.reference)
-            .and_then(|other| self.inner.update((input.price, other)));
+            .and_then(|other| self.inner.update((input.price, other)))
+            .filter(|last| {
+                last.hedge_ratio.is_finite() && last.spread.is_finite() && last.adf_stat.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.hedge_ratio)
     }
@@ -314,7 +330,12 @@ where
     fn update(&mut self, input: &TickInput) -> Option<f64> {
         let out = input
             .reference(&self.reference)
-            .and_then(|other| self.inner.update((input.price, other)));
+            .and_then(|other| self.inner.update((input.price, other)))
+            .filter(|last| {
+                last.hedge_ratio.is_finite()
+                    && last.intercept.is_finite()
+                    && last.spread.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.hedge_ratio)
     }
@@ -345,7 +366,8 @@ where
     fn update(&mut self, input: &TickInput) -> Option<f64> {
         let out = input
             .reference(&self.reference)
-            .and_then(|other| self.inner.update((input.price, other)));
+            .and_then(|other| self.inner.update((input.price, other)))
+            .filter(|last| last.correlation.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.correlation)
     }
@@ -370,7 +392,10 @@ where
     fn update(&mut self, input: &TickInput) -> Option<f64> {
         let out = input
             .reference(&self.reference)
-            .and_then(|other| self.inner.update((input.price, other)));
+            .and_then(|other| self.inner.update((input.price, other)))
+            .filter(|last| {
+                last.ratio.is_finite() && last.ratio_ma.is_finite() && last.ratio_rsi.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.ratio)
     }
@@ -401,7 +426,13 @@ where
     fn update(&mut self, input: &TickInput) -> Option<f64> {
         let out = input
             .reference(&self.reference)
-            .and_then(|other| self.inner.update((input.price, other)));
+            .and_then(|other| self.inner.update((input.price, other)))
+            .filter(|last| {
+                last.middle.is_finite()
+                    && last.upper.is_finite()
+                    && last.lower.is_finite()
+                    && last.percent_b.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.middle)
     }
@@ -431,7 +462,12 @@ where
     I: Indicator<Input = Candle, Output = wc::AccelerationBandsOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.upper.is_finite() && last.middle.is_finite() && last.lower.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.upper)
     }
@@ -457,7 +493,12 @@ where
     I: Indicator<Input = Candle, Output = wc::AdxOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.plus_di.is_finite() && last.minus_di.is_finite() && last.adx.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.plus_di)
     }
@@ -483,7 +524,10 @@ where
     I: Indicator<Input = Candle, Output = wc::AlligatorOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.jaw.is_finite() && last.teeth.is_finite() && last.lips.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.jaw)
     }
@@ -509,7 +553,12 @@ where
     I: Indicator<Input = Candle, Output = wc::AndrewsPitchforkOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.median.is_finite() && last.upper.is_finite() && last.lower.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.median)
     }
@@ -535,7 +584,10 @@ where
     I: Indicator<Input = Candle, Output = wc::AroonOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.up.is_finite() && last.down.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.up)
     }
@@ -555,7 +607,12 @@ where
     I: Indicator<Input = Candle, Output = wc::AtrBandsOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.upper.is_finite() && last.middle.is_finite() && last.lower.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.upper)
     }
@@ -581,7 +638,10 @@ where
     I: Indicator<Input = Candle, Output = wc::AtrRatchetOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.value.is_finite() && last.direction.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.value)
     }
@@ -601,7 +661,18 @@ where
     I: Indicator<Input = Candle, Output = wc::AutoFibOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.level_0.is_finite()
+                    && last.level_236.is_finite()
+                    && last.level_382.is_finite()
+                    && last.level_500.is_finite()
+                    && last.level_618.is_finite()
+                    && last.level_786.is_finite()
+                    && last.level_1000.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.level_0)
     }
@@ -631,7 +702,20 @@ where
     I: Indicator<Input = Candle, Output = wc::CamarillaPivotsOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.pp.is_finite()
+                    && last.r1.is_finite()
+                    && last.r2.is_finite()
+                    && last.r3.is_finite()
+                    && last.r4.is_finite()
+                    && last.s1.is_finite()
+                    && last.s2.is_finite()
+                    && last.s3.is_finite()
+                    && last.s4.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.pp)
     }
@@ -663,7 +747,10 @@ where
     I: Indicator<Input = Candle, Output = wc::CandleVolumeOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.body.is_finite() && last.width.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.body)
     }
@@ -683,7 +770,10 @@ where
     I: Indicator<Input = Candle, Output = wc::CentralPivotRangeOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.pivot.is_finite() && last.tc.is_finite() && last.bc.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.pivot)
     }
@@ -703,7 +793,10 @@ where
     I: Indicator<Input = Candle, Output = wc::ChandeKrollStopOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.stop_long.is_finite() && last.stop_short.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.stop_long)
     }
@@ -728,7 +821,10 @@ where
     I: Indicator<Input = Candle, Output = wc::ChandelierExitOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.long_stop.is_finite() && last.short_stop.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.long_stop)
     }
@@ -753,7 +849,18 @@ where
     I: Indicator<Input = Candle, Output = wc::ClassicPivotsOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.pp.is_finite()
+                    && last.r1.is_finite()
+                    && last.r2.is_finite()
+                    && last.r3.is_finite()
+                    && last.s1.is_finite()
+                    && last.s2.is_finite()
+                    && last.s3.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.pp)
     }
@@ -783,7 +890,10 @@ where
     I: Indicator<Input = Candle, Output = wc::CompositeProfileOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.poc.is_finite() && last.vah.is_finite() && last.val.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.poc)
     }
@@ -803,7 +913,10 @@ where
     I: Indicator<Input = Candle, Output = wc::DemarkPivotsOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.pp.is_finite() && last.r1.is_finite() && last.s1.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.pp)
     }
@@ -823,7 +936,12 @@ where
     I: Indicator<Input = Candle, Output = wc::DonchianOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.upper.is_finite() && last.middle.is_finite() && last.lower.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.upper)
     }
@@ -849,7 +967,10 @@ where
     I: Indicator<Input = Candle, Output = wc::DonchianStopOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.stop_long.is_finite() && last.stop_short.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.stop_long)
     }
@@ -874,7 +995,10 @@ where
     I: Indicator<Input = Candle, Output = wc::ElderRayOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.bull_power.is_finite() && last.bear_power.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.bull_power)
     }
@@ -899,7 +1023,10 @@ where
     I: Indicator<Input = Candle, Output = wc::ElderSafeZoneOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.value.is_finite() && last.direction.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.value)
     }
@@ -919,7 +1046,10 @@ where
     I: Indicator<Input = Candle, Output = wc::EquivolumeOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.height.is_finite() && last.width.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.height)
     }
@@ -939,7 +1069,12 @@ where
     I: Indicator<Input = Candle, Output = wc::FibArcsOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.arc_382.is_finite() && last.arc_500.is_finite() && last.arc_618.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.arc_382)
     }
@@ -965,7 +1100,15 @@ where
     I: Indicator<Input = Candle, Output = wc::FibChannelOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.base.is_finite()
+                    && last.level_618.is_finite()
+                    && last.level_1000.is_finite()
+                    && last.level_1618.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.base)
     }
@@ -992,7 +1135,10 @@ where
     I: Indicator<Input = Candle, Output = wc::FibConfluenceOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.price.is_finite() && last.strength.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.price)
     }
@@ -1012,7 +1158,16 @@ where
     I: Indicator<Input = Candle, Output = wc::FibExtensionOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.level_1272.is_finite()
+                    && last.level_1414.is_finite()
+                    && last.level_1618.is_finite()
+                    && last.level_2000.is_finite()
+                    && last.level_2618.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.level_1272)
     }
@@ -1040,7 +1195,12 @@ where
     I: Indicator<Input = Candle, Output = wc::FibFanOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.fan_382.is_finite() && last.fan_500.is_finite() && last.fan_618.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.fan_382)
     }
@@ -1066,7 +1226,15 @@ where
     I: Indicator<Input = Candle, Output = wc::FibProjectionOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.level_618.is_finite()
+                    && last.level_1000.is_finite()
+                    && last.level_1618.is_finite()
+                    && last.level_2618.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.level_618)
     }
@@ -1093,7 +1261,18 @@ where
     I: Indicator<Input = Candle, Output = wc::FibRetracementOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.level_0.is_finite()
+                    && last.level_236.is_finite()
+                    && last.level_382.is_finite()
+                    && last.level_500.is_finite()
+                    && last.level_618.is_finite()
+                    && last.level_786.is_finite()
+                    && last.level_1000.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.level_0)
     }
@@ -1123,7 +1302,10 @@ where
     I: Indicator<Input = Candle, Output = wc::FibTimeZonesOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.on_zone.is_finite() && last.bars_to_next.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.on_zone)
     }
@@ -1148,7 +1330,18 @@ where
     I: Indicator<Input = Candle, Output = wc::FibonacciPivotsOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.pp.is_finite()
+                    && last.r1.is_finite()
+                    && last.r2.is_finite()
+                    && last.r3.is_finite()
+                    && last.s1.is_finite()
+                    && last.s2.is_finite()
+                    && last.s3.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.pp)
     }
@@ -1178,7 +1371,10 @@ where
     I: Indicator<Input = Candle, Output = wc::FractalChaosBandsOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.upper.is_finite() && last.lower.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.upper)
     }
@@ -1198,7 +1394,10 @@ where
     I: Indicator<Input = Candle, Output = wc::GatorOscillatorOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.upper.is_finite() && last.lower.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.upper)
     }
@@ -1218,7 +1417,10 @@ where
     I: Indicator<Input = Candle, Output = wc::GoldenPocketOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.low.is_finite() && last.mid.is_finite() && last.high.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.low)
     }
@@ -1238,7 +1440,15 @@ where
     I: Indicator<Input = Candle, Output = wc::HeikinAshiOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.open.is_finite()
+                    && last.high.is_finite()
+                    && last.low.is_finite()
+                    && last.close.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.open)
     }
@@ -1265,7 +1475,10 @@ where
     I: Indicator<Input = Candle, Output = wc::HighLowVolumeNodesOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.hvn.is_finite() && last.lvn.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.hvn)
     }
@@ -1285,7 +1498,12 @@ where
     I: Indicator<Input = Candle, Output = wc::HurstChannelOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.upper.is_finite() && last.middle.is_finite() && last.lower.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.upper)
     }
@@ -1311,7 +1529,10 @@ where
     I: Indicator<Input = Candle, Output = wc::InitialBalanceOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.high.is_finite() && last.low.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.high)
     }
@@ -1331,7 +1552,10 @@ where
     I: Indicator<Input = Candle, Output = wc::KaseDevStopOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.value.is_finite() && last.direction.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.value)
     }
@@ -1351,7 +1575,10 @@ where
     I: Indicator<Input = Candle, Output = wc::KasePermissionStochasticOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.fast.is_finite() && last.slow.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.fast)
     }
@@ -1371,7 +1598,12 @@ where
     I: Indicator<Input = Candle, Output = wc::KeltnerOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.upper.is_finite() && last.middle.is_finite() && last.lower.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.upper)
     }
@@ -1397,7 +1629,10 @@ where
     I: Indicator<Input = Candle, Output = wc::ModifiedMaStopOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.value.is_finite() && last.direction.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.value)
     }
@@ -1417,7 +1652,20 @@ where
     I: Indicator<Input = Candle, Output = wc::MurreyMathLinesOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.mm8_8.is_finite()
+                    && last.mm7_8.is_finite()
+                    && last.mm6_8.is_finite()
+                    && last.mm5_8.is_finite()
+                    && last.mm4_8.is_finite()
+                    && last.mm3_8.is_finite()
+                    && last.mm2_8.is_finite()
+                    && last.mm1_8.is_finite()
+                    && last.mm0_8.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.mm8_8)
     }
@@ -1449,7 +1697,10 @@ where
     I: Indicator<Input = Candle, Output = wc::NrtrOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.value.is_finite() && last.direction.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.value)
     }
@@ -1469,7 +1720,12 @@ where
     I: Indicator<Input = Candle, Output = wc::OpeningRangeOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.high.is_finite() && last.low.is_finite() && last.breakout_distance.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.high)
     }
@@ -1495,7 +1751,10 @@ where
     I: Indicator<Input = Candle, Output = wc::OvernightIntradayReturnOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.overnight.is_finite() && last.intraday.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.overnight)
     }
@@ -1515,7 +1774,12 @@ where
     I: Indicator<Input = Candle, Output = wc::ProjectionBandsOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.upper.is_finite() && last.middle.is_finite() && last.lower.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.upper)
     }
@@ -1541,7 +1805,10 @@ where
     I: Indicator<Input = Candle, Output = wc::RwiOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.high.is_finite() && last.low.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.high)
     }
@@ -1561,7 +1828,10 @@ where
     I: Indicator<Input = Candle, Output = wc::SessionHighLowOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.high.is_finite() && last.low.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.high)
     }
@@ -1581,7 +1851,10 @@ where
     I: Indicator<Input = Candle, Output = wc::SessionRangeOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.asia.is_finite() && last.eu.is_finite() && last.us.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.asia)
     }
@@ -1601,7 +1874,15 @@ where
     I: Indicator<Input = Candle, Output = wc::SmoothedHeikinAshiOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.open.is_finite()
+                    && last.high.is_finite()
+                    && last.low.is_finite()
+                    && last.close.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.open)
     }
@@ -1628,7 +1909,12 @@ where
     I: Indicator<Input = Candle, Output = wc::StarcBandsOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.upper.is_finite() && last.middle.is_finite() && last.lower.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.upper)
     }
@@ -1654,7 +1940,10 @@ where
     I: Indicator<Input = Candle, Output = wc::StochasticOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.k.is_finite() && last.d.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.k)
     }
@@ -1674,7 +1963,10 @@ where
     I: Indicator<Input = Candle, Output = wc::SuperTrendOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.value.is_finite() && last.direction.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.value)
     }
@@ -1694,7 +1986,10 @@ where
     I: Indicator<Input = Candle, Output = wc::TdLinesOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.resistance.is_finite() && last.support.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.resistance)
     }
@@ -1714,7 +2009,10 @@ where
     I: Indicator<Input = Candle, Output = wc::TdMovingAverageOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.st1.is_finite() && last.st2.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.st1)
     }
@@ -1734,7 +2032,10 @@ where
     I: Indicator<Input = Candle, Output = wc::TdRangeProjectionOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.high.is_finite() && last.low.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.high)
     }
@@ -1754,7 +2055,10 @@ where
     I: Indicator<Input = Candle, Output = wc::TdRiskLevelOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.buy_risk.is_finite() && last.sell_risk.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.buy_risk)
     }
@@ -1774,7 +2078,12 @@ where
     I: Indicator<Input = Candle, Output = wc::TdSequentialOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.setup.is_finite() && last.countdown.is_finite() && last.direction.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.setup)
     }
@@ -1800,7 +2109,10 @@ where
     I: Indicator<Input = Candle, Output = wc::TpoProfileOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.price_low.is_finite() && last.price_high.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.price_low)
     }
@@ -1825,7 +2137,10 @@ where
     I: Indicator<Input = Candle, Output = wc::TtmSqueezeOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.squeeze.is_finite() && last.momentum.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.squeeze)
     }
@@ -1845,7 +2160,10 @@ where
     I: Indicator<Input = Candle, Output = wc::ValueAreaOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.poc.is_finite() && last.vah.is_finite() && last.val.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.poc)
     }
@@ -1865,7 +2183,16 @@ where
     I: Indicator<Input = Candle, Output = wc::VolatilityConeOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.current.is_finite()
+                    && last.min.is_finite()
+                    && last.median.is_finite()
+                    && last.max.is_finite()
+                    && last.percentile.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.current)
     }
@@ -1893,7 +2220,10 @@ where
     I: Indicator<Input = Candle, Output = wc::VolumeProfileOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.price_low.is_finite() && last.price_high.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.price_low)
     }
@@ -1918,7 +2248,12 @@ where
     I: Indicator<Input = Candle, Output = wc::VolumeWeightedMacdOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.macd.is_finite() && last.signal.is_finite() && last.histogram.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.macd)
     }
@@ -1944,7 +2279,10 @@ where
     I: Indicator<Input = Candle, Output = wc::VolumeWeightedSrOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.support.is_finite() && last.resistance.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.support)
     }
@@ -1964,7 +2302,10 @@ where
     I: Indicator<Input = Candle, Output = wc::VortexOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.plus.is_finite() && last.minus.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.plus)
     }
@@ -1984,7 +2325,15 @@ where
     I: Indicator<Input = Candle, Output = wc::VwapStdDevBandsOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.upper.is_finite()
+                    && last.middle.is_finite()
+                    && last.lower.is_finite()
+                    && last.stddev.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.upper)
     }
@@ -2011,7 +2360,10 @@ where
     I: Indicator<Input = Candle, Output = wc::WaveTrendOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.wt1.is_finite() && last.wt2.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.wt1)
     }
@@ -2031,7 +2383,16 @@ where
     I: Indicator<Input = Candle, Output = wc::WoodiePivotsOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.pp.is_finite()
+                    && last.r1.is_finite()
+                    && last.r2.is_finite()
+                    && last.s1.is_finite()
+                    && last.s2.is_finite()
+            });
         self.last = out;
         self.last.as_ref().map(|last| last.pp)
     }
@@ -2059,7 +2420,10 @@ where
     I: Indicator<Input = Candle, Output = wc::ZigZagOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = input.candle.and_then(|c| self.inner.update(c));
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| last.swing.is_finite() && last.direction.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.swing)
     }
@@ -2079,7 +2443,12 @@ where
     I: Indicator<Input = f64, Output = wc::BollingerOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
+        let out = self.inner.update(input.price).filter(|last| {
+            last.upper.is_finite()
+                && last.middle.is_finite()
+                && last.lower.is_finite()
+                && last.stddev.is_finite()
+        });
         self.last = out;
         self.last.as_ref().map(|last| last.upper)
     }
@@ -2106,7 +2475,9 @@ where
     I: Indicator<Input = f64, Output = wc::BomarBandsOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
+        let out = self.inner.update(input.price).filter(|last| {
+            last.upper.is_finite() && last.middle.is_finite() && last.lower.is_finite()
+        });
         self.last = out;
         self.last.as_ref().map(|last| last.upper)
     }
@@ -2132,7 +2503,13 @@ where
     I: Indicator<Input = f64, Output = wc::DoubleBollingerOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
+        let out = self.inner.update(input.price).filter(|last| {
+            last.upper_outer.is_finite()
+                && last.upper_inner.is_finite()
+                && last.middle.is_finite()
+                && last.lower_inner.is_finite()
+                && last.lower_outer.is_finite()
+        });
         self.last = out;
         self.last.as_ref().map(|last| last.upper_outer)
     }
@@ -2160,7 +2537,10 @@ where
     I: Indicator<Input = f64, Output = wc::HtPhasorOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
+        let out = self
+            .inner
+            .update(input.price)
+            .filter(|last| last.inphase.is_finite() && last.quadrature.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.inphase)
     }
@@ -2180,7 +2560,10 @@ where
     I: Indicator<Input = f64, Output = wc::KstOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
+        let out = self
+            .inner
+            .update(input.price)
+            .filter(|last| last.kst.is_finite() && last.signal.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.kst)
     }
@@ -2200,7 +2583,9 @@ where
     I: Indicator<Input = f64, Output = wc::LinRegChannelOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
+        let out = self.inner.update(input.price).filter(|last| {
+            last.upper.is_finite() && last.middle.is_finite() && last.lower.is_finite()
+        });
         self.last = out;
         self.last.as_ref().map(|last| last.upper)
     }
@@ -2226,7 +2611,9 @@ where
     I: Indicator<Input = f64, Output = wc::MaEnvelopeOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
+        let out = self.inner.update(input.price).filter(|last| {
+            last.upper.is_finite() && last.middle.is_finite() && last.lower.is_finite()
+        });
         self.last = out;
         self.last.as_ref().map(|last| last.upper)
     }
@@ -2252,7 +2639,9 @@ where
     I: Indicator<Input = f64, Output = wc::MacdOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
+        let out = self.inner.update(input.price).filter(|last| {
+            last.macd.is_finite() && last.signal.is_finite() && last.histogram.is_finite()
+        });
         self.last = out;
         self.last.as_ref().map(|last| last.macd)
     }
@@ -2278,7 +2667,10 @@ where
     I: Indicator<Input = f64, Output = wc::MamaOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
+        let out = self
+            .inner
+            .update(input.price)
+            .filter(|last| last.mama.is_finite() && last.fama.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.mama)
     }
@@ -2298,7 +2690,9 @@ where
     I: Indicator<Input = f64, Output = wc::MedianChannelOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
+        let out = self.inner.update(input.price).filter(|last| {
+            last.upper.is_finite() && last.middle.is_finite() && last.lower.is_finite()
+        });
         self.last = out;
         self.last.as_ref().map(|last| last.upper)
     }
@@ -2324,7 +2718,10 @@ where
     I: Indicator<Input = f64, Output = wc::QqeOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
+        let out = self
+            .inner
+            .update(input.price)
+            .filter(|last| last.rsi_ma.is_finite() && last.trailing_line.is_finite());
         self.last = out;
         self.last.as_ref().map(|last| last.rsi_ma)
     }
@@ -2349,7 +2746,9 @@ where
     I: Indicator<Input = f64, Output = wc::QuartileBandsOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
+        let out = self.inner.update(input.price).filter(|last| {
+            last.upper.is_finite() && last.middle.is_finite() && last.lower.is_finite()
+        });
         self.last = out;
         self.last.as_ref().map(|last| last.upper)
     }
@@ -2375,7 +2774,9 @@ where
     I: Indicator<Input = f64, Output = wc::StandardErrorBandsOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
+        let out = self.inner.update(input.price).filter(|last| {
+            last.upper.is_finite() && last.middle.is_finite() && last.lower.is_finite()
+        });
         self.last = out;
         self.last.as_ref().map(|last| last.upper)
     }
@@ -2401,7 +2802,9 @@ where
     I: Indicator<Input = f64, Output = wc::ZeroLagMacdOutput> + Send,
 {
     fn update(&mut self, input: &TickInput) -> Option<f64> {
-        let out = self.inner.update(input.price);
+        let out = self.inner.update(input.price).filter(|last| {
+            last.macd.is_finite() && last.signal.is_finite() && last.histogram.is_finite()
+        });
         self.last = out;
         self.last.as_ref().map(|last| last.macd)
     }
@@ -2473,7 +2876,7 @@ fn map_new<T>(kind: &str, made: core::result::Result<T, wc::Error>) -> Result<T>
 }
 
 /// Every registered indicator name, sorted.
-pub const KINDS: [&str; 462] = [
+pub const KINDS: [&str; 459] = [
     "AbandonedBaby",
     "Abcd",
     "AccelerationBands",
@@ -2612,7 +3015,6 @@ pub const KINDS: [&str; 462] = [
     "FractalChaosBands",
     "Frama",
     "FryPanBottom",
-    "GainLossRatio",
     "GainToPainRatio",
     "GapSideBySideWhite",
     "Garch11",
@@ -2722,7 +3124,6 @@ pub const KINDS: [&str; 462] = [
     "Nrtr",
     "Nvi",
     "Obv",
-    "OmegaRatio",
     "OnNeck",
     "OpeningMarubozu",
     "OpeningRange",
@@ -2751,7 +3152,6 @@ pub const KINDS: [&str; 462] = [
     "Ppo",
     "PpoHistogram",
     "ProfileShape",
-    "ProfitFactor",
     "ProjectionBands",
     "ProjectionOscillator",
     "Psar",
@@ -2942,7 +3342,7 @@ pub const KINDS: [&str; 462] = [
 /// same values the library pins its own reference outputs with. Used by the
 /// build-all test so every registered indicator is constructed the way wickra
 /// constructs it, rather than with a guessed parameter count.
-pub const DEFAULTS: [(&str, &[f64]); 460] = [
+pub const DEFAULTS: [(&str, &[f64]); 457] = [
     ("AbandonedBaby", &[]),
     ("Abcd", &[]),
     ("AccelerationBands", &[14.0, 2.0]),
@@ -3080,7 +3480,6 @@ pub const DEFAULTS: [(&str, &[f64]); 460] = [
     ("FractalChaosBands", &[14.0]),
     ("Frama", &[14.0]),
     ("FryPanBottom", &[14.0]),
-    ("GainLossRatio", &[14.0]),
     ("GainToPainRatio", &[14.0]),
     ("GapSideBySideWhite", &[]),
     ("Garch11", &[2e-06, 0.1, 0.88]),
@@ -3189,7 +3588,6 @@ pub const DEFAULTS: [(&str, &[f64]); 460] = [
     ("Nrtr", &[2.0]),
     ("Nvi", &[]),
     ("Obv", &[]),
-    ("OmegaRatio", &[14.0, 2.0]),
     ("OnNeck", &[]),
     ("OpeningMarubozu", &[]),
     ("OpeningRange", &[14.0]),
@@ -3218,7 +3616,6 @@ pub const DEFAULTS: [(&str, &[f64]); 460] = [
     ("Ppo", &[3.0, 7.0]),
     ("PpoHistogram", &[3.0, 7.0, 14.0]),
     ("ProfileShape", &[3.0, 7.0]),
-    ("ProfitFactor", &[14.0]),
     ("ProjectionBands", &[14.0]),
     ("ProjectionOscillator", &[14.0]),
     ("Psar", &[0.02, 0.02, 0.2]),
@@ -4194,9 +4591,6 @@ fn build_inner(
         "FryPanBottom" => Ok(Box::new(CandleIn {
             inner: map_new(kind, wc::FryPanBottom::new(usize_param(params, 0, kind)?))?,
         })),
-        "GainLossRatio" => Ok(Box::new(ScalarPrice {
-            inner: map_new(kind, wc::GainLossRatio::new(usize_param(params, 0, kind)?))?,
-        })),
         "GainToPainRatio" => Ok(Box::new(ScalarPrice {
             inner: map_new(
                 kind,
@@ -4753,12 +5147,6 @@ fn build_inner(
         "Obv" => Ok(Box::new(CandleIn {
             inner: wc::Obv::new(),
         })),
-        "OmegaRatio" => Ok(Box::new(ScalarPrice {
-            inner: map_new(
-                kind,
-                wc::OmegaRatio::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
-            )?,
-        })),
         "OnNeck" => Ok(Box::new(CandleIn {
             inner: wc::OnNeck::new(),
         })),
@@ -4903,9 +5291,6 @@ fn build_inner(
                 kind,
                 wc::ProfileShape::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
             )?,
-        })),
-        "ProfitFactor" => Ok(Box::new(ScalarPrice {
-            inner: map_new(kind, wc::ProfitFactor::new(usize_param(params, 0, kind)?))?,
         })),
         "ProjectionBands" => Ok(Box::new(CandleInFields {
             inner: map_new(

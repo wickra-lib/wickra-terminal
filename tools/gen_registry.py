@@ -72,6 +72,29 @@ WRAPPERS = {
 
 SUPPORTED_INPUTS = set(WRAPPERS)
 
+# Indicators whose `Input = f64` is a per-period RETURN, not a price.
+#
+# wickra-core says so in their own docs -- "Input is treated as a per-period
+# return", "over the trailing window of `period` returns" -- and the terminal has
+# only a price to give them. Fed a price, every input looks like a gain, the
+# denominator is zero and they return `inf` for every reading: measured across
+# 400 varied prices, finite=0 and non-finite=1161.
+#
+# So they are skipped rather than registered, the same call P4.3d made for
+# `Footprint`: an indicator that cannot produce a meaningful value from what this
+# terminal can feed it does not belong in the catalogue. Reaching them properly
+# needs a returns input family, which is a feature rather than a fix.
+#
+# Only these three are excluded because only these three are provably broken --
+# the completeness suite drives all 460 and exactly these produce no finite value.
+# Other return-documented indicators compute their own returns internally and do
+# work on a price.
+RETURN_INPUT_ONLY = {
+    "GainLossRatio",
+    "OmegaRatio",
+    "ProfitFactor",
+}
+
 # The core type each family names, for the `Indicator<Input = ...>` bound.
 INPUT_TY = {
     "f64": "f64",
@@ -389,7 +412,7 @@ where
     I: Indicator<Input = {INPUT_TY[family]}, Output = f64> + Send,
 {{
     fn update(&mut self, input: &TickInput) -> Option<f64> {{
-        {UPDATE_EXPR[family]}
+        {UPDATE_EXPR[family]}.filter(|value| value.is_finite())
     }}
     fn fields(&self) -> Vec<(&'static str, f64)> {{
         Vec::new()
@@ -439,6 +462,7 @@ def emit_field_impls(structs: dict[tuple[str, str], list[str]]) -> str:
         wrapper = WRAPPERS[family][1]
         pairs = ", ".join(f'("{f}", last.{f})' for f in fields)
         primary = fields[0]
+        finite_check = " && ".join(f"last.{f}.is_finite()" for f in fields)
         out.append(
             f"""
 impl<I> TickIndicator for {wrapper}<I, wc::{struct}>
@@ -446,7 +470,8 @@ where
     I: Indicator<Input = {INPUT_TY[family]}, Output = wc::{struct}> + Send,
 {{
     fn update(&mut self, input: &TickInput) -> Option<f64> {{
-        let out = {UPDATE_EXPR[family]};
+        let out = {UPDATE_EXPR[family]}
+            .filter(|last| {finite_check});
         self.last = out;
         self.last.as_ref().map(|last| last.{primary})
     }}
@@ -544,6 +569,10 @@ def main() -> None:
             if inp is None or out is None:
                 skipped["no associated types"] += 1
                 skipped_names.setdefault("no associated types", []).append(ty)
+                continue
+            if ty in RETURN_INPUT_ONLY:
+                skipped["input is a return, not a price"] += 1
+                skipped_names.setdefault("input is a return, not a price", []).append(ty)
                 continue
             if inp not in SUPPORTED_INPUTS:
                 skipped[f"input {inp}"] += 1

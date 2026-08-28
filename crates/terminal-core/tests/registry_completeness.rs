@@ -225,6 +225,61 @@ fn every_registered_indicator_produces_a_value() {
 }
 
 #[test]
+fn no_indicator_ever_reports_a_non_finite_value() {
+    // `serde_json` writes inf and NaN as `null`. Inside `Option<f64>` that is
+    // indistinguishable from "warming up"; inside the series `Vec<f64>` it is
+    // JSON that the frame's own `Deserialize` rejects, and that a Go
+    // `[]float64` or a C# `double[]` cannot hold at all. The frame is the
+    // cross-language contract, so a non-finite reading must never reach it.
+    //
+    // The wrappers filter it, and this drives every arm to keep them filtering.
+    // The golden corpus cannot cover this: it exercises three indicators.
+    let mut leaked = Vec::new();
+    for (kind, params) in DEFAULTS {
+        let mut indicator = build_any(kind, params);
+        let mut builder = CandleBuilder::new(Timeframe::parse(BAR_SPACING).unwrap());
+        for bar in 0..200_i64 {
+            for trade in 0..TRADES_PER_BAR {
+                let step = bar * TRADES_PER_BAR + trade;
+                let price = price_at(step) + intrabar_offset(trade);
+                let size = VOLUME_SCALE * (1.0 + (step % 7) as f64);
+                let ts = bar * BAR_MS + trade * (BAR_MS / TRADES_PER_BAR);
+                let mut input = TickInput::price(price);
+                input.candle = builder.update(price, size, ts);
+                input.trade = Some(trade_at(price, size, step, ts));
+                input.book = Some(book_at(price, step));
+                input
+                    .references
+                    .insert(REFERENCE.to_string(), reference_at(step));
+
+                if let Some(value) = indicator.update(&input) {
+                    if !value.is_finite() {
+                        leaked.push(format!("{kind} value={value}"));
+                    }
+                }
+                for (name, value) in indicator.fields() {
+                    if !value.is_finite() {
+                        leaked.push(format!("{kind}.{name}={value}"));
+                    }
+                }
+            }
+        }
+    }
+    leaked.sort();
+    leaked.dedup();
+    assert!(
+        leaked.is_empty(),
+        "{} non-finite readings reached the frame:
+  {}",
+        leaked.len(),
+        leaked.join(
+            "
+  "
+        )
+    );
+}
+
+#[test]
 fn multi_output_indicators_expose_their_fields() {
     // MACD is the canonical multi-output shape: a line, a signal and a histogram.
     let (values, fields) = drive("MacdIndicator", &[12.0, 26.0, 9.0], 400);
@@ -358,7 +413,7 @@ fn a_candle_indicator_reads_the_bar_not_the_price() {
 /// The number is a floor rather than an equality, so adding indicators upstream
 /// does not fail the build; only losing them does. Raise it when a regeneration
 /// legitimately grows the set.
-const REGISTERED_FLOOR: usize = 460;
+const REGISTERED_FLOOR: usize = 457;
 
 #[test]
 fn the_registry_has_not_silently_shrunk() {

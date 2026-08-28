@@ -162,7 +162,7 @@ stopifnot(grepl('"name":"Atr(14)"', removed, fixed = TRUE))
 ## The catalogue answers with the whole registry: one "kind" key per row.
 catalogue <- wkterm_command(rterm, '{"type":"ListIndicators"}')
 rows <- length(gregexpr('"kind":', catalogue, fixed = TRUE)[[1]])
-stopifnot(rows >= 460)
+stopifnot(rows >= 457)
 stopifnot(grepl('"kind":"Sma"', catalogue, fixed = TRUE))
 stopifnot(grepl('"kind":"MacdIndicator"', catalogue, fixed = TRUE))
 
