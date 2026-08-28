@@ -65,9 +65,19 @@ pub unsafe extern "C" fn wickra_terminal_new(config_json: *const c_char) -> *mut
 /// [`wickra_terminal_new`] and not already freed.
 #[no_mangle]
 pub unsafe extern "C" fn wickra_terminal_free(handle: *mut WickraTerminal) {
-    if !handle.is_null() {
-        drop(unsafe { Box::from_raw(handle) });
+    if handle.is_null() {
+        return;
     }
+    // Guarded like every other entry point, and this one is not the cheapest of
+    // them: the drop runs the whole chain -- the terminal, its sources, a
+    // `LiveSource`'s `Box<dyn Exchange>` and the transport threads it owns. A
+    // panic anywhere in there would unwind out of an `extern "C"` function,
+    // which is the exact hazard `panic = "unwind"` was chosen to let a boundary
+    // catch, and the only boundary here is this one.
+    //
+    // Nothing to report: freeing returns void, and a caller who has just given
+    // up ownership has nothing left to do about it either way.
+    let _ = catch_unwind(AssertUnwindSafe(|| drop(unsafe { Box::from_raw(handle) })));
 }
 
 /// Apply a command JSON and write the resulting frame JSON to `*out_json`.
@@ -122,9 +132,13 @@ pub unsafe extern "C" fn wickra_terminal_command(
 /// `s` must be null or a pointer returned by this library and not already freed.
 #[no_mangle]
 pub unsafe extern "C" fn wickra_terminal_free_string(s: *mut c_char) {
-    if !s.is_null() {
-        drop(unsafe { CString::from_raw(s) });
+    if s.is_null() {
+        return;
     }
+    // The same shape at lower risk: a `CString` drop is an allocator call rather
+    // than a chain of user code. Guarded anyway, so that "every entry point
+    // catches" is a property of this file rather than a list of exceptions.
+    let _ = catch_unwind(AssertUnwindSafe(|| drop(unsafe { CString::from_raw(s) })));
 }
 
 /// The library version as a static NUL-terminated string (do not free).
@@ -137,6 +151,56 @@ pub extern "C" fn wickra_terminal_version() -> *const c_char {
 
 #[cfg(test)]
 mod tests {
+
+    /// Every entry point that runs core code catches a panic before returning.
+    ///
+    /// `panic = "unwind"` is set at the workspace root so that each boundary can
+    /// catch rather than the process aborting, which does nothing for a boundary
+    /// that does not catch. `wickra_terminal_free` was that boundary: it ran the
+    /// whole drop chain -- sources, a `LiveSource`'s `Box<dyn Exchange>`, its
+    /// transport threads -- outside any guard, so a panic in a `Drop` unwound out
+    /// of an `extern "C"` function.
+    ///
+    /// Read from the source because a panic cannot be provoked through these
+    /// functions on purpose, which is why one of them went unguarded.
+    #[test]
+    fn every_entry_point_that_runs_code_catches_a_panic() {
+        // Returns a pointer to a compile-time constant and calls nothing.
+        const CANNOT_PANIC: &str = "wickra_terminal_version";
+
+        let source = include_str!("lib.rs");
+        let mut checked = 0;
+        for definition in source.split("pub ").skip(1) {
+            let Some(rest) = definition
+                .strip_prefix("unsafe extern \"C\" fn ")
+                .or_else(|| definition.strip_prefix("extern \"C\" fn "))
+            else {
+                continue;
+            };
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if name == CANNOT_PANIC {
+                continue;
+            }
+            let body = definition
+                .split(
+                    "
+}
+",
+                )
+                .next()
+                .unwrap_or(definition);
+            assert!(
+                body.contains("catch_unwind"),
+                "{name} can run core code but does not catch a panic"
+            );
+            checked += 1;
+        }
+        assert_eq!(checked, 4, "expected new, free, command and free_string");
+    }
+
     use super::*;
 
     const CONFIG: &str = r#"{"sources":[{"Synth":{"seed":1}}],"layout":{"panels":[{"kind":"Chart","rect":{"x":0,"y":0,"w":100,"h":100}}]}}"#;
