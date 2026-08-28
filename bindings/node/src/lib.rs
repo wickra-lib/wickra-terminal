@@ -5,7 +5,6 @@
 //! JSON. The same command protocol crosses every binding, so a Node front-end
 //! drives the exact same core as the native TUI.
 
-#![allow(missing_debug_implementations)]
 // napi exposes owned `String` arguments; the bodies only need to borrow them.
 #![allow(clippy::needless_pass_by_value)]
 
@@ -27,6 +26,7 @@ pub fn version() -> String {
 
 /// A trading terminal instance driven by JSON commands.
 #[napi]
+#[derive(Debug)]
 pub struct Terminal {
     inner: CoreTerminal,
 }
