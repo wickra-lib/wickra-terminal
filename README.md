@@ -131,27 +131,20 @@ Both consume the identical `Frame` of view-models from `terminal-core`.
 > first release waits on that crate. Until then, build from source (below). The
 > commands here are what they will be.
 
-```bash
-cargo install wickra-terminal                # Rust (the TUI binary)
-pip install wickra-terminal                  # Python
-npm install wickra-terminal                  # Node.js
-dotnet add package WickraTerminal            # C# / .NET
-go get github.com/wickra-lib/wickra-terminal-go   # Go
-```
+| Binding | Install | Example |
+|---------|---------|---------|
+| Rust (TUI binary) | `cargo install wickra-terminal` | `examples/rust/src/main.rs` |
+| Python (PyO3) | `pip install wickra-terminal` | `examples/python/synth_terminal.py` |
+| Node.js (napi-rs) | `npm install wickra-terminal` | `examples/node/synth_terminal.js` |
+| Browser / WASM | `npm install wickra-terminal-wasm` | [`web/`](web) — the Vue renderer |
+| C / C++ (C ABI) | header + library, see [`bindings/c`](bindings/c) | `examples/c/synth.c` |
+| C# (C ABI) | `dotnet add package WickraTerminal` | `examples/csharp/Program.cs` |
+| Go (cgo, C ABI) | `go get github.com/wickra-lib/wickra-terminal-go` | `examples/go/synth_terminal.go` |
+| Java (FFM, C ABI) | Maven Central `org.wickra:wickra-terminal` | `examples/java/SynthTerminal.java` |
+| R (`.Call`, C ABI) | `install.packages("wickraterminal", repos = "https://wickra-lib.r-universe.dev")` | `examples/r/synth_terminal.R` |
 
-```xml
-<!-- Java (Maven) -->
-<dependency>
-  <groupId>org.wickra</groupId>
-  <artifactId>wickra-terminal</artifactId>
-  <version>0.1.0</version>
-</dependency>
-```
-
-```r
-# R
-install.packages("wickraterminal", repos = "https://wickra-lib.r-universe.dev")
-```
+[`examples/README.md`](examples/README.md) is the cross-language index; every one
+of them drives the same core through the same JSON commands.
 
 C and C++ link the C ABI directly; the header is generated and committed at
 [`bindings/c/include/wickra_terminal.h`](bindings/c/include/wickra_terminal.h).
@@ -179,13 +172,13 @@ laptop, single-threaded, with the default two-indicator overlay:
 
 | Path | Median | Throughput |
 |------|--------|------------|
-| Fold one trade into state | 157 ns | ~6.4 M/s |
-| Apply an L2 depth diff | 115 ns | ~8.7 M/s |
-| Build all five panels' view-models | 9.8 µs | ~102 K/s |
-| One full tick (poll + fold + build) | 10.7 µs | ~94 K/s |
-| The same tick across the FFI boundary | 19.9 µs | ~50 K/s |
+| Fold one trade into state | 142 ns | ~7.0 M/s |
+| Apply an L2 depth diff | 107 ns | ~9.3 M/s |
+| Build all five panels' view-models | 8.9 µs | ~113 K/s |
+| One full tick (poll + fold + build) | 9.7 µs | ~103 K/s |
+| The same tick across the FFI boundary | 17.7 µs | ~56 K/s |
 
-A full tick costs about ten microseconds, so the core sustains tens of thousands
+A full tick costs about ten microseconds, so the core sustains a hundred thousand
 of frames per second — far above any renderer's budget, which is the point of the
 O(1) fold. The indicator count is a direct multiplier: those numbers are two
 indicators, and the registry offers <!--indicator-count-->460<!--/indicator-count-->. See [BENCHMARKS.md](BENCHMARKS.md).

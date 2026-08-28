@@ -39,7 +39,16 @@ func goldenDir(t *testing.T) string {
 		}
 		dir = filepath.Dir(dir)
 	}
-	t.Fatal("golden/ not found")
+	// Skip rather than fail. The release job mirrors this directory into
+	// wickra-terminal-go as a standalone module, which ships the tests but not
+	// the corpus that lives at the repository root, so `go test ./...` on the
+	// published module would otherwise fail for a reason that has nothing to do
+	// with the module.
+	//
+	// This does not lose the guard: the corpus is driven from the source repo,
+	// where CI runs these tests with golden/ present, and eight other language
+	// suites read the same manifest.
+	t.Skip("golden/ not found: this is the published module, which ships no corpus")
 	return ""
 }
 
@@ -109,7 +118,7 @@ func TestCorpusCoversMoreThanOneScenario(t *testing.T) {
 	// A manifest that silently shrank to one entry would leave every parity test
 	// passing while checking a fraction of what it used to.
 	_, scenarios := manifest(t)
-	if len(scenarios) < 7 {
+	if len(scenarios) < 9 {
 		t.Fatalf("only %d scenarios in the manifest", len(scenarios))
 	}
 	names := map[string]bool{}

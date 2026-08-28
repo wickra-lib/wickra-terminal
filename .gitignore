@@ -44,11 +44,24 @@ obj/
 bindings/java/target/
 
 # R build artifacts
+# Written by the wheel container-smoke job at run time.
+wheel-smoke.py
+
 bindings/r/.rlib/
 bindings/r/src/*.o
 bindings/r/src/*.so
 bindings/r/src/*.dll
+bindings/r/src/*.dylib
 bindings/r/..Rcheck/
+# Written by configure / configure.win at install time from Makevars.in, and the
+# C ABI it stages in beside them. None of it belongs in the tree: the tracked
+# file is the template, and a stale generated Makevars would silently override
+# it on the next build.
+bindings/r/src/Makevars
+bindings/r/src/Makevars.win
+bindings/r/src/wickra_terminal.h
+bindings/r/src/wickra-terminal-c/
+bindings/r/src/wickra-terminal-c.tar.gz
 
 # Local secrets — exchange API keys must never be committed.
 .env

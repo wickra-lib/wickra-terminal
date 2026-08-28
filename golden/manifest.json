@@ -37,6 +37,18 @@
       "name": "seek"
     },
     {
+      "commands": "commands/timeframe.txt",
+      "config": "configs/timeframe.json",
+      "expected": "expected/timeframe.min.json",
+      "name": "timeframe"
+    },
+    {
+      "commands": "commands/source_lifecycle.txt",
+      "config": "configs/source_lifecycle.json",
+      "expected": "expected/source_lifecycle.min.json",
+      "name": "source_lifecycle"
+    },
+    {
       "commands": "commands/multi_source.txt",
       "config": "configs/multi_source.json",
       "expected": "expected/multi_source.min.json",

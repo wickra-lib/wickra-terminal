@@ -9,8 +9,14 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 readme.workspace = true
+documentation = "https://docs.rs/terminal-core"
 keywords.workspace = true
 categories.workspace = true
+
+# docs.rs renders default features only unless told otherwise, which would hide
+# the `live` source behind a feature nobody browsing the docs can see.
+[package.metadata.docs.rs]
+all-features = true
 
 [lints]
 workspace = true

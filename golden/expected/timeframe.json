@@ -1,0 +1,330 @@
+{
+  "panels": [
+    {
+      "panel": "chart",
+      "symbol": "BTC/USDT",
+      "last": 20005.0,
+      "series": [
+        20000.0,
+        20005.0,
+        20010.0,
+        20015.0,
+        20020.0,
+        20025.0,
+        20030.0,
+        20035.0,
+        20040.0,
+        20045.0,
+        20050.0,
+        20055.0,
+        20060.0,
+        20065.0,
+        20070.0,
+        20075.0,
+        20080.0,
+        20085.0,
+        20090.0,
+        20095.0,
+        20100.0,
+        20105.0,
+        20110.0,
+        20115.0,
+        20120.0,
+        20115.0,
+        20110.0,
+        20105.0,
+        20100.0,
+        20095.0,
+        20090.0,
+        20085.0,
+        20080.0,
+        20075.0,
+        20070.0,
+        20065.0,
+        20060.0,
+        20055.0,
+        20050.0,
+        20045.0,
+        20040.0,
+        20035.0,
+        20030.0,
+        20025.0,
+        20020.0,
+        20015.0,
+        20010.0,
+        20005.0
+      ],
+      "indicators": [
+        {
+          "name": "Atr(2)",
+          "value": 28.90625,
+          "series": [
+            22.5,
+            22.5,
+            22.5,
+            22.5,
+            22.5,
+            22.5,
+            26.25,
+            26.25,
+            26.25,
+            26.25,
+            26.25,
+            26.25,
+            25.625,
+            25.625,
+            25.625,
+            25.625,
+            25.625,
+            25.625,
+            27.8125,
+            27.8125,
+            27.8125,
+            27.8125,
+            27.8125,
+            27.8125,
+            28.90625,
+            28.90625,
+            28.90625,
+            28.90625,
+            28.90625,
+            28.90625
+          ]
+        }
+      ]
+    },
+    {
+      "panel": "book",
+      "symbol": "BTC/USDT",
+      "bids": [],
+      "asks": [],
+      "spread": null
+    },
+    {
+      "panel": "footprint",
+      "symbol": "BTC/USDT",
+      "levels": [
+        {
+          "price": 20120.0,
+          "buy": 0.0,
+          "sell": 0.1
+        },
+        {
+          "price": 20115.0,
+          "buy": 0.2,
+          "sell": 0.0
+        },
+        {
+          "price": 20110.0,
+          "buy": 0.2,
+          "sell": 0.0
+        },
+        {
+          "price": 20105.0,
+          "buy": 0.0,
+          "sell": 0.2
+        },
+        {
+          "price": 20100.0,
+          "buy": 0.2,
+          "sell": 0.0
+        },
+        {
+          "price": 20095.0,
+          "buy": 0.2,
+          "sell": 0.0
+        },
+        {
+          "price": 20090.0,
+          "buy": 0.0,
+          "sell": 0.2
+        },
+        {
+          "price": 20085.0,
+          "buy": 0.2,
+          "sell": 0.0
+        },
+        {
+          "price": 20080.0,
+          "buy": 0.2,
+          "sell": 0.0
+        },
+        {
+          "price": 20075.0,
+          "buy": 0.0,
+          "sell": 0.2
+        },
+        {
+          "price": 20070.0,
+          "buy": 0.2,
+          "sell": 0.0
+        },
+        {
+          "price": 20065.0,
+          "buy": 0.2,
+          "sell": 0.0
+        }
+      ]
+    },
+    {
+      "panel": "tape",
+      "symbol": "BTC/USDT",
+      "prints": [
+        {
+          "price": 20005.0,
+          "quantity": 0.1,
+          "side": "buy",
+          "timestamp": 15698
+        },
+        {
+          "price": 20010.0,
+          "quantity": 0.1,
+          "side": "buy",
+          "timestamp": 15364
+        },
+        {
+          "price": 20015.0,
+          "quantity": 0.1,
+          "side": "sell",
+          "timestamp": 15030
+        },
+        {
+          "price": 20020.0,
+          "quantity": 0.1,
+          "side": "buy",
+          "timestamp": 14696
+        },
+        {
+          "price": 20025.0,
+          "quantity": 0.1,
+          "side": "buy",
+          "timestamp": 14362
+        },
+        {
+          "price": 20030.0,
+          "quantity": 0.1,
+          "side": "sell",
+          "timestamp": 14028
+        },
+        {
+          "price": 20035.0,
+          "quantity": 0.1,
+          "side": "buy",
+          "timestamp": 13694
+        },
+        {
+          "price": 20040.0,
+          "quantity": 0.1,
+          "side": "buy",
+          "timestamp": 13360
+        },
+        {
+          "price": 20045.0,
+          "quantity": 0.1,
+          "side": "sell",
+          "timestamp": 13026
+        },
+        {
+          "price": 20050.0,
+          "quantity": 0.1,
+          "side": "buy",
+          "timestamp": 12692
+        },
+        {
+          "price": 20055.0,
+          "quantity": 0.1,
+          "side": "buy",
+          "timestamp": 12358
+        },
+        {
+          "price": 20060.0,
+          "quantity": 0.1,
+          "side": "sell",
+          "timestamp": 12024
+        },
+        {
+          "price": 20065.0,
+          "quantity": 0.1,
+          "side": "buy",
+          "timestamp": 11690
+        },
+        {
+          "price": 20070.0,
+          "quantity": 0.1,
+          "side": "buy",
+          "timestamp": 11356
+        },
+        {
+          "price": 20075.0,
+          "quantity": 0.1,
+          "side": "sell",
+          "timestamp": 11022
+        },
+        {
+          "price": 20080.0,
+          "quantity": 0.1,
+          "side": "buy",
+          "timestamp": 10688
+        },
+        {
+          "price": 20085.0,
+          "quantity": 0.1,
+          "side": "buy",
+          "timestamp": 10354
+        },
+        {
+          "price": 20090.0,
+          "quantity": 0.1,
+          "side": "sell",
+          "timestamp": 10020
+        },
+        {
+          "price": 20095.0,
+          "quantity": 0.1,
+          "side": "buy",
+          "timestamp": 9686
+        },
+        {
+          "price": 20100.0,
+          "quantity": 0.1,
+          "side": "buy",
+          "timestamp": 9352
+        },
+        {
+          "price": 20105.0,
+          "quantity": 0.1,
+          "side": "sell",
+          "timestamp": 9018
+        },
+        {
+          "price": 20110.0,
+          "quantity": 0.1,
+          "side": "buy",
+          "timestamp": 8684
+        },
+        {
+          "price": 20115.0,
+          "quantity": 0.1,
+          "side": "buy",
+          "timestamp": 8350
+        },
+        {
+          "price": 20120.0,
+          "quantity": 0.1,
+          "side": "sell",
+          "timestamp": 8016
+        }
+      ]
+    },
+    {
+      "panel": "watchlist",
+      "rows": [
+        {
+          "source": 0,
+          "symbol": "BTC/USDT",
+          "last": 20005.0
+        }
+      ]
+    }
+  ]
+}

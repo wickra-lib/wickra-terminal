@@ -95,6 +95,14 @@ similar_names = "allow"
 many_single_char_names = "allow"
 
 [profile.release]
+opt-level = 3
+# Fat LTO across the whole graph and a single codegen unit. This is a streaming
+# core whose hot path is one indicator update per tick, so cross-crate inlining
+# is where the throughput is; the published TUI binaries and all four cdylibs
+# were shipping with the defaults (`lto = false`, 16 codegen units) until now.
+lto = "fat"
+codegen-units = 1
+strip = true
 # Unwind, not abort. Half of the old reasoning here was right -- unwinding out of
 # an `extern "C"` function is undefined behaviour -- but abort is the wrong answer
 # to it, because the fix is to catch the panic before it reaches the boundary, and
@@ -114,3 +122,15 @@ many_single_char_names = "allow"
 # uses the test profile, which unwinds, so those guards were exercised in a
 # configuration that was never shipped.
 panic = "unwind"
+
+# Benchmarks must be built the way the shipped artefact is, or the numbers
+# describe a binary nobody runs.
+[profile.bench]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+debug = false
+
+[profile.dev]
+opt-level = 0
+debug = true

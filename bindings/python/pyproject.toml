@@ -41,6 +41,7 @@ test = [
 [project.urls]
 Homepage = "https://github.com/wickra-lib/wickra-terminal"
 Repository = "https://github.com/wickra-lib/wickra-terminal"
+Documentation = "https://terminal.wickra.org"
 Issues = "https://github.com/wickra-lib/wickra-terminal/issues"
 
 [tool.maturin]

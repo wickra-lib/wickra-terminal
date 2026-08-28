@@ -193,6 +193,74 @@ jobs:
       - run: pip install --no-index --find-links bindings/python/dist wickra-terminal
       - run: pytest bindings/python/tests -q
 
+  # The Linux wheels are built in manylinux/musllinux containers at release time
+  # and were never installed anywhere before being pushed to PyPI, which is
+  # irreversible. The Python job above runs on the bare ubuntu runner, so it
+  # exercises neither container.
+  #
+  # This builds both variants the way release.yml does and then IMPORTS them.
+  # wickra's equivalent stops at the build; a wheel that compiles is not a wheel
+  # that loads, and the musllinux one is the variant nothing else touches.
+  python-wheel-container-smoke:
+    name: Python wheel (${{ matrix.manylinux }} smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # backstop: a container build from a cold cache is slow
+    strategy:
+      fail-fast: false
+      matrix:
+        manylinux: [auto, musllinux_1_2]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Sync root README into bindings/python so the build matches release
+        run: cp README.md bindings/python/README.md
+
+      # No vendored-TLS dance here, unlike wickra: this binding reaches the
+      # network through rustls, so there is no openssl-sys in the graph and the
+      # minimal container needs no Perl to build one from source.
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          working-directory: bindings/python
+          target: x86_64
+          args: --release --out dist
+          manylinux: ${{ matrix.manylinux }}
+
+      # Written to a file rather than passed with -c: the smoke needs both
+      # quote characters, and nesting them inside `docker run sh -c '...'`
+      # terminates the shell string at the first inner quote.
+      - name: Write the wheel smoke script
+        shell: bash
+        run: |
+          cat > wheel-smoke.py <<'PY'
+          import json
+          import wickra_terminal as wt
+
+          terminal = wt.Terminal(json.dumps({"sources": [{"Synth": {"seed": 1}}]}))
+          terminal.command(json.dumps({"type": "Subscribe", "source": 0, "symbol": "BTC/USDT"}))
+          frame = terminal.command(json.dumps({"type": "Tick"}))
+          assert "panels" in frame, frame
+          print("wheel loads and ticks:", len(frame), "bytes")
+          PY
+
+      - name: Import the manylinux wheel on the runner
+        if: matrix.manylinux == 'auto'
+        shell: bash
+        # A manylinux wheel is meant to install on any glibc distribution, and
+        # the runner is one, so installing it here is the real check.
+        run: |
+          python -m pip install --no-index --find-links bindings/python/dist wickra-terminal
+          python wheel-smoke.py
+
+      - name: Import the musllinux wheel in an Alpine container
+        if: matrix.manylinux == 'musllinux_1_2'
+        shell: bash
+        # musl, so it cannot install on the glibc runner. Alpine is the platform
+        # this wheel exists for, and nothing else in CI ever loads it.
+        run: |
+          docker run --rm -v "$PWD:/io" -w /io python:3.12-alpine             sh -c "pip install --no-index --find-links bindings/python/dist wickra-terminal && python wheel-smoke.py"
+
   node:
     name: Node ${{ matrix.node-version }} on ${{ matrix.os }}
     strategy:
@@ -577,12 +645,26 @@ jobs:
         # stays out — benches are not product code, and neither sibling repo
         # measures its bench crate.
         #
-        # `--no-default-features` drops the `live` feature on purpose: LiveSource is
-        # the thin real-socket path, exercised by the gated live tests rather than
-        # the offline suite, so counting it would only report a hole the offline run
-        # can never fill. Revisit when it grows a mock-socket suite.
+        # This used to pass `--no-default-features`, with a comment claiming it
+        # dropped the `live` feature. It did not. `wickra-terminal` depends on
+        # `terminal-core` with default features, and feature unification turns
+        # `live` straight back on:
+        #
+        #   cargo tree --no-default-features -e features -i terminal-core
+        #     terminal-core feature "default" <- wickra-terminal
+        #     terminal-core feature "live"    <- terminal-core feature "default"
+        #
+        # So the flag did nothing except describe a state that never held, and it
+        # could not be made to work without dropping ui-tui from the measurement,
+        # which the paragraph above explains is exactly the wrong trade.
+        #
+        # `source/live.rs` is therefore measured, and reports as a hole: it is the
+        # real-socket path, which the offline suite cannot reach. That number is
+        # honest rather than flattering. wickra closed the same hole by building a
+        # mock-WebSocket suite for its live path and then deliberately ENABLING the
+        # feature in coverage; that is the way to close this one too.
         run: >
-          cargo llvm-cov --no-default-features
+          cargo llvm-cov
           -p terminal-core -p wickra-terminal
           --lcov --output-path lcov.info
       - name: Upload to Codecov

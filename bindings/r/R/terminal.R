@@ -2,7 +2,7 @@
 #' @return A version string.
 #' @export
 wkterm_version <- function() {
-  .Call(C_wkterm_version)
+  .Call("wkterm_version", PACKAGE = "wickraterminal")
 }
 
 #' Build a terminal from a JSON config string.
@@ -10,7 +10,7 @@ wkterm_version <- function() {
 #' @return A `wickra_terminal` handle (an external pointer).
 #' @export
 wkterm_new <- function(config_json) {
-  .Call(C_wkterm_new, config_json)
+  .Call("wkterm_new", config_json, PACKAGE = "wickraterminal")
 }
 
 #' Apply a command JSON and return the resulting frame JSON.
@@ -19,5 +19,5 @@ wkterm_new <- function(config_json) {
 #' @return The resulting frame as a JSON string.
 #' @export
 wkterm_command <- function(terminal, cmd_json) {
-  .Call(C_wkterm_command, terminal, cmd_json)
+  .Call("wkterm_command", terminal, cmd_json, PACKAGE = "wickraterminal")
 }

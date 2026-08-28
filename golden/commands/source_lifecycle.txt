@@ -1,0 +1,14 @@
+{"type":"Subscribe","source":0,"symbol":"BTC/USDT"}
+{"type":"Tick"}
+{"type":"Tick"}
+{"type":"Tick"}
+{"type":"AddSource","spec":{"Synth":{"seed":11}}}
+{"type":"Subscribe","source":1,"symbol":"BTC/USDT"}
+{"type":"Tick"}
+{"type":"Tick"}
+{"type":"Tick"}
+{"type":"Unsubscribe","source":0,"symbol":"BTC/USDT"}
+{"type":"RemoveSource","id":0}
+{"type":"SetFocus","source":1,"symbol":"BTC/USDT"}
+{"type":"Tick"}
+{"type":"Tick"}
