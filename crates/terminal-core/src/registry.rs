@@ -3742,6 +3742,14 @@ pub const DEFAULTS: [(&str, &[f64]); 455] = [
     ("Zlema", &[14.0]),
 ];
 
+/// The friendly aliases, each paired with the canonical kind it builds.
+///
+/// Emitted rather than kept only in the generator, because a consumer needs
+/// them: `Catalogue::current` used to walk `DEFAULTS`, which holds canonical
+/// names only, so both aliases were constructible and invisible to
+/// `ListIndicators` -- the discovery surface every binding reads.
+pub const ALIASES: [(&str, &str); 2] = [("Bollinger", "BollingerBands"), ("Macd", "MacdIndicator")];
+
 /// Every registered indicator that reads a second market, sorted.
 ///
 /// These are the kinds [`build`] refuses: they need a reference symbol, which is

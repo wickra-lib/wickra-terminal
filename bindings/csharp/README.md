@@ -91,7 +91,9 @@ the same JSON in all of them:
 
 `ListIndicators` is the one command that answers rather than renders, and each
 row carries `needs_reference`, which marks the pairwise indicators that compare
-two markets and so require a `reference` symbol in their spec.
+two markets and so require a `reference` symbol in their spec. A row for one of
+the two friendly aliases also carries `alias_of` naming the canonical kind it
+builds, so `Macd` and `MacdIndicator` read as one indicator rather than two.
 
 A frame is `{"panels": [...]}`, one entry per configured panel, each tagged with
 its `panel` kind — `chart`, `book`, `tape`, `watchlist`, `footprint`. See

@@ -694,6 +694,13 @@ def main() -> None:
 
     pairwise = sorted(e[0] for e in entries if e[1] == "(f64,f64)")
 
+    alias_rows = chr(10).join(
+        f'    ("{alias}", "{canonical}"),'
+        for alias, canonical in sorted(ALIASES.items())
+        if any(e[0] == canonical for e in entries)
+    )
+    alias_count = alias_rows.count(chr(10)) + 1 if alias_rows else 0
+
     build_fn = f"""
 /// Every registered indicator name, sorted.
 pub const KINDS: [&str; {len(names)}] = [
@@ -706,6 +713,16 @@ pub const KINDS: [&str; {len(names)}] = [
 /// constructs it, rather than with a guessed parameter count.
 pub const DEFAULTS: [(&str, &[f64]); {len(default_rows)}] = [
 {chr(10).join(default_rows)}
+];
+
+/// The friendly aliases, each paired with the canonical kind it builds.
+///
+/// Emitted rather than kept only in the generator, because a consumer needs
+/// them: `Catalogue::current` used to walk `DEFAULTS`, which holds canonical
+/// names only, so both aliases were constructible and invisible to
+/// `ListIndicators` -- the discovery surface every binding reads.
+pub const ALIASES: [(&str, &str); {alias_count}] = [
+{alias_rows}
 ];
 
 /// Every registered indicator that reads a second market, sorted.
