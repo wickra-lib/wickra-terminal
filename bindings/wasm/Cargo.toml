@@ -33,3 +33,29 @@ getrandom = { version = "0.2", features = ["js"] }
 # backend feature (selected via .cargo/config.toml's getrandom_backend cfg).
 getrandom_v3 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 getrandom_v4 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
+
+[package.metadata.wasm-pack.profile.release.wasm-bindgen]
+debug-js-glue = false
+demangle-name-section = true
+dwarf-debug-info = false
+
+[package.metadata.wasm-pack.profile.release]
+# The wasm-opt that ships with wasm-pack is older than the WebAssembly features
+# rustc enables by default (reference-types, multivalue, bulk-memory,
+# sign-extension, mutable-globals, ...). Listing them all keeps wasm-opt happy
+# without requiring a binaryen upgrade in CI.
+#
+# This became load-bearing when the workspace release profile gained
+# `lto = "fat"` and a single codegen unit: with the whole graph visible, LLVM
+# lowers memcpy to `memory.copy` instead of a shim, and the bundled wasm-opt
+# rejected it with "Bulk memory operations require bulk memory". The build was
+# green before only because the optimiser never emitted those instructions.
+wasm-opt = [
+    '-O3',
+    '--enable-bulk-memory',
+    '--enable-mutable-globals',
+    '--enable-nontrapping-float-to-int',
+    '--enable-sign-ext',
+    '--enable-reference-types',
+    '--enable-multivalue',
+]
