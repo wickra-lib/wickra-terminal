@@ -123,6 +123,15 @@ a filename. See [docs/SOURCES.md](docs/SOURCES.md) for what each one does and
 
 Both consume the identical `Frame` of view-models from `terminal-core`.
 
+The Web row has a prerequisite the TUI row does not: `web/` depends on
+`file:../bindings/wasm/pkg`, which `wasm-pack` produces and no clone contains, so
+`npm install` fails until it has been built once.
+
+```bash
+( cd bindings/wasm && wasm-pack build --target web )
+cd web && npm install && npm run dev
+```
+
 ## Install
 
 > **Pre-release.** Nothing is published yet — the terminal depends on
