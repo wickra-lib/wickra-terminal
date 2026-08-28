@@ -26,15 +26,16 @@ const DOCS: [&str; 8] = [
     "docs/STREAMING.md",
 ];
 
-/// The eight binding READMEs, which are also the registry landing pages: PyPI,
-/// npm, NuGet, Maven Central, pkg.go.dev and r-universe render them as the first
-/// thing a user of that language reads.
+/// The eight binding READMEs, which are also the registry landing pages:
+/// `PyPI`, `npm`, `NuGet`, Maven Central, `pkg.go.dev` and r-universe render
+/// them as the first thing a user of that language reads.
 ///
-/// They are not in `DOCS`, and adding them there would be decorative: each embeds
-/// its config and commands inside a language snippet -- a Python string, a Go raw
-/// literal, an escaped C string -- so a guard that reads ```json fences finds
-/// nothing in them. What they do carry uniformly is the command table, which
-/// P11.13 had to correct by hand across all eight, and which is checked below.
+/// They are not in [`DOCS`], and adding them there would be decorative: each
+/// embeds its config and commands inside a language snippet -- a Python string,
+/// a Go raw literal, an escaped C string -- so a guard that reads fenced JSON
+/// blocks finds nothing in them. What they do carry uniformly is the command
+/// table, which P11.13 had to correct by hand across all eight, and which is
+/// checked below.
 const BINDING_READMES: [&str; 8] = [
     "bindings/c/README.md",
     "bindings/csharp/README.md",
