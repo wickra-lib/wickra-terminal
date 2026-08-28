@@ -312,7 +312,8 @@ impl Footprint {
             }
         }
 
-        picked.sort_by(|left, right| right.0.cmp(&left.0));
+        // Highest price first, which is how a ladder reads.
+        picked.sort_by_key(|level| std::cmp::Reverse(level.0));
         picked
     }
 
