@@ -256,8 +256,11 @@ impl Terminal {
                     .expect("indicator specs are validated before they reach the state");
             }
         }
+        // Scoped to this source: the re-fold has reset and is replaying only its
+        // markets, so a reference from another source would be a present-day
+        // price paired with a historical tick.
         for (sym, ev) in history {
-            self.state.fold(id, &sym, &ev);
+            self.state.fold_scoped(id, &sym, &ev, Some(id));
         }
         Ok(())
     }

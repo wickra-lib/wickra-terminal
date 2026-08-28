@@ -542,6 +542,18 @@ impl AppState {
     /// Fold one event for `(src, sym)` into state, in O(1) per event (bounded by
     /// the event's own size, never by history).
     pub fn fold(&mut self, src: SourceId, sym: &Symbol, event: &Event) {
+        self.fold_scoped(src, sym, event, None);
+    }
+
+    /// `fold`, with the reference scope a seek's re-fold needs. See
+    /// [`AppState::reference_prices`].
+    pub(crate) fn fold_scoped(
+        &mut self,
+        src: SourceId,
+        sym: &Symbol,
+        event: &Event,
+        reference_scope: Option<SourceId>,
+    ) {
         // Collected before the market's own state is borrowed mutably, which is
         // also the only order that gives the right answer: the reference markets
         // are read as they stand now, while this market's last is still the
@@ -551,7 +563,7 @@ impl AppState {
         // all come from these specs, and this one is reachable without holding a
         // borrow of any market.
         let references = if self.indicators.iter().any(|s| s.reference.is_some()) {
-            self.reference_prices()
+            self.reference_prices(reference_scope)
         } else {
             BTreeMap::new()
         };
@@ -618,10 +630,26 @@ impl AppState {
     /// as `ETH/USDT` in a config, and the same market on two feeds is the same
     /// price. When both carry it, the later one in iteration order wins, which
     /// is arbitrary but not wrong -- they are quotes for the same thing.
+    /// `scope` restricts which sources may supply a reference. `None` is the live
+    /// path and reads every market; `Some(id)` is a seek's re-fold and reads only
+    /// that source's, because those are the markets the re-fold has reset and is
+    /// replaying in order.
+    ///
+    /// Without the scope a re-fold paired every historical tick with the
+    /// reference market's *present* price, since a market on another source is
+    /// neither reset nor replayed. That made `Seek` non-deterministic for the
+    /// whole pairwise family -- a correlation of 0.88 became 0.0 after seeking to
+    /// the position it was already at -- while the entire justification for
+    /// re-folding rather than snapshotting is that it rebuilds identical state.
+    ///
+    /// A reference outside the scope is absent rather than stale, so the
+    /// indicator simply does not advance, which is what it already does before
+    /// its reference has printed.
     #[must_use]
-    fn reference_prices(&self) -> BTreeMap<String, f64> {
+    fn reference_prices(&self, scope: Option<SourceId>) -> BTreeMap<String, f64> {
         self.symbols
             .iter()
+            .filter(|((src, _), _)| scope.is_none_or(|id| *src == id))
             .filter_map(|((_, symbol), state)| {
                 state.last.to_f64().map(|price| (symbol.to_string(), price))
             })

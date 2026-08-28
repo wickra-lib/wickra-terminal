@@ -10,7 +10,9 @@
 
 use proptest::prelude::*;
 use rust_decimal::Decimal;
-use terminal_core::{AppState, CandleBuilder, Event, Symbol, Timeframe};
+use terminal_core::{
+    AppState, CandleBuilder, Config, Event, IndicatorSpec, SourceSpec, Symbol, Terminal, Timeframe,
+};
 use wickra_exchange_core::{BookLevel, OrderBookSnapshot, OrderSide, TradePrint};
 
 /// The default tape-ring cap in `SymbolState` (mirrored from the core).
@@ -167,4 +169,145 @@ proptest! {
             "closed bars are not strictly increasing in time"
         );
     }
+}
+
+proptest! {
+    #[test]
+    fn seeking_back_to_a_point_rebuilds_the_state_it_had_there(
+        // Two markets on ONE source, so the whole feed is inside what a seek
+        // resets and replays. A reference on another source is a different case:
+        // that source is neither reset nor replayed, so its price cannot be
+        // reconstructed and the indicator restarts rather than reporting a
+        // number built from a present-day price. See `Terminal::seek`.
+        steps in prop::collection::vec(1u32..400, 60..120),
+        cursor in 20usize..40,
+    ) {
+        let sym_a = Symbol::new("BTC", "USDT");
+        let sym_b = Symbol::new("ETH", "USDT");
+        let mut feed = Vec::new();
+        for (i, step) in (0_i64..).zip(steps.iter()) {
+            let ts = i * 2;
+            feed.push(Event::Trade(TradePrint {
+                symbol: sym_b.clone(),
+                price: Decimal::from(500 + *step),
+                quantity: Decimal::from(1),
+                aggressor: OrderSide::Buy,
+                timestamp: ts,
+            }));
+            feed.push(Event::Trade(TradePrint {
+                symbol: sym_a.clone(),
+                price: Decimal::from(100 + *step),
+                quantity: Decimal::from(1),
+                aggressor: OrderSide::Buy,
+                timestamp: ts + 1,
+            }));
+        }
+
+        let mut config = Config::default_layout();
+        config.sources = vec![SourceSpec::Replay {
+            dataset: serde_json::to_string(&feed).expect("the feed serialises"),
+        }];
+        // A pairwise indicator, because that is the family a seek used to get
+        // wrong: it reads another market's price, which a re-fold has to
+        // reconstruct rather than read from the present.
+        config.indicators = vec![IndicatorSpec::paired(
+            "RollingCorrelation",
+            vec![14.0],
+            "ETH/USDT",
+        )];
+
+        let mut terminal = Terminal::new(&config).expect("the config is accepted");
+        terminal.subscribe(0, &sym_a).expect("BTC subscribes");
+        terminal.subscribe(0, &sym_b).expect("ETH subscribes");
+
+        let mut at_cursor = String::new();
+        for _ in 0..cursor {
+            at_cursor = terminal
+                .command_json(r#"{"type":"Tick"}"#)
+                .expect("a tick is accepted");
+        }
+        // Drive well past it, then come back.
+        for _ in 0..40 {
+            terminal
+                .command_json(r#"{"type":"Tick"}"#)
+                .expect("a tick is accepted");
+        }
+        // The frame the seek itself returns, not the one after another tick:
+        // seeking to `cursor` leaves exactly `cursor` events folded, so ticking
+        // again would fold one more and compare two different points.
+        let rebuilt = terminal
+            .command_json(&format!(r#"{{"type":"Seek","source":0,"index":{cursor}}}"#))
+            .expect("the replay source seeks");
+
+        prop_assert_eq!(
+            at_cursor,
+            rebuilt,
+            "seeking back to {} did not rebuild the frame it had there",
+            cursor
+        );
+    }
+}
+
+#[test]
+fn a_cross_source_reference_is_absent_after_a_seek_rather_than_stale() {
+    // The case the scope exists for. `seek` resets and replays only the seeked
+    // source, so a reference market living on ANOTHER source is neither reset
+    // nor replayed. Reading it unscoped paired every historical tick with its
+    // present-day price: a correlation of 0.88 became 0.0 after seeking to the
+    // position it was already at, while the whole justification for re-folding
+    // rather than snapshotting is that it rebuilds identical state.
+    //
+    // It cannot be rebuilt, so it must be absent rather than wrong.
+    let btc = Symbol::new("BTC", "USDT");
+    let eth = Symbol::new("ETH", "USDT");
+    let trades = |symbol: &Symbol, base: u32, offset: i64| -> Vec<Event> {
+        (0..60_i64)
+            .map(|i| {
+                Event::Trade(TradePrint {
+                    symbol: symbol.clone(),
+                    price: Decimal::from(base + u32::try_from(i % 17).unwrap_or(0)),
+                    quantity: Decimal::from(1),
+                    aggressor: OrderSide::Buy,
+                    timestamp: i * 2 + offset,
+                })
+            })
+            .collect()
+    };
+
+    let mut config = Config::default_layout();
+    config.sources = vec![
+        SourceSpec::Replay {
+            dataset: serde_json::to_string(&trades(&btc, 100, 2)).expect("serialises"),
+        },
+        SourceSpec::Replay {
+            dataset: serde_json::to_string(&trades(&eth, 500, 1)).expect("serialises"),
+        },
+    ];
+    config.indicators = vec![IndicatorSpec::paired(
+        "RollingCorrelation",
+        vec![14.0],
+        "ETH/USDT",
+    )];
+
+    let mut terminal = Terminal::new(&config).expect("the config is accepted");
+    terminal.subscribe(0, &btc).expect("BTC subscribes");
+    terminal.subscribe(1, &eth).expect("ETH subscribes");
+    for _ in 0..60 {
+        terminal
+            .command_json(r#"{"type":"Tick"}"#)
+            .expect("a tick is accepted");
+    }
+
+    let rebuilt = terminal
+        .command_json(r#"{"type":"Seek","source":0,"index":40}"#)
+        .expect("the replay source seeks");
+    let value = rebuilt
+        .split(r#""name":"RollingCorrelation(14) vs ETH/USDT","value":"#)
+        .nth(1)
+        .and_then(|rest| rest.split([',', '}']).next())
+        .expect("the indicator is in the frame");
+    assert_eq!(
+        value, "null",
+        "a cross-source reference survived a seek, so the reading was rebuilt from a          present-day price rather than a historical one"
+    );
 }
