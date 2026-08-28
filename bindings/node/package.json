@@ -24,9 +24,7 @@
   "homepage": "https://github.com/wickra-lib/wickra-terminal",
   "files": [
     "index.js",
-    "index.d.ts",
-    "npm",
-    "*.node"
+    "index.d.ts"
   ],
   "napi": {
     "name": "wickra-terminal",
