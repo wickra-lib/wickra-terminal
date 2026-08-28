@@ -4,15 +4,13 @@ title: "wickra-terminal"
 abstract: >-
   A streaming trading terminal built on the Wickra core: one data-driven core
   exposed in ten languages, with a native TUI and a Web front-end as two renderers
-  over it. Panels emit view-models, so one core drives every front-end, and 460 of
+  over it. Panels emit view-models, so one core drives every front-end, and 455 of
   the Wickra indicators are constructible by name from a config or at run time.
 type: software
 authors:
   - alias: kingchenc
     website: "https://wickra.org"
 repository-code: "https://github.com/wickra-lib/wickra-terminal"
-version: "0.1.0"
-date-released: "2026-08-27"
 url: "https://terminal.wickra.org"
 license:
   - MIT

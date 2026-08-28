@@ -16,11 +16,38 @@ static void wkterm_finalize(SEXP ext) {
 }
 
 static WickraTerminal *handle_of(SEXP ext) {
+    /* R_ExternalPtrAddr on anything that is not an external pointer reads a
+     * field that is not there. .Call passes whatever the caller wrote, so the
+     * type is checked rather than assumed. */
+    if (TYPEOF(ext) != EXTPTRSXP) {
+        Rf_error("wickra-terminal: not a terminal handle");
+    }
     WickraTerminal *h = (WickraTerminal *)R_ExternalPtrAddr(ext);
     if (!h) {
         Rf_error("wickra-terminal: handle is closed");
     }
     return h;
+}
+
+/* The single element of a character argument, as a C string.
+ *
+ * STRING_ELT(x, 0) on a zero-length vector indexes past its data, and CHAR() on
+ * what comes back dereferences whatever was there: `wkterm_new(character(0))`
+ * crashed the R session rather than raising. .Call does no checking of its own,
+ * so every argument this shim dereferences is checked here. */
+static const char *scalar_string(SEXP value, const char *what) {
+    if (TYPEOF(value) != STRSXP) {
+        Rf_error("wickra-terminal: %s must be a character vector", what);
+    }
+    if (Rf_xlength(value) != 1) {
+        Rf_error("wickra-terminal: %s must be a single string, not %lld",
+                 what, (long long)Rf_xlength(value));
+    }
+    SEXP element = STRING_ELT(value, 0);
+    if (element == NA_STRING) {
+        Rf_error("wickra-terminal: %s must not be NA", what);
+    }
+    return CHAR(element);
 }
 
 /* --- exported .Call entries ---------------------------------------------- */
@@ -30,7 +57,7 @@ SEXP wkterm_version(void) {
 }
 
 SEXP wkterm_new(SEXP config_json) {
-    WickraTerminal *h = wickra_terminal_new(CHAR(STRING_ELT(config_json, 0)));
+    WickraTerminal *h = wickra_terminal_new(scalar_string(config_json, "config"));
     if (!h) {
         Rf_error("wickra-terminal: invalid config");
     }
@@ -43,7 +70,8 @@ SEXP wkterm_new(SEXP config_json) {
 SEXP wkterm_command(SEXP ext, SEXP cmd_json) {
     WickraTerminal *h = handle_of(ext);
     char *out = NULL;
-    int code = wickra_terminal_command(h, CHAR(STRING_ELT(cmd_json, 0)), &out);
+    const char *cmd = scalar_string(cmd_json, "command");
+    int code = wickra_terminal_command(h, cmd, &out);
 
     if (code != WICKRA_TERMINAL_OK) {
         /* Copy the error message out before freeing, then raise. */

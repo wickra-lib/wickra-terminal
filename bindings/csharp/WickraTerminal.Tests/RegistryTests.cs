@@ -79,7 +79,7 @@ public class RegistryTests
         using var term = Subscribed();
         using var doc = JsonDocument.Parse(term.Command("{\"type\":\"ListIndicators\"}"));
         var rows = doc.RootElement.GetProperty("indicators");
-        Assert.True(rows.GetArrayLength() >= 460, $"only {rows.GetArrayLength()} entries");
+        Assert.True(rows.GetArrayLength() >= 455, $"only {rows.GetArrayLength()} entries");
 
         // Every row carries the parameters needed to construct it: discovery
         // without a second lookup.

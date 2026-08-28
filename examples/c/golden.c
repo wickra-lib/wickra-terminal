@@ -96,7 +96,14 @@ static const char *golden_prefix(void) {
  * Quoted tokens alternate between keys and values. A token that matches one of
  * the known keys selects what the next one means; a scenario is complete when
  * its name has been read, which is why the generator writes name last. Mutates
- * `raw` in place, terminating each token where its closing quote was. */
+ * `raw` in place, terminating each token where its closing quote was.
+ *
+ * Returns how many scenarios the manifest HOLDS, storing the first `max` of
+ * them. The caller compares the two: this used to stop counting at `max` and
+ * drop the rest without a word, so a manifest that outgrew this file would have
+ * left the hub -- the one binding every other routes through -- quietly checking
+ * a prefix of the corpus while reporting a pass. Truncating is the failure this
+ * file exists to make impossible. */
 static size_t parse_manifest(char *raw, Scenario *out, size_t max) {
     static const char *keys[] = {"scenarios", "commands", "config", "expected", "name"};
     Scenario current;
@@ -141,8 +148,9 @@ static size_t parse_manifest(char *raw, Scenario *out, size_t max) {
         } else if (strcmp(key, "name") == 0) {
             snprintf(current.name, sizeof current.name, "%s", token);
             if (count < max) {
-                out[count++] = current;
+                out[count] = current;
             }
+            count++;
             memset(&current, 0, sizeof current);
             key = NULL;
         }
@@ -250,6 +258,14 @@ int main(void) {
     Scenario scenarios[MAX_SCENARIOS];
     size_t count = parse_manifest(raw, scenarios, MAX_SCENARIOS);
     free(raw);
+
+    if (count > MAX_SCENARIOS) {
+        fprintf(stderr,
+                "the manifest holds %zu scenarios and this example has room for %d; raise "
+                "MAX_SCENARIOS rather than checking a prefix\n",
+                count, MAX_SCENARIOS);
+        return 1;
+    }
 
     /* A manifest that silently shrank would leave this passing while checking a
      * fraction of what it used to, so the count is floored the way the other

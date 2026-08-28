@@ -518,6 +518,30 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Tags, so the version can be resolved on a dispatch as well as a push.
+          fetch-depth: 0
+      - name: Resolve the release version
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          # The same resolution `github-release` does, and for the same reason.
+          # `GITHUB_REF_NAME` is the BRANCH on a workflow_dispatch, so stripping a
+          # leading `v` from it yielded "main".
+          if [ "$EVENT_NAME" = "push" ] && [[ "$REF" == refs/tags/* ]]; then
+            tag="$REF_NAME"
+          else
+            tag=$(git tag --list 'v*' --sort=-v:refname | head -n1)
+          fi
+          if [ -z "$tag" ]; then
+            echo "::error::no v* tag found to publish"
+            exit 1
+          fi
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "::notice::publishing version ${tag#v}"
       - name: Download the C ABI native libraries
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -557,7 +581,7 @@ jobs:
           retry_wait_seconds: 20
           shell: bash
           command: |
-            version="${GITHUB_REF_NAME#v}"
+            version="${{ steps.version.outputs.version }}"
             dotnet pack bindings/csharp/WickraTerminal/WickraTerminal.csproj -c Release -p:Version="$version" -o nupkg
       - name: NuGet login (OIDC -> temporary API key)
         uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
@@ -659,6 +683,30 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Tags, so the version can be resolved on a dispatch as well as a push.
+          fetch-depth: 0
+      - name: Resolve the release version
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          # The same resolution `github-release` does, and for the same reason.
+          # `GITHUB_REF_NAME` is the BRANCH on a workflow_dispatch, so stripping a
+          # leading `v` from it yielded "main".
+          if [ "$EVENT_NAME" = "push" ] && [[ "$REF" == refs/tags/* ]]; then
+            tag="$REF_NAME"
+          else
+            tag=$(git tag --list 'v*' --sort=-v:refname | head -n1)
+          fi
+          if [ -z "$tag" ]; then
+            echo "::error::no v* tag found to publish"
+            exit 1
+          fi
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "::notice::publishing version ${tag#v}"
       - name: Download the C ABI native libraries
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -704,7 +752,7 @@ jobs:
           MIRROR_TOKEN: ${{ secrets.GO_MIRROR_TOKEN }}
         run: |
           set -e
-          version="${GITHUB_REF_NAME#v}"
+          version="${{ steps.version.outputs.version }}"
           remote="https://x-access-token:${MIRROR_TOKEN}@github.com/wickra-lib/wickra-terminal-go.git"
           git clone -q "$remote" mirror-repo
           cd mirror-repo

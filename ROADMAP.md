@@ -31,7 +31,7 @@ requests.
    Best Practices, link check, release and web deploy. ✅
 10. **README, badges, docs** — the banner and badge treatment, and the docs
     guides. ✅
-11. **Indicators** — tick-to-OHLCV aggregation and a generated registry of <!--indicator-count-->460<!--/indicator-count-->
+11. **Indicators** — tick-to-OHLCV aggregation and a generated registry of <!--indicator-count-->455<!--/indicator-count-->
     `wickra-core` indicators, configurable and changeable at run time from every
     binding. ✅
 
@@ -40,12 +40,13 @@ requests.
 Nothing here is scheduled. These are the openings the current shape leaves, in
 roughly the order they would pay off.
 
-- **The remaining indicator families.** 44 of the 504 in `wickra-core` are not
+- **The remaining indicator families.** 49 of the 504 in `wickra-core` are not
   reachable, and the reason is now the same for nearly all of them:
   [`docs/INDICATORS.md`](docs/INDICATORS.md) lists them. Derivatives-tick (17),
   cross-section (15) and trade-quote (3) need feeds this repository has no source
-  for, so they are blocked on a data source rather than on wiring. The remaining
-  nine are output shapes the registry's fixed named-field model does not carry.
+  for, so they are blocked on a data source rather than on wiring. Three more read
+  a per-period return where the terminal has only a price. The remaining eleven
+  are output shapes the registry's fixed named-field model does not carry.
 - **First release.** Blocked, and not on a decision — on a dependency. The chain,
   in full, because it has one link and no way round it:
 
@@ -86,6 +87,15 @@ roughly the order they would pay off.
   So the pipeline has never run, and a dispatch would not tell us much: it would
   stop at its first job. It is verified structurally instead, which is what
   catches the faults a run that dies early never reaches.
+
+  Nine badges wait on that tag rather than sitting in the README claiming
+  something. Eight are the registry badges -- crates.io, PyPI, npm and the rest --
+  which would render as 404s until the packages exist. The ninth was in the README
+  and read "provenance: attested", against zero releases, zero tags and an
+  attestations API that answers 404: the artefacts it attests to are produced by
+  `release.yml`, so the claim becomes true at exactly the moment the rest do. They
+  are added together, in the `.github` profile repository where the badge assets
+  live, when the release actually happens.
 - **Panel-local keys.** Panel focus moves and is drawn; nothing acts on it yet —
   scrolling the tape or the book would be the first use.
 

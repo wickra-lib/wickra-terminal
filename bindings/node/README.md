@@ -78,6 +78,18 @@ the Rust surface must be rebuilt and committed with it.
 Every binding drives the same twelve commands, and the frame that comes back is
 the same JSON in all of them:
 
+## What `npm install` pulls down
+
+The published `wickra-terminal` package is four files: `index.js`, `index.d.ts`,
+`package.json` and this README. The native binary is not in it. It arrives
+through one of six optional dependencies -- `wickra-terminal-linux-x64-gnu`,
+`wickra-terminal-darwin-arm64` and so on -- each declaring the `os` and `cpu` it
+is for, so npm installs exactly the one your machine needs and skips the rest.
+
+`index.js` looks for a local `wickra-terminal.<platform>.node` first and falls
+back to the platform package, which is what makes a locally built binary work
+without reinstalling.
+
 | Command | Effect |
 |---------|--------|
 | `Tick` | Poll every source, fold what arrived, return the frame |
@@ -92,7 +104,9 @@ the same JSON in all of them:
 
 `ListIndicators` is the one command that answers rather than renders, and each
 row carries `needs_reference`, which marks the pairwise indicators that compare
-two markets and so require a `reference` symbol in their spec.
+two markets and so require a `reference` symbol in their spec. A row for one of
+the two friendly aliases also carries `alias_of` naming the canonical kind it
+builds, so `Macd` and `MacdIndicator` read as one indicator rather than two.
 
 A frame is `{"panels": [...]}`, one entry per configured panel, each tagged with
 its `panel` kind — `chart`, `book`, `tape`, `watchlist`, `footprint`. See

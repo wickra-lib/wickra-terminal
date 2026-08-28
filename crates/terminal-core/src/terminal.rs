@@ -16,7 +16,8 @@ use crate::config::{Config, IndicatorSpec, SourceSpec};
 use crate::error::{Error, Result};
 use crate::panels::{build_panel, Panel};
 use crate::registry;
-use crate::source::{build_source, event_symbol, Event, SourceId, Symbol};
+use crate::source::manual::MAX_PENDING_EVENTS;
+use crate::source::{build_source, event_symbol, Event, Fed, SourceId, Symbol};
 use crate::state::{AppState, IndicatorSet, SymbolState};
 use crate::view::Frame;
 
@@ -120,19 +121,47 @@ pub struct CatalogueEntry {
     /// catalogue is how a binding tells a user what it can build, and "this one
     /// needs a second market" is part of that.
     pub needs_reference: bool,
+    /// The canonical kind this row is a friendly alias for, if it is one.
+    ///
+    /// Absent from a row that is its own canonical name, which is all but two of
+    /// them, so the field costs nothing on the rest. Present so a caller
+    /// listing the catalogue can tell that `Macd` and `MacdIndicator` are one
+    /// indicator rather than two.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alias_of: Option<String>,
 }
 
 impl Catalogue {
     /// The catalogue of this build.
+    ///
+    /// Walks `KINDS`, which is every name `build` accepts, rather than
+    /// `DEFAULTS`, which holds only canonical ones. Walking `DEFAULTS` left the
+    /// two friendly aliases constructible and invisible: a caller could build a
+    /// `Macd`, but nothing in the discovery surface every binding reads said so.
     #[must_use]
     pub fn current() -> Self {
         Self {
-            indicators: registry::DEFAULTS
+            indicators: registry::KINDS
                 .iter()
-                .map(|(kind, params)| CatalogueEntry {
-                    kind: (*kind).to_string(),
-                    params: params.to_vec(),
-                    needs_reference: registry::PAIRWISE.contains(kind),
+                .map(|kind| {
+                    let canonical = registry::ALIASES
+                        .iter()
+                        .find(|(alias, _)| alias == kind)
+                        .map(|(_, canonical)| *canonical);
+                    // An alias builds its canonical kind, so it takes its
+                    // parameters too -- the point of carrying them is that a row
+                    // is constructible as it stands.
+                    let lookup = canonical.unwrap_or(kind);
+                    let params = registry::DEFAULTS
+                        .iter()
+                        .find(|(name, _)| name == &lookup)
+                        .map_or_else(Vec::new, |(_, params)| params.to_vec());
+                    CatalogueEntry {
+                        kind: (*kind).to_string(),
+                        params,
+                        needs_reference: registry::PAIRWISE.contains(&lookup),
+                        alias_of: canonical.map(ToString::to_string),
+                    }
                 })
                 .collect(),
         }
@@ -256,8 +285,11 @@ impl Terminal {
                     .expect("indicator specs are validated before they reach the state");
             }
         }
+        // Scoped to this source: the re-fold has reset and is replaying only its
+        // markets, so a reference from another source would be a present-day
+        // price paired with a historical tick.
         for (sym, ev) in history {
-            self.state.fold(id, &sym, &ev);
+            self.state.fold_scoped(id, &sym, &ev, Some(id));
         }
         Ok(())
     }
@@ -278,12 +310,15 @@ impl Terminal {
             ));
         };
         let source = self.state.source_mut(id).ok_or(Error::UnknownSource(id))?;
-        if !source.feed(sym, event) {
-            return Err(Error::Command(format!(
+        match source.feed(sym, event) {
+            Fed::Accepted => Ok(()),
+            Fed::Refused => Err(Error::Command(format!(
                 "source {id} does not accept fed events (subscribe the market on a manual source first)"
-            )));
+            ))),
+            Fed::Full => Err(Error::Command(format!(
+                "source {id} has {MAX_PENDING_EVENTS} events waiting: tick to drain them before feeding more"
+            ))),
         }
-        Ok(())
     }
 
     /// Subscribe a market on a source, tracking it and focusing it if nothing is
@@ -786,7 +821,7 @@ mod tests {
             .unwrap();
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         let rows = value["indicators"].as_array().expect("an indicators array");
-        assert_eq!(rows.len(), registry::DEFAULTS.len());
+        assert_eq!(rows.len(), registry::KINDS.len());
         assert!(
             value.get("panels").is_none(),
             "the catalogue is not a frame"
@@ -799,6 +834,61 @@ mod tests {
             .find(|r| r["kind"] == "Sma")
             .expect("Sma in the catalogue");
         assert_eq!(sma["params"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn the_catalogue_lists_every_name_that_can_be_built() {
+        // It used to walk `DEFAULTS`, which holds canonical names only, so both
+        // friendly aliases were constructible and absent from the one surface a
+        // caller has for finding out what exists.
+        let mut terminal = synth_terminal();
+        let json = terminal
+            .command_json(r#"{"type":"ListIndicators"}"#)
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let rows = value["indicators"].as_array().expect("an indicators array");
+
+        for kind in registry::KINDS {
+            assert!(
+                rows.iter().any(|row| row["kind"] == kind),
+                "{kind} can be built but is not in the catalogue"
+            );
+        }
+
+        // An alias carries its canonical kind's parameters, so the row is
+        // constructible as it stands, and says which kind it is.
+        let alias = rows
+            .iter()
+            .find(|row| row["kind"] == "Macd")
+            .expect("Macd in the catalogue");
+        let canonical = rows
+            .iter()
+            .find(|row| row["kind"] == "MacdIndicator")
+            .expect("MacdIndicator in the catalogue");
+        assert_eq!(alias["params"], canonical["params"]);
+        assert_eq!(alias["alias_of"], "MacdIndicator");
+        assert!(
+            canonical.get("alias_of").is_none(),
+            "a canonical row carries no alias_of"
+        );
+    }
+
+    #[test]
+    fn every_catalogue_row_builds() {
+        // The promise the catalogue makes: a row is enough to construct with.
+        let rows = Catalogue::current();
+        for row in &rows.indicators {
+            let built = if row.needs_reference {
+                registry::build_paired(&row.kind, &row.params, "ETH/USDT").is_ok()
+            } else {
+                registry::build(&row.kind, &row.params).is_ok()
+            };
+            assert!(
+                built,
+                "{} does not build from its own catalogue row",
+                row.kind
+            );
+        }
     }
 
     #[test]

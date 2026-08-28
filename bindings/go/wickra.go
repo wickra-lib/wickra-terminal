@@ -21,12 +21,24 @@ package wickraterminal
 import "C"
 
 import (
+	"errors"
 	"fmt"
 	"runtime"
 	"unsafe"
 )
 
+// ErrClosed is returned by Command when the terminal has already been closed.
+//
+// The C ABI rejects a null handle rather than dereferencing it, so this was not
+// a crash -- but it returned an error whose message was the empty string the ABI
+// had no room to write, which told a caller nothing about what they had done.
+var ErrClosed = errors.New("wickra-terminal: terminal is closed")
+
 // Terminal is a trading-terminal instance driven by JSON commands.
+//
+// A Terminal is not safe for concurrent use. It owns a mutable native terminal,
+// so two goroutines calling Command at once is a data race in the core, not a
+// contended lock; synchronise externally if more than one goroutine drives it.
 type Terminal struct {
 	handle *C.WickraTerminal
 }
@@ -48,11 +60,20 @@ func New(configJSON string) (*Terminal, error) {
 
 // Command applies a command JSON and returns the resulting frame JSON.
 func (t *Terminal) Command(cmdJSON string) (string, error) {
+	if t.handle == nil {
+		return "", ErrClosed
+	}
+
 	ccmd := C.CString(cmdJSON)
 	defer C.free(unsafe.Pointer(ccmd))
 
 	var out *C.char
 	code := C.wickra_terminal_command(t.handle, ccmd, &out)
+	// The handle was read into an argument register above, after which nothing
+	// in this frame refers to t -- so the collector may run its finalizer, and
+	// free the terminal, while the call is still executing. KeepAlive holds t
+	// live across the call, as every cgo call in the wickra library does.
+	runtime.KeepAlive(t)
 	result := ""
 	if out != nil {
 		result = C.GoString(out)
@@ -64,13 +85,15 @@ func (t *Terminal) Command(cmdJSON string) (string, error) {
 	return result, nil
 }
 
-// Close frees the terminal handle. Safe to call more than once.
+// Close frees the terminal handle. Safe to call more than once; a Command after
+// it returns ErrClosed.
 func (t *Terminal) Close() {
 	if t.handle != nil {
 		C.wickra_terminal_free(t.handle)
 		t.handle = nil
+		runtime.SetFinalizer(t, nil)
 	}
-	runtime.SetFinalizer(t, nil)
+	runtime.KeepAlive(t)
 }
 
 // Version returns the library version.

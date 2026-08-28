@@ -9,15 +9,16 @@ namespace WickraTerminal;
 /// </summary>
 public sealed class Terminal : IDisposable
 {
-    private IntPtr _handle;
+    private readonly TerminalHandle _handle;
 
     /// <summary>Build a terminal from a JSON config string.</summary>
     /// <exception cref="ArgumentException">The config is null/invalid.</exception>
     public Terminal(string configJson)
     {
         _handle = Native.wickra_terminal_new(configJson);
-        if (_handle == IntPtr.Zero)
+        if (_handle.IsInvalid)
         {
+            _handle.Dispose();
             throw new ArgumentException("wickra-terminal: invalid config", nameof(configJson));
         }
     }
@@ -26,7 +27,9 @@ public sealed class Terminal : IDisposable
     /// <exception cref="InvalidOperationException">The command failed.</exception>
     public string Command(string cmdJson)
     {
-        ObjectDisposedException.ThrowIf(_handle == IntPtr.Zero, this);
+        // The marshaller would raise this too, from the handle rather than from
+        // the terminal; checking here names the type the caller actually holds.
+        ObjectDisposedException.ThrowIf(_handle.IsClosed, this);
 
         int code = Native.wickra_terminal_command(_handle, cmdJson, out IntPtr outPtr);
         string result = outPtr == IntPtr.Zero ? string.Empty : Marshal.PtrToStringUTF8(outPtr) ?? string.Empty;
@@ -45,17 +48,14 @@ public sealed class Terminal : IDisposable
     public static string Version() =>
         Marshal.PtrToStringUTF8(Native.wickra_terminal_version()) ?? string.Empty;
 
-    /// <summary>Free the native terminal handle.</summary>
-    public void Dispose()
-    {
-        if (_handle != IntPtr.Zero)
-        {
-            Native.wickra_terminal_free(_handle);
-            _handle = IntPtr.Zero;
-        }
-        GC.SuppressFinalize(this);
-    }
-
-    /// <summary>Finalizer — frees the handle if Dispose was not called.</summary>
-    ~Terminal() => Dispose();
+    /// <summary>
+    /// Free the native terminal handle. Idempotent, and safe to call from more
+    /// than one thread: the handle releases once, under the runtime's ref count.
+    /// </summary>
+    /// <remarks>
+    /// No finalizer here. <see cref="TerminalHandle"/> carries a critical one, so
+    /// a terminal that is never disposed is still released, and a call in flight
+    /// cannot have the handle freed underneath it.
+    /// </remarks>
+    public void Dispose() => _handle.Dispose();
 }

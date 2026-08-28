@@ -93,13 +93,28 @@ pub trait DataSource {
     }
 
     /// Push an externally sourced event into a host-fed source, to be folded on
-    /// the next tick. Returns `true` if the source accepted it — a manual source
-    /// accepts events for its subscribed markets. Sources that own their feed
-    /// (live, replay, synthetic) return `false` and ignore it.
-    fn feed(&mut self, sym: Symbol, event: Event) -> bool {
+    /// the next tick. A manual source takes events for its subscribed markets;
+    /// sources that own their feed (live, replay, synthetic) refuse them.
+    fn feed(&mut self, sym: Symbol, event: Event) -> Fed {
         let _ = (sym, event);
-        false
+        Fed::Refused
     }
+}
+
+/// What a source did with an event the host fed it.
+///
+/// A bool said only yes or no, so a full queue was reported to the host as the
+/// market not being subscribed -- advice that would not have helped, for a
+/// condition that is the host's own pace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fed {
+    /// Queued, and folded on the next tick.
+    Accepted,
+    /// This source does not take fed events, or the market is not subscribed.
+    Refused,
+    /// The source takes fed events and its queue is full: the host is feeding
+    /// faster than it is ticking.
+    Full,
 }
 
 /// The market an event concerns, if it is a market (not a lifecycle) event.

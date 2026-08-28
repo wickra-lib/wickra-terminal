@@ -28,8 +28,9 @@ binding.
 ## Install
 
 Use the published **`wickra-terminal-go`** module, which bundles the prebuilt C
-ABI library for every platform, so `go get` + `go build` works with no extra
-steps (a C compiler is still required, as the binding uses cgo):
+ABI library for every platform, so `go get` + `go build` needs nothing else (a C
+compiler is still required, as the binding uses cgo). Running what you build
+needs one more step on Windows, below:
 
 ```bash
 go get github.com/wickra-lib/wickra-terminal-go
@@ -41,8 +42,28 @@ import wickra "github.com/wickra-lib/wickra-terminal-go"
 
 `wickra-terminal-go` is generated from this directory by the release pipeline: it
 mirrors the Go sources, the vendored C ABI header (`include/wickra_terminal.h`)
-and the prebuilt libraries under `lib/<goos>_<goarch>/`. On Windows the DLL must
-be discoverable at run time (next to the executable or on `PATH`).
+and the prebuilt libraries under `lib/<goos>_<goarch>/`.
+
+### Windows needs one more step
+
+Building works everywhere; **running** does not. The cgo directives carry
+`-Wl,-rpath` on Linux and macOS, so the bundled library is found next to the
+module at run time. Windows has no PE equivalent: the loader searches the
+executable's directory and `PATH`, and the DLL is in neither.
+
+A binary built against the module therefore starts and immediately exits with
+`exit status 0xc0000135` — `STATUS_DLL_NOT_FOUND`, with no message naming the
+library. Point Windows at the bundled directory, or copy the DLL next to your
+executable:
+
+```powershell
+$dir = go list -m -f '{{.Dir}}' github.com/wickra-lib/wickra-terminal-go
+$env:PATH = "$dir\lib\windows_amd64;$env:PATH"
+```
+
+CI cannot catch this: `ci.yml` puts the library directory on `PATH` before
+running the Go tests, which is exactly the step a `go get` consumer has no reason
+to take.
 
 ## Quick start
 
@@ -116,7 +137,9 @@ the same JSON in all of them:
 
 `ListIndicators` is the one command that answers rather than renders, and each
 row carries `needs_reference`, which marks the pairwise indicators that compare
-two markets and so require a `reference` symbol in their spec.
+two markets and so require a `reference` symbol in their spec. A row for one of
+the two friendly aliases also carries `alias_of` naming the canonical kind it
+builds, so `Macd` and `MacdIndicator` read as one indicator rather than two.
 
 A frame is `{"panels": [...]}`, one entry per configured panel, each tagged with
 its `panel` kind — `chart`, `book`, `tape`, `watchlist`, `footprint`. See

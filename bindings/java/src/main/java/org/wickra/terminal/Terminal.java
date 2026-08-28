@@ -3,6 +3,8 @@ package org.wickra.terminal;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
+import java.lang.ref.Cleaner;
+import java.lang.ref.Reference;
 
 /**
  * A trading-terminal instance driven by JSON commands, over the Wickra C ABI
@@ -11,33 +13,48 @@ import java.lang.foreign.ValueLayout;
  * binding.
  */
 public final class Terminal implements AutoCloseable {
-    private MemorySegment handle;
+    private final MemorySegment handle;
+    private final Cleaner.Cleanable cleanable;
+    private boolean closed;
 
     /** Build a terminal from a JSON config string. */
     public Terminal(String configJson) {
+        MemorySegment created;
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment config = arena.allocateFrom(configJson);
-            MemorySegment created = (MemorySegment) Native.NEW.invokeExact(config);
-            if (created.address() == 0) {
-                throw new IllegalArgumentException("wickra-terminal: invalid config");
-            }
-            this.handle = created;
+            created = (MemorySegment) Native.NEW.invokeExact(config);
         } catch (RuntimeException | Error e) {
             throw e;
         } catch (Throwable t) {
             throw new RuntimeException(t);
         }
+        if (created.address() == 0) {
+            throw new IllegalArgumentException("wickra-terminal: invalid config");
+        }
+        this.handle = created;
+        this.cleanable = Native.register(this, created);
+    }
+
+    /**
+     * The handle, refusing a closed terminal.
+     *
+     * <p>Reading the field directly would pass a freed pointer to the ABI after
+     * {@link #close()}; this turns that into an exception the caller can read.
+     */
+    private MemorySegment handle() {
+        if (closed) {
+            throw new IllegalStateException("terminal is closed");
+        }
+        return handle;
     }
 
     /** Apply a command JSON and return the resulting frame JSON. */
     public String command(String cmdJson) {
-        if (handle == null) {
-            throw new IllegalStateException("terminal is closed");
-        }
+        MemorySegment live = handle();
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment cmd = arena.allocateFrom(cmdJson);
             MemorySegment outHolder = arena.allocate(ValueLayout.ADDRESS);
-            int code = (int) Native.COMMAND.invokeExact(handle, cmd, outHolder);
+            int code = (int) Native.COMMAND.invokeExact(live, cmd, outHolder);
             MemorySegment outPtr = outHolder.get(ValueLayout.ADDRESS, 0);
             String result = "";
             if (outPtr.address() != 0) {
@@ -52,6 +69,11 @@ public final class Terminal implements AutoCloseable {
             throw e;
         } catch (Throwable t) {
             throw new RuntimeException(t);
+        } finally {
+            // The handle is in a register by now and nothing else refers to this
+            // terminal, so the cleaner could otherwise free it mid-call. The
+            // fence is the FFM equivalent of Go's runtime.KeepAlive.
+            Reference.reachabilityFence(this);
         }
     }
 
@@ -65,16 +87,15 @@ public final class Terminal implements AutoCloseable {
         }
     }
 
-    /** Free the native terminal handle. */
+    /** Free the native terminal handle. Idempotent. */
     @Override
     public void close() {
-        if (handle != null) {
-            try {
-                Native.FREE.invokeExact(handle);
-            } catch (Throwable t) {
-                throw new RuntimeException(t);
-            }
-            handle = null;
+        if (closed) {
+            return;
         }
+        closed = true;
+        // Through the cleanable, not a second direct free: the cleaner would
+        // otherwise still hold a registration for a handle that is already gone.
+        cleanable.clean();
     }
 }

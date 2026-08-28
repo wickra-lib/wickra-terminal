@@ -33,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - One runnable example per language, a C/C++ CMake harness, and the full CI
   workflow matrix (all ten languages across three operating systems) plus
   CodeQL, Scorecard, zizmor and link checking.
-- Indicators: **460 of the wickra-core set**, constructible by name from a config
+- Indicators: **455 of the wickra-core set**, constructible by name from a config
   or at run time, across five input families — price, bar, tape, order book and
   pairwise. `tools/gen_registry.py` reads the library's sources and emits the
   registry, so it cannot drift from what wickra actually offers; the 44 it cannot

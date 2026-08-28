@@ -205,8 +205,26 @@ impl Default for TapeRing {
     }
 }
 
+/// The most price levels a [`Footprint`] keeps.
+///
+/// The footprint was the one collection in the fold that grew without limit: an
+/// entry per distinct traded price, never evicted, while the tape (256), the
+/// price history (512) and each indicator series (120) are all bounded. A
+/// synthetic 200k-print walk left 2,926 levels still climbing, and a BTC/USDT
+/// feed quoting to the cent gives hundreds of thousands.
+///
+/// A thousand levels is far more profile than the twelve a panel renders, and at
+/// a one-cent tick it spans a ten-dollar band around where the market has been
+/// trading -- wide enough that the profile is a profile rather than a keyhole,
+/// and small enough that a session cannot grow into it.
+const MAX_FOOTPRINT_LEVELS: usize = 1024;
+
 /// Volume traded at each price, split by aggressor side (a footprint / volume
 /// profile).
+///
+/// Bounded to [`MAX_FOOTPRINT_LEVELS`], evicting whichever end is furthest from
+/// the price being traded, so the profile follows the market rather than
+/// accumulating every price a session ever touched.
 #[derive(Debug, Default, Clone)]
 pub struct Footprint {
     levels: BTreeMap<Decimal, (Decimal, Decimal)>,
@@ -223,6 +241,28 @@ impl Footprint {
             OrderSide::Sell => &mut entry.1,
         };
         *side = side.checked_add(print.quantity).unwrap_or(*side);
+
+        // One insert per print, so at most one eviction -- but a `while` keeps
+        // this correct rather than merely sufficient if the cap ever changes.
+        // The furthest level is at one end or the other, the map being ordered,
+        // so this costs a lookup rather than a scan.
+        while self.levels.len() > MAX_FOOTPRINT_LEVELS {
+            let lowest = self.levels.keys().next().copied().unwrap_or(print.price);
+            let highest = self
+                .levels
+                .keys()
+                .next_back()
+                .copied()
+                .unwrap_or(print.price);
+            let furthest = if print.price.saturating_sub(lowest).abs()
+                >= highest.saturating_sub(print.price).abs()
+            {
+                lowest
+            } else {
+                highest
+            };
+            self.levels.remove(&furthest);
+        }
     }
 
     /// The (buy, sell) volume at `price`, if any has traded there.
@@ -231,15 +271,50 @@ impl Footprint {
         self.levels.get(&price).copied()
     }
 
-    /// The top `n` price levels, highest price first, as `(price, buy, sell)`.
+    /// The `depth` levels nearest `anchor`, highest price first, as
+    /// `(price, buy, sell)`.
+    ///
+    /// Anchored rather than absolute. This used to return the `n` HIGHEST prices
+    /// ever traded, which made the panel stop tracking the market: on a synthetic
+    /// walk of 200k prints the last trade was 495.19 while the panel showed
+    /// 513.03 down to 512.81, each holding one or two units -- prices the market
+    /// had left long before and would never come back to. A ladder around the
+    /// last trade is what a footprint panel is for.
+    ///
+    /// Walks outward from `anchor` through the ordered map, so it costs the
+    /// levels it returns rather than the levels it holds.
     #[must_use]
-    pub fn top(&self, n: usize) -> Vec<(Decimal, Decimal, Decimal)> {
-        self.levels
-            .iter()
-            .rev()
-            .take(n)
-            .map(|(price, &(buy, sell))| (*price, buy, sell))
-            .collect()
+    pub fn around(&self, anchor: Decimal, depth: usize) -> Vec<(Decimal, Decimal, Decimal)> {
+        let mut below = self.levels.range(..anchor).rev().peekable();
+        let mut above = self.levels.range(anchor..).peekable();
+        let mut picked = Vec::with_capacity(depth.min(self.levels.len()));
+
+        while picked.len() < depth {
+            match (below.peek().copied(), above.peek().copied()) {
+                (None, None) => break,
+                (Some((&price, &(buy, sell))), None) => {
+                    picked.push((price, buy, sell));
+                    let _ = below.next();
+                }
+                (None, Some((&price, &(buy, sell)))) => {
+                    picked.push((price, buy, sell));
+                    let _ = above.next();
+                }
+                (Some((&low, &(low_buy, low_sell))), Some((&high, &(high_buy, high_sell)))) => {
+                    if high.saturating_sub(anchor) <= anchor.saturating_sub(low) {
+                        picked.push((high, high_buy, high_sell));
+                        let _ = above.next();
+                    } else {
+                        picked.push((low, low_buy, low_sell));
+                        let _ = below.next();
+                    }
+                }
+            }
+        }
+
+        // Highest price first, which is how a ladder reads.
+        picked.sort_by_key(|level| std::cmp::Reverse(level.0));
+        picked
     }
 
     /// The number of price levels with recorded volume.
@@ -541,7 +616,22 @@ impl std::fmt::Debug for AppState {
 impl AppState {
     /// Fold one event for `(src, sym)` into state, in O(1) per event (bounded by
     /// the event's own size, never by history).
+    ///
+    /// Every collection it writes into is bounded, including the footprint, which
+    /// used to be the exception.
     pub fn fold(&mut self, src: SourceId, sym: &Symbol, event: &Event) {
+        self.fold_scoped(src, sym, event, None);
+    }
+
+    /// `fold`, with the reference scope a seek's re-fold needs. See
+    /// [`AppState::reference_prices`].
+    pub(crate) fn fold_scoped(
+        &mut self,
+        src: SourceId,
+        sym: &Symbol,
+        event: &Event,
+        reference_scope: Option<SourceId>,
+    ) {
         // Collected before the market's own state is borrowed mutably, which is
         // also the only order that gives the right answer: the reference markets
         // are read as they stand now, while this market's last is still the
@@ -551,7 +641,7 @@ impl AppState {
         // all come from these specs, and this one is reachable without holding a
         // borrow of any market.
         let references = if self.indicators.iter().any(|s| s.reference.is_some()) {
-            self.reference_prices()
+            self.reference_prices(reference_scope)
         } else {
             BTreeMap::new()
         };
@@ -559,6 +649,16 @@ impl AppState {
         // accepted by the registry when it was set, so construction here cannot
         // fail. A silent `unwrap_or_default` would hide a market quietly losing
         // its indicators.
+        // A print claiming a negative size is malformed, and folding any part of it
+        // invents data: the footprint would subtract it from the volume already
+        // traded at that price, and the bar builder carried it into a candle
+        // `Candle::new` would reject -- which every volume-reading bar indicator
+        // then read. Nothing validates a `TradePrint.quantity`; it is a `Decimal`
+        // off the wire. Checked before the entry below, so a market is not brought
+        // into existence by an event that is then discarded.
+        if matches!(event, Event::Trade(print) if print.quantity < Decimal::ZERO) {
+            return;
+        }
         let state = self.symbols.entry((src, sym.clone())).or_insert_with(|| {
             SymbolState::new(&self.indicators, self.timeframe)
                 .expect("indicator specs are validated before they reach the state")
@@ -618,10 +718,26 @@ impl AppState {
     /// as `ETH/USDT` in a config, and the same market on two feeds is the same
     /// price. When both carry it, the later one in iteration order wins, which
     /// is arbitrary but not wrong -- they are quotes for the same thing.
+    /// `scope` restricts which sources may supply a reference. `None` is the live
+    /// path and reads every market; `Some(id)` is a seek's re-fold and reads only
+    /// that source's, because those are the markets the re-fold has reset and is
+    /// replaying in order.
+    ///
+    /// Without the scope a re-fold paired every historical tick with the
+    /// reference market's *present* price, since a market on another source is
+    /// neither reset nor replayed. That made `Seek` non-deterministic for the
+    /// whole pairwise family -- a correlation of 0.88 became 0.0 after seeking to
+    /// the position it was already at -- while the entire justification for
+    /// re-folding rather than snapshotting is that it rebuilds identical state.
+    ///
+    /// A reference outside the scope is absent rather than stale, so the
+    /// indicator simply does not advance, which is what it already does before
+    /// its reference has printed.
     #[must_use]
-    fn reference_prices(&self) -> BTreeMap<String, f64> {
+    fn reference_prices(&self, scope: Option<SourceId>) -> BTreeMap<String, f64> {
         self.symbols
             .iter()
+            .filter(|((src, _), _)| scope.is_none_or(|id| *src == id))
             .filter_map(|((_, symbol), state)| {
                 state.last.to_f64().map(|price| (symbol.to_string(), price))
             })
@@ -775,6 +891,119 @@ mod tests {
         assert_eq!(st.footprint.at(dec!(100)), Some((dec!(2), dec!(0))));
         assert_eq!(st.footprint.at(dec!(101)), Some((dec!(0), dec!(2))));
         assert_eq!(st.series(10), vec![100.0, 101.0]);
+    }
+
+    fn print_at(sym: &Symbol, price: Decimal) -> Event {
+        Event::Trade(TradePrint {
+            symbol: sym.clone(),
+            price,
+            quantity: Decimal::ONE,
+            aggressor: OrderSide::Buy,
+            timestamp: 0,
+        })
+    }
+
+    #[test]
+    fn the_footprint_does_not_grow_with_the_session() {
+        // It was the one collection in the fold that did: an entry per distinct
+        // traded price, never evicted, while the tape, the price history and every
+        // indicator series are bounded. A 200k-print walk left 2,926 levels still
+        // climbing.
+        let sym = Symbol::new("BTC", "USDT");
+        let mut state = AppState::default();
+        for tick in 0..5_000 {
+            let price = Decimal::from(100_000 + tick) / dec!(100);
+            state.fold(0, &sym, &print_at(&sym, price));
+        }
+        let st = state.get(&(0, sym)).unwrap();
+        assert!(
+            st.footprint.len() <= MAX_FOOTPRINT_LEVELS,
+            "the footprint holds {} levels",
+            st.footprint.len()
+        );
+    }
+
+    #[test]
+    fn the_footprint_keeps_the_levels_nearest_the_market() {
+        // Eviction has to drop the far end, not the newest: a profile that kept
+        // the prices the market has left behind is the drift this fixes, one step
+        // removed.
+        let sym = Symbol::new("BTC", "USDT");
+        let mut state = AppState::default();
+        for tick in 0..5_000 {
+            let price = Decimal::from(100_000 + tick) / dec!(100);
+            state.fold(0, &sym, &print_at(&sym, price));
+        }
+        let st = state.get(&(0, sym)).unwrap();
+        let last = st.last;
+        assert_eq!(last, dec!(1049.99));
+        assert!(
+            st.footprint.at(last).is_some(),
+            "the level just traded was evicted"
+        );
+        let ladder = st.footprint.around(last, 3);
+        assert_eq!(ladder.len(), 3);
+        for (price, _, _) in &ladder {
+            let gap = (*price - last).abs();
+            assert!(gap < dec!(1), "{price} is {gap} away from a last of {last}");
+        }
+    }
+
+    #[test]
+    fn around_returns_a_ladder_centred_on_the_anchor() {
+        let sym = Symbol::new("BTC", "USDT");
+        let mut state = AppState::default();
+        for cents in 0..21 {
+            let price = Decimal::from(10_000 + cents) / dec!(100);
+            state.fold(0, &sym, &print_at(&sym, price));
+        }
+        let st = state.get(&(0, sym)).unwrap();
+        let ladder = st.footprint.around(dec!(100.10), 5);
+        let prices: Vec<Decimal> = ladder.iter().map(|(price, _, _)| *price).collect();
+        // Highest first, and the five nearest 100.10 rather than the five highest.
+        assert_eq!(
+            prices,
+            vec![
+                dec!(100.12),
+                dec!(100.11),
+                dec!(100.10),
+                dec!(100.09),
+                dec!(100.08)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_negative_size_print_is_not_folded_at_all() {
+        // The footprint accumulates with `checked_add`, so a negative quantity
+        // subtracted from the volume already traded at that price: two prints of
+        // 2 and -2 left a level reading zero, as if nothing had traded there.
+        let sym = Symbol::new("BTC", "USDT");
+        let mut state = AppState::default();
+        state.fold(0, &sym, &trade(&sym, dec!(100), OrderSide::Buy));
+        let mut bad = trade(&sym, dec!(100), OrderSide::Buy);
+        if let Event::Trade(print) = &mut bad {
+            print.quantity = dec!(-2);
+        }
+        state.fold(0, &sym, &bad);
+        let st = state.get(&(0, sym.clone())).unwrap();
+        assert_eq!(st.footprint.at(dec!(100)), Some((dec!(2), dec!(0))));
+        assert_eq!(st.tape.len(), 1, "a malformed print reached the tape");
+    }
+
+    #[test]
+    fn a_rejected_print_does_not_bring_a_market_into_existence() {
+        let sym = Symbol::new("BTC", "USDT");
+        let mut state = AppState::default();
+        let mut bad = trade(&sym, dec!(100), OrderSide::Buy);
+        if let Event::Trade(print) = &mut bad {
+            print.quantity = dec!(-1);
+        }
+        state.fold(0, &sym, &bad);
+        assert!(
+            state.get(&(0, sym)).is_none(),
+            "an empty market was created"
+        );
     }
 
     #[test]

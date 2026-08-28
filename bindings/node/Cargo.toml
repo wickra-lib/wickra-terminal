@@ -17,12 +17,13 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
-# napi-derive emits its own guarded unsafe, and the workspace does not forbid
-# unsafe, so this crate needs no relaxation of its own.
 # napi's derive macros expand to `unsafe` inside this crate, so it cannot inherit
 # the workspace's `forbid`. `deny` rather than `allow`: hand-written unsafe still
 # has to justify itself with an explicit `#[allow]`, which `forbid` would make
 # impossible and `allow` would make invisible.
+#
+# (An earlier line here claimed the workspace does not forbid unsafe, which is
+# the opposite of the root manifest and of the sentence that followed it.)
 [lints.rust]
 unsafe_code = "deny"
 missing_debug_implementations = "warn"

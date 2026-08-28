@@ -1,6 +1,7 @@
 package wickraterminal
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -49,5 +50,22 @@ func TestInvalidCommand(t *testing.T) {
 	defer term.Close()
 	if _, err := term.Command(`{"type":"Nope"}`); err == nil {
 		t.Fatal("expected an error for an unknown command")
+	}
+}
+
+func TestCommandAfterCloseIsNamed(t *testing.T) {
+	// A command on a closed terminal used to report `wickra-terminal: ` and
+	// nothing else: the C ABI rejects a null handle without writing a message,
+	// so the binding formatted the empty string it got back.
+	term, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	term.Close()
+	term.Close() // idempotent
+
+	_, err = term.Command(`{"type":"Tick"}`)
+	if !errors.Is(err, ErrClosed) {
+		t.Fatalf("want ErrClosed, got %v", err)
 	}
 }

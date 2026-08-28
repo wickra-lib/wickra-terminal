@@ -11,7 +11,6 @@
 [![OpenSSF Scorecard](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/scorecard.svg)](https://scorecard.dev/viewer/?uri=github.com/wickra-lib/wickra-terminal)
 [![OpenSSF Best Practices](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/best-practices.svg)](https://www.bestpractices.dev/)
 [![Verified across 10 languages](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/verified.svg)](golden/)
-[![Build provenance](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/provenance.svg)](https://github.com/wickra-lib/wickra-terminal/attestations)
 [![Docs](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/docs.svg)](https://terminal.wickra.org)
 [![Live demo](https://img.shields.io/badge/live%20demo-live.wickra.org-3b82f6)](https://live.wickra.org)
 
@@ -19,7 +18,7 @@
 
 **One core. Ten languages. Two renderers.** A streaming trading terminal built on
 the [Wickra](https://github.com/wickra-lib/wickra) core — live charts, order-book,
-tape and <!--indicator-count-->460<!--/indicator-count--> streaming indicators — with a native **TUI** and a **Web** front-end
+tape and <!--indicator-count-->455<!--/indicator-count--> streaming indicators — with a native **TUI** and a **Web** front-end
 as a *second renderer* of the same logic, driven by the same config.
 
 > **▶ Live demo:** the Wickra library's own 514 indicators over real Binance market data, computed live in your browser — **[live.wickra.org](https://live.wickra.org)** · zero backend, powered by `wickra-wasm`.
@@ -56,7 +55,7 @@ is actually about.
   a canvas and some tables, and neither can diverge in behaviour because neither
   has any.
 - **The boundary is data, not an API.** A config JSON in, a command JSON in, a
-  frame JSON out. That is why <!--indicator-count-->460<!--/indicator-count--> indicators became reachable from ten languages
+  frame JSON out. That is why <!--indicator-count-->455<!--/indicator-count--> indicators became reachable from ten languages
   without a line of binding code, and why a third renderer needs no core change.
 - **One core, checked across ten languages.** Not "ports that should agree" — one
   Rust core behind a C ABI, with every binding asserting the same recorded feed
@@ -124,6 +123,15 @@ a filename. See [docs/SOURCES.md](docs/SOURCES.md) for what each one does and
 
 Both consume the identical `Frame` of view-models from `terminal-core`.
 
+The Web row has a prerequisite the TUI row does not: `web/` depends on
+`file:../bindings/wasm/pkg`, which `wasm-pack` produces and no clone contains, so
+`npm install` fails until it has been built once.
+
+```bash
+( cd bindings/wasm && wasm-pack build --target web )
+cd web && npm install && npm run dev
+```
+
 ## Install
 
 > **Pre-release.** Nothing is published yet — the terminal depends on
@@ -181,7 +189,7 @@ laptop, single-threaded, with the default two-indicator overlay:
 A full tick costs about ten microseconds, so the core sustains a hundred thousand
 of frames per second — far above any renderer's budget, which is the point of the
 O(1) fold. The indicator count is a direct multiplier: those numbers are two
-indicators, and the registry offers <!--indicator-count-->460<!--/indicator-count-->. See [BENCHMARKS.md](BENCHMARKS.md).
+indicators, and the registry offers <!--indicator-count-->455<!--/indicator-count-->. See [BENCHMARKS.md](BENCHMARKS.md).
 
 ## Project layout
 
@@ -248,7 +256,7 @@ run it through the C ABI under ctest. Ten languages, one file: that is what make
 
 Alongside it: property tests over the fold invariants, four `cargo-fuzz` targets
 across the parsing paths, a conformance suite pinning the trait shapes, a
-registry suite that constructs and drives all <!--indicator-count-->460<!--/indicator-count--> indicators, and a test that
+registry suite that constructs and drives all <!--indicator-count-->455<!--/indicator-count--> indicators, and a test that
 extracts every example from this README and the docs and runs it.
 
 ```bash
