@@ -143,6 +143,21 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 debug = false
+# `strip` is the one release setting deliberately NOT inherited. It changes
+# nothing about the code, only what is left to read it by: on ELF and Mach-O
+# targets `strip = true` removes the symbol table as well as debug info, so a
+# criterion binary had no function names and a profiler could only attribute
+# samples to addresses. The benchmarks could be run but not investigated, and
+# `bench.yml` runs them on ubuntu-latest, which is exactly such a target.
+#
+# It makes no difference on Windows, where symbols live in a separate PDB and
+# `debug = false` means there is none to begin with -- measured, the two binaries
+# carry the same names either way.
+#
+# `debug` stays false, so the codegen still matches the shipped artefact and the
+# attribution is per function rather than per line. Line-level would mean
+# shipping debug info into the benchmark, which is a different trade.
+strip = false
 
 [profile.dev]
 opt-level = 0
