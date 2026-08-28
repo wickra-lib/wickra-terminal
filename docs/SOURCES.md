@@ -61,6 +61,14 @@ config opened. These examples assume the config opened one, so it holds id 0.
 the next `Tick`, exactly like a pulled event. The event must be for a market
 subscribed on that source.
 
+A manual source holds at most 4,096 events between ticks. Past that, `Feed` is
+an error naming the backlog rather than a queue that keeps growing -- the shape
+a browser tab has when it is backgrounded and stops firing rAF while its socket
+keeps delivering. The events already queued are refused rather than evicted, so
+what is there stays contiguous: a book delta only means anything in sequence,
+and dropping one leaves a local book that is wrong rather than merely stale.
+Tick to drain, and the source takes events again.
+
 ## The time-machine
 
 A `Replay` source records the whole feed, so it can be rewound. The `Seek`

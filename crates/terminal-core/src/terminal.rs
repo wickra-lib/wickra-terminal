@@ -16,7 +16,8 @@ use crate::config::{Config, IndicatorSpec, SourceSpec};
 use crate::error::{Error, Result};
 use crate::panels::{build_panel, Panel};
 use crate::registry;
-use crate::source::{build_source, event_symbol, Event, SourceId, Symbol};
+use crate::source::manual::MAX_PENDING_EVENTS;
+use crate::source::{build_source, event_symbol, Event, Fed, SourceId, Symbol};
 use crate::state::{AppState, IndicatorSet, SymbolState};
 use crate::view::Frame;
 
@@ -281,12 +282,15 @@ impl Terminal {
             ));
         };
         let source = self.state.source_mut(id).ok_or(Error::UnknownSource(id))?;
-        if !source.feed(sym, event) {
-            return Err(Error::Command(format!(
+        match source.feed(sym, event) {
+            Fed::Accepted => Ok(()),
+            Fed::Refused => Err(Error::Command(format!(
                 "source {id} does not accept fed events (subscribe the market on a manual source first)"
-            )));
+            ))),
+            Fed::Full => Err(Error::Command(format!(
+                "source {id} has {MAX_PENDING_EVENTS} events waiting: tick to drain them before feeding more"
+            ))),
         }
-        Ok(())
     }
 
     /// Subscribe a market on a source, tracking it and focusing it if nothing is

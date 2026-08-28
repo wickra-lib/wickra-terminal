@@ -20,8 +20,9 @@ to one `(SourceId, Symbol)`'s state incrementally:
 - Account / lifecycle events do not affect per-symbol market state.
 
 Every buffer is bounded — the tape ring at 256 prints, the price history at 512,
-each indicator's series at 120, the footprint at 1,024 price levels — so memory
-is bounded regardless of session length. The book is bounded by the market rather
+each indicator's series at 120, the footprint at 1,024 price levels, a manual
+source's pending queue at 4,096 events — so memory is bounded regardless of
+session length, and regardless of a host that feeds without ticking. The book is bounded by the market rather
 than by a constant: it holds the levels a venue publishes.
 
 The footprint was the exception until recently, keeping an entry per distinct
