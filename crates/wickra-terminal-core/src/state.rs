@@ -1088,23 +1088,6 @@ impl SymbolState {
     }
 }
 
-impl Default for SymbolState {
-    fn default() -> Self {
-        Self {
-            book: BookState::default(),
-            tape: TapeRing::default(),
-            footprint: Footprint::default(),
-            indicators: IndicatorSet::default(),
-            profiles: ProfileSet::default(),
-            bars: BarSet::default(),
-            last: Decimal::ZERO,
-            history: VecDeque::with_capacity(512),
-            candles: CandleBuilder::new(Timeframe::default()),
-            breadth: BreadthState::new(),
-            derivatives: DerivativesState::default(),
-        }
-    }
-}
 
 impl SymbolState {
     /// A bounded recent price series (oldest first) for the chart.
