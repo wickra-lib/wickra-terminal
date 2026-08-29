@@ -36,9 +36,15 @@ web/dist/
 # Go: the C ABI library is staged per-platform by CI, never committed here.
 bindings/go/lib/*/
 
-# .NET build artifacts
-bin/
-obj/
+# .NET build artifacts, scoped rather than bare. A repository-wide `bin/` also
+# matches Cargo's `src/bin/` convention, and it did: examples/rust/src/bin was
+# invisible to `git add`, so the no-boundary benchmark would have been left out
+# of its own commit and CI would have failed on a bin target that was never
+# committed. Every real .NET output tree is under one of these two roots.
+bindings/csharp/**/bin/
+bindings/csharp/**/obj/
+examples/csharp/bin/
+examples/csharp/obj/
 
 # Java / Maven build artifacts
 bindings/java/target/
@@ -76,3 +82,9 @@ lcov.info
 tarpaulin-report.html
 criterion/
 benchmark.txt
+
+# Benchmark build trees. The C and C++ harnesses configure CMake in place, and
+# the C# one is an ordinary dotnet project.
+bindings/*/benchmarks/build/
+bindings/*/benchmarks/bin/
+bindings/*/benchmarks/obj/

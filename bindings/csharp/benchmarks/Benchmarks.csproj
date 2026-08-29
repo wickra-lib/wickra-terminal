@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The throughput benchmark. Not packed and not published: it exists to be run
+    from the repository, so it references the binding by project rather than by
+    package and stays out of the release pipeline entirely.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>WickraTerminal.Benchmarks</RootNamespace>
+    <AssemblyName>WickraTerminal.Benchmarks</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../WickraTerminal/WickraTerminal.csproj" />
+  </ItemGroup>
+
+  <!--
+    The native C ABI library, beside the executable so the default probing path
+    finds it. Same arrangement as the test project.
+  -->
+  <ItemGroup>
+    <Content Include="../../../target/release/wickra_terminal.dll" Condition="Exists('../../../target/release/wickra_terminal.dll')">
+      <Link>wickra_terminal.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="../../../target/release/libwickra_terminal.so" Condition="Exists('../../../target/release/libwickra_terminal.so')">
+      <Link>libwickra_terminal.so</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="../../../target/release/libwickra_terminal.dylib" Condition="Exists('../../../target/release/libwickra_terminal.dylib')">
+      <Link>libwickra_terminal.dylib</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

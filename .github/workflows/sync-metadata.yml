@@ -21,4 +21,14 @@ jobs:
         with:
           python-version: "3.12"
       - name: Audit repo-metadata.toml drift
-        run: python .github/scripts/sync-metadata.py --check
+        # --about also reads the GitHub About description and compares the
+        # indicator count in it against the README marker. That string is the
+        # one count surface no test can reach -- every other one is in the
+        # repository and pinned by docs_examples -- and it is the one that
+        # drifted, sitting at 460 while the registry held 455. GITHUB_TOKEN is
+        # the default read-only job token; the check reports a notice and
+        # passes if the description cannot be read, so a network blip does not
+        # fail an audit that is otherwise offline.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python .github/scripts/sync-metadata.py --check --about

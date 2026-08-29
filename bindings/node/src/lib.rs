@@ -25,6 +25,30 @@ pub fn version() -> String {
 }
 
 /// A trading terminal instance driven by JSON commands.
+//
+// CodeQL reports `rust/access-invalid-pointer` on this line, and it is a false
+// positive worth writing down rather than re-triaging every time it resurfaces.
+//
+// This file has no `unsafe`, no raw pointer and no `from_raw`/`into_raw` -- zero
+// occurrences in 98 lines. What CodeQL analyses is the napi-derive expansion,
+// which this line is the anchor for: `cargo expand -p wickra-terminal-node`
+// shows 29 generated `unsafe` blocks doing `Box::into_raw`, `cast()` and, at the
+// reported site:
+//
+//     validate_type_tag(env, napi_val, <Terminal as TypeTag>::type_tag(), "Terminal")?;
+//     register_native_borrow_with_value(env, napi_val, wrapped_val.cast::<Terminal>(), false)?;
+//     Ok(&*(wrapped_val as *const Terminal))
+//
+// The dereference is two lines below the runtime asserting that the pointer the
+// JS engine handed back is in fact a `Terminal`. CodeQL cannot follow that
+// invariant across the FFI boundary, so it sees a bare deref of a pointer of
+// unknown provenance.
+//
+// Dismissed as a false positive rather than excluded by a CodeQL config. The
+// wickra library excludes its whole node binding for this rule, but that file is
+// 22,280 lines and produces one finding per exported class; this one produces
+// exactly one, so dismissing the single alert keeps the rule live for anything
+// genuinely new.
 #[napi]
 #[derive(Debug)]
 pub struct Terminal {

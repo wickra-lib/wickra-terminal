@@ -14,5 +14,10 @@ workspace = true
 name = "synth"
 path = "src/main.rs"
 
+# The no-boundary baseline for the nine per-binding throughput benchmarks.
+[[bin]]
+name = "throughput"
+path = "src/bin/throughput.rs"
+
 [dependencies]
 wickra-terminal-core = { workspace = true }

@@ -1,54 +1,33 @@
-// A C++ example: a small RAII wrapper over the wickra-terminal C ABI.
+// A C++ example, over the shipped RAII header.
+//
+// It used to declare a Terminal class of its own here, which was the honest
+// thing to do while the C++ surface was "the C header, plus write your own
+// ownership". It is not any more: `wickra_terminal.hpp` ships that wrapper, so
+// an example that redefines it teaches a reader to reimplement what they were
+// handed. This drives the shipped API instead.
 #include <cstdio>
-#include <stdexcept>
 #include <string>
 
-#include "wickra_terminal.h"
+#include "wickra_terminal.hpp"
 
-// The cbindgen header wraps its declarations in `extern "C"` under __cplusplus,
-// so it is usable directly from C++.
-class Terminal {
-public:
-    explicit Terminal(const char *config) : handle_(wickra_terminal_new(config)) {
-        if (!handle_) {
-            throw std::runtime_error("wickra-terminal: invalid config");
-        }
-    }
-
-    ~Terminal() { wickra_terminal_free(handle_); }
-
-    Terminal(const Terminal &) = delete;
-    Terminal &operator=(const Terminal &) = delete;
-
-    std::string command(const char *cmd) {
-        char *out = nullptr;
-        int code = wickra_terminal_command(handle_, cmd, &out);
-        std::string result = out ? out : "";
-        if (out) {
-            wickra_terminal_free_string(out);
-        }
-        if (code != WICKRA_TERMINAL_OK) {
-            throw std::runtime_error("wickra-terminal: " + result);
-        }
-        return result;
-    }
-
-private:
-    WickraTerminal *handle_;
-};
+using wickra::terminal::Terminal;
 
 int main() {
     Terminal term(
-        "{\"sources\":[{\"Synth\":{\"seed\":1}}],"
-        "\"layout\":{\"panels\":[{\"kind\":\"Chart\",\"rect\":{\"x\":0,\"y\":0,\"w\":100,\"h\":100}}]}}");
+        R"({"sources":[{"Synth":{"seed":1}}],)"
+        R"("layout":{"panels":[{"kind":"Chart","rect":{"x":0,"y":0,"w":100,"h":100}}]}})");
 
-    term.command("{\"type\":\"Subscribe\",\"source\":0,\"symbol\":\"BTC/USDT\"}");
+    // Every command answers with a frame; this one is a subscription and the
+    // frame it returns says nothing new, so it is discarded on purpose. The
+    // cast is what says "on purpose" -- command() is [[nodiscard]], so a
+    // dropped frame is a warning unless it is written down.
+    (void)term.command(R"({"type":"Subscribe","source":0,"symbol":"BTC/USDT"})");
     std::string frame;
     for (int i = 0; i < 20; i++) {
-        frame = term.command("{\"type\":\"Tick\"}");
+        frame = term.command(R"({"type":"Tick"})");
     }
 
-    std::printf("wickra-terminal %s\n", wickra_terminal_version());
+    std::printf("wickra-terminal %s\n", wickra::terminal::version().c_str());
     std::printf("frame: %s\n", frame.c_str());
     return 0;
 }

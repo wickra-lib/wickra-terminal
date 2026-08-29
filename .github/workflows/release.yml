@@ -492,7 +492,10 @@ jobs:
           set -e
           dir="wickra-terminal-c-${{ matrix.target }}"
           mkdir -p "$dir/include" "$dir/lib"
-          cp bindings/c/include/wickra_terminal.h "$dir/include/"
+          # Both headers: the C ABI, and the header-only C++ wrapper that owns
+          # its handle. A C++ consumer downloading this artefact gets the
+          # ownership layer with it rather than writing one again.
+          cp bindings/c/include/wickra_terminal.h bindings/c/include/wickra_terminal.hpp "$dir/include/"
           for f in libwickra_terminal.so libwickra_terminal.a libwickra_terminal.dylib wickra_terminal.dll wickra_terminal.dll.lib wickra_terminal.lib; do
             src="target/${{ matrix.target }}/release/$f"
             [ -f "$src" ] && cp "$src" "$dir/lib/"
