@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://wickra.org"><img src="https://raw.githubusercontent.com/wickra-lib/.github/main/profile/wickra-banner.webp?v=514" alt="Wickra Terminal — the C ABI hub" width="100%"></a>
+  <a href="https://wickra.org"><img src="https://raw.githubusercontent.com/wickra-lib/.github/main/profile/wickra-banner.webp?v=514" alt="Wickra Terminal — the C++ API" width="100%"></a>
 </p>
 
 [![Built on Wickra](https://img.shields.io/badge/built%20on-wickra-3b82f6)](https://github.com/wickra-lib/wickra)
@@ -7,99 +7,120 @@
 [![codecov](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/codecov.svg)](https://codecov.io/gh/wickra-lib/wickra-terminal)
 [![License: MIT OR Apache-2.0](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/license.svg)](https://github.com/wickra-lib/wickra-terminal#license)
 
-# Wickra Terminal — C ABI
+# Wickra Terminal — C++
 
 ---
 
 > **▶ Web renderer:** the same core drives a browser front-end (WASM + Vue) as a second renderer — see [`web/`](https://github.com/wickra-lib/wickra-terminal/tree/main/web).
 
-The C ABI hub for [wickra-terminal](https://github.com/wickra-lib/wickra-terminal): a `cdylib` + `staticlib` that every
-C-capable language (C, C++, C#, Go, Java, R) links against. The surface is a
-tiny, JSON-shaped data API — a handle in, command JSON in, frame JSON out.
+The C++ API for [wickra-terminal](https://github.com/wickra-lib/wickra-terminal): a header-only
+RAII wrapper over the [C ABI](https://github.com/wickra-lib/wickra-terminal/tree/main/bindings/c),
+shipped as `wickra_terminal.hpp` beside the C header it wraps.
 
-Five exports carry all ten languages. `scripts/check_binding_surface.py` asserts
-in CI that each of them reaches every binding, so a language cannot quietly fall
-behind the header.
+C++ can call the C ABI directly — `wickra_terminal.h` is already
+`extern "C"`-guarded — and for a long time that was the whole C++ story. What it
+cannot do directly is *own* anything: every handle and every returned string has
+to be freed by hand, on every path including the ones an exception takes. This
+header adds ownership and nothing else. It declares no indicator logic, holds no
+state of its own, and compiles to the calls a careful author would have written.
+It just makes the careless version impossible.
 
 ## Requirements
 
-- A C99 compiler (the header is `cpp_compat`, so C++ links against it unchanged)
-- `cbindgen` to regenerate the header
+- A C++17 compiler
+- The C ABI library to link against (`cargo build -p wickra-terminal-c --release`)
+
+Both headers ship in the `wickra-terminal-c-<triple>.tar.gz` release artefact, so
+a consumer downloading the ABI gets the ownership layer with it.
 
 ## Surface
 
-```c
-#include "wickra_terminal.h"
+```cpp
+#include "wickra_terminal.hpp"
 
-WickraTerminal *wickra_terminal_new(const char *config_json);
-void            wickra_terminal_free(WickraTerminal *handle);
-int             wickra_terminal_command(WickraTerminal *handle,
-                                        const char *cmd_json,
-                                        char **out_json);
-void            wickra_terminal_free_string(char *s);
-const char     *wickra_terminal_version(void); /* static — do not free */
+namespace wickra::terminal {
+
+class Error : public std::runtime_error {
+    int code() const noexcept;              // WICKRA_TERMINAL_ERR / _ERR_NULL
+};
+
+class Terminal {
+    explicit Terminal(const std::string &config_json);   // throws Error
+    std::string command(const std::string &cmd_json);    // throws Error
+    bool valid() const noexcept;                         // false after a move
+
+    Terminal(Terminal &&) noexcept;                      // move-only
+    Terminal(const Terminal &) = delete;
+};
+
+std::string version();
+
+}
 ```
 
-- `wickra_terminal_new` builds a terminal from a JSON config; returns `NULL` on a
-  null or invalid argument.
-- `wickra_terminal_command` applies a command JSON and writes the resulting frame
-  JSON to `*out_json`. Returns `0` (`WICKRA_TERMINAL_OK`) on success, `-2`
-  (`WICKRA_TERMINAL_ERR`) with the error message in `*out_json`, or `-1`
-  (`WICKRA_TERMINAL_ERR_NULL`) if a required pointer is null.
-- The caller owns `*out_json` and frees it with `wickra_terminal_free_string`.
-- Panics never cross the boundary: every entry point that runs code wraps it
-  in `catch_unwind` and returns an error instead. The release profile is
-  `panic = "unwind"` precisely so that it can -- with `abort` there would be
-  nothing to catch, and a panic in the core would take the host process with
-  it. A test reads this crate's own source and fails if an entry point is
-  added without one.
+What the header guarantees, and what each guarantee is there to prevent:
+
+- **The handle has one owner.** Copying is deleted, because two owners of one
+  handle would free it twice. Moving is allowed and leaves the source empty, so
+  a moved-from destructor is a no-op.
+- **A returned string is always freed.** `wickra_terminal_command` allocates on
+  both exits — a frame on success, an error message on failure — and the failure
+  exit throws. A guard frees it however the scope is left.
+- **A failure is an exception.** `Error` carries the ABI's own message and its
+  status code, rather than a return code a caller can ignore.
+- **A moved-from `Terminal` throws** rather than passing a null handle across
+  the boundary.
+- **A panic does not unwind into C++.** The C ABI catches at its entry points;
+  the release profile is `panic = "unwind"` precisely so it can.
 
 ## Example
 
-```c
-WickraTerminal *t = wickra_terminal_new(
-    "{\"sources\":[{\"Synth\":{\"seed\":1}}],"
-    "\"layout\":{\"panels\":[{\"kind\":\"Chart\",\"rect\":{\"x\":0,\"y\":0,\"w\":100,\"h\":100}}]}}");
+```cpp
+#include "wickra_terminal.hpp"
+#include <cstdio>
 
-char *out = NULL;
-wickra_terminal_command(t, "{\"type\":\"Subscribe\",\"source\":0,\"symbol\":\"BTC/USDT\"}", &out);
-wickra_terminal_free_string(out);
+using wickra::terminal::Terminal;
 
-wickra_terminal_command(t, "{\"type\":\"Tick\"}", &out); /* out = frame JSON */
-printf("%s\n", out);
-wickra_terminal_free_string(out);
+int main() {
+    Terminal term(
+        R"({"sources":[{"Synth":{"seed":1}}],)"
+        R"("layout":{"panels":[{"kind":"Chart","rect":{"x":0,"y":0,"w":100,"h":100}}]}})");
 
-wickra_terminal_free(t);
+    (void)term.command(R"({"type":"Subscribe","source":0,"symbol":"BTC/USDT"})");
+
+    std::string frame;
+    for (int i = 0; i < 20; i++) {
+        frame = term.command(R"({"type":"Tick"})");
+    }
+    std::printf("%s\n", frame.c_str());
+}
 ```
 
-A runnable C and C++ example lives in [`examples/c/`](https://github.com/wickra-lib/wickra-terminal/tree/main/examples/c),
+Runnable examples live in [`examples/c/`](https://github.com/wickra-lib/wickra-terminal/tree/main/examples/c),
 built and run in CI on all three platforms via CMake and ctest.
 
 ## Build
 
 ```bash
 cargo build -p wickra-terminal-c --release
+cmake -S examples/c -B examples/c/build
+cmake --build examples/c/build --config Release
 ```
 
-The library is named `wickra_terminal` (`.dll` / `.so` / `.dylib`, plus a
-`.a`/`.lib` static library) under `target/release/`.
-
-The header is generated and committed. Regenerate it with:
-
-```bash
-cbindgen --config bindings/c/cbindgen.toml --crate wickra-terminal-c \
-  --output bindings/c/include/wickra_terminal.h
-```
-
-`.github/scripts/check-cbindgen.sh` verifies the committed header still matches
-the Rust surface; CI runs the same script, and it skips cleanly if `cbindgen` is
-not installed.
+`CMAKE_CXX_STANDARD` is 17; the header uses a nested namespace and
+`[[nodiscard]]`.
 
 ## Test
 
 ```bash
-cargo test -p wickra-terminal-c
+ctest --test-dir examples/c/build -C Release --output-on-failure
 ```
+
+Five tests, three of them C++: `terminal` drives the API, `golden_cpp` replays
+the shared corpus through it, and `lifetime` checks the ownership rules — that
+copying is rejected at compile time, that a moved-from terminal is empty and
+throws, that 500 failed commands leave the terminal usable, and that a failure
+carries the ABI's message rather than a placeholder.
 
 ## The command protocol
 

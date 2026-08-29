@@ -84,6 +84,19 @@ BINDINGS = {
             "version": r"pub fn version\s*\(",
         },
     ),
+    # C++ consumes the same header as C, so it cannot drift in the exports it
+    # CAN reach -- but the RAII wrapper can fall behind by not wrapping a new
+    # one, which is invisible to a C-only check. `free` is the destructor:
+    # that is how C++ expresses explicit disposal.
+    "cpp": (
+        ["bindings/c/include/wickra_terminal.hpp"],
+        {
+            "new": r"explicit Terminal[(]const std::string",
+            "command": r"std::string command[(]const std::string",
+            "version": r"inline std::string version[(][)]",
+            "free": r"~Terminal[(][)]",
+        },
+    ),
     "csharp": (
         ["bindings/csharp/WickraTerminal/Terminal.cs"],
         {

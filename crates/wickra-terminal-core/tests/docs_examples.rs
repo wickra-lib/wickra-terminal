@@ -36,8 +36,9 @@ const DOCS: [&str; 8] = [
 /// blocks finds nothing in them. What they do carry uniformly is the command
 /// table, which P11.13 had to correct by hand across all eight, and which is
 /// checked below.
-const BINDING_READMES: [&str; 8] = [
+const BINDING_READMES: [&str; 9] = [
     "bindings/c/README.md",
+    "bindings/cpp/README.md",
     "bindings/csharp/README.md",
     "bindings/go/README.md",
     "bindings/java/README.md",
