@@ -77,8 +77,7 @@ pub(crate) fn render(frame: &mut Frame, area: Rect, view: &ProfileView, focused:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::backend::TestBackend;
-    use ratatui::Terminal;
+    use crate::widgets::harness;
 
     fn row(label: &str, bins: Vec<f64>, priced: bool) -> ProfileRow {
         ProfileRow {
@@ -92,17 +91,9 @@ mod tests {
     /// The whole buffer as text, so a test can assert on what a reader sees
     /// rather than on the widget tree that produced it.
     fn drawn(view: &ProfileView, width: u16, height: u16) -> String {
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal
-            .draw(|frame| render(frame, frame.area(), view, true))
-            .unwrap();
-        terminal
-            .backend()
-            .buffer()
-            .content()
-            .iter()
-            .map(ratatui::buffer::Cell::symbol)
-            .collect()
+        harness::text(&harness::draw(width, height, |frame, area| {
+            render(frame, area, view, true);
+        }))
     }
 
     #[test]

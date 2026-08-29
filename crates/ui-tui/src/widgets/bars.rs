@@ -61,8 +61,7 @@ pub(crate) fn render(frame: &mut Frame, area: Rect, view: &BarsView, focused: bo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::backend::TestBackend;
-    use ratatui::Terminal;
+    use crate::widgets::harness;
     use wickra_terminal_core::registry::AltBar;
 
     fn brick(open: f64, close: f64, direction: i8, volume: Option<f64>) -> AltBar {
@@ -84,17 +83,9 @@ mod tests {
     }
 
     fn drawn(view: &BarsView, width: u16, height: u16) -> String {
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal
-            .draw(|frame| render(frame, frame.area(), view, false))
-            .unwrap();
-        terminal
-            .backend()
-            .buffer()
-            .content()
-            .iter()
-            .map(ratatui::buffer::Cell::symbol)
-            .collect()
+        harness::text(&harness::draw(width, height, |frame, area| {
+            render(frame, area, view, false);
+        }))
     }
 
     #[test]
