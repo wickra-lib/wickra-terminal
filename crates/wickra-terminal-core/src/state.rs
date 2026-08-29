@@ -1088,7 +1088,6 @@ impl SymbolState {
     }
 }
 
-
 impl SymbolState {
     /// A bounded recent price series (oldest first) for the chart.
     #[must_use]
@@ -1480,6 +1479,89 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A tick carrying one closed candle, which is all the bar streams read.
+    fn candle_tick(open: f64, high: f64, low: f64, close: f64) -> TickInput {
+        let mut input = TickInput::price(close);
+        input.candle = Some(
+            wickra_core::Candle::new(open, high, low, close, 1.0, 0).expect("an ordered candle"),
+        );
+        input
+    }
+
+    #[test]
+    fn a_point_and_figure_column_ignores_a_price_that_is_not_one() {
+        // The close comes from a fold that has already seen whatever the feed
+        // sent, so a zero or a NaN reaches here rather than being filtered
+        // upstream. Seeding a column from one would set the extreme to it and
+        // every later box would be measured against nothing.
+        let mut pnf = PointAndFigure::default();
+        for bad in [f64::NAN, f64::INFINITY, 0.0, -5.0] {
+            pnf.update(bad);
+            assert!(!pnf.started, "{bad} started a column");
+        }
+        pnf.update(100.0);
+        assert!(pnf.started);
+    }
+
+    #[test]
+    fn taker_flow_ignores_a_quantity_that_is_not_one() {
+        // Adding a NaN size makes the running total NaN for the rest of the
+        // session, and every derivatives indicator reading with it.
+        let mut state = DerivativesState::default();
+        state.add_trade(f64::NAN, OrderSide::Buy);
+        state.add_trade(-1.0, OrderSide::Sell);
+        assert!(state.taker_buy_volume.abs() < 1e-9);
+        assert!(state.taker_sell_volume.abs() < 1e-9);
+        state.add_trade(2.5, OrderSide::Buy);
+        assert!((state.taker_buy_volume - 2.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_profile_set_knows_whether_it_tracks_anything() {
+        assert!(ProfileSet::from_specs(&[]).unwrap().is_empty());
+        let one =
+            ProfileSet::from_specs(&[IndicatorSpec::new("VolumeProfile", vec![4.0, 8.0])]).unwrap();
+        assert!(!one.is_empty());
+    }
+
+    #[test]
+    fn a_profile_entry_debugs_without_printing_its_whole_histogram() {
+        // The entry holds an indicator that has no Debug and a reading that can
+        // be hundreds of bins, so the impl is written by hand; a reader wants
+        // to know which profile it is looking at.
+        let set =
+            ProfileSet::from_specs(&[IndicatorSpec::new("VolumeProfile", vec![4.0, 8.0])]).unwrap();
+        let shown = format!("{:?}", set.entries[0]);
+        assert!(shown.contains("ProfileEntry"), "{shown}");
+        assert!(shown.contains("VolumeProfile(4,8)"), "{shown}");
+    }
+
+    #[test]
+    fn a_bar_entry_debugs_its_bar_count_rather_than_every_bar() {
+        let set = BarSet::from_specs(&[IndicatorSpec::new("RenkoBars", vec![3.0])]).unwrap();
+        let shown = format!("{:?}", set.entries[0]);
+        assert!(shown.contains("BarEntry"), "{shown}");
+        assert!(shown.contains("RenkoBars(3)"), "{shown}");
+        assert!(shown.contains("bars: 0"), "{shown}");
+    }
+
+    #[test]
+    fn a_bar_stream_keeps_the_most_recent_bars_and_drops_the_oldest() {
+        // These streams run for as long as the terminal does, so the buffer is
+        // bounded. Without the eviction it grows for the whole session.
+        let mut set = BarSet::from_specs(&[IndicatorSpec::new("RenkoBars", vec![1.0])]).unwrap();
+        let mut price = 100.0;
+        for _ in 0..(ALT_BARS_KEPT * 2) {
+            price += 2.0;
+            set.update(&candle_tick(price - 2.0, price, price - 2.0, price));
+        }
+        let kept = set.entries[0].bars.len();
+        assert_eq!(kept, ALT_BARS_KEPT, "kept {kept}");
+        // The survivors are the newest: the last brick closes at the last price.
+        let last = set.entries[0].bars.back().expect("a brick");
+        assert!(last.close >= price - 2.0, "{last:?} against {price}");
+    }
     use rust_decimal_macros::dec;
     use wickra_exchange_core::Symbol;
 

@@ -78,15 +78,23 @@ mod tests {
     use super::*;
     use crate::config::RectSpec;
 
+    /// Every panel kind, so this test drives the whole enum.
+    ///
+    /// The list was written with five and stayed at five when Profile and Bars
+    /// were added, which left them the only panels nothing ever built.
+    const EVERY_KIND: [PanelKind; 7] = [
+        PanelKind::Chart,
+        PanelKind::Book,
+        PanelKind::Tape,
+        PanelKind::Watchlist,
+        PanelKind::Footprint,
+        PanelKind::Profile,
+        PanelKind::Bars,
+    ];
+
     #[test]
     fn build_panel_matches_the_spec_kind() {
-        for kind in [
-            PanelKind::Chart,
-            PanelKind::Book,
-            PanelKind::Tape,
-            PanelKind::Watchlist,
-            PanelKind::Footprint,
-        ] {
+        for kind in EVERY_KIND {
             let spec = PanelSpec {
                 kind,
                 rect: RectSpec::new(0, 0, 100, 100),

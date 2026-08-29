@@ -163,6 +163,10 @@ fn price_at(step: i64) -> f64 {
 /// bar gives a real body and real wicks.
 const TRADES_PER_BAR: i64 = 4;
 
+/// The number of bars the suite drives an indicator for. Named rather than
+/// repeated, so the warmup bound and the drive that relies on it move together.
+const DRIVEN_BARS: i64 = 400;
+
 /// Bars are spaced a day apart. A calendar indicator — average daily range, the
 /// overnight gap, turn-of-month — only fires when the input actually crosses a
 /// day boundary; second-spaced bars keep the whole run inside one day and those
@@ -305,10 +309,11 @@ fn every_registered_indicator_constructs() {
 
 #[test]
 fn every_registered_indicator_produces_a_value() {
-    // 400 bars clears every warmup in the set with room to spare.
+    // Enough bars to clear every warmup in the set, which
+    // `every_declared_warmup_is_within_the_drive_budget` holds them to.
     let mut silent = Vec::new();
     for (kind, params) in DEFAULTS {
-        let (values, _) = drive(kind, params, 400);
+        let (values, _) = drive(kind, params, DRIVEN_BARS);
         if values == 0 {
             silent.push(kind);
         }
@@ -1141,4 +1146,46 @@ fn bar_types_are_disjoint_from_indicators_and_profiles() {
             "{kind} is both a profile and a bar type"
         );
     }
+}
+
+/// Every declared warmup is inside the budget the suite drives.
+///
+/// `every_registered_indicator_produces_a_value` says in a comment that 400
+/// bars clears every warmup in the set, and drives exactly that many. Nothing
+/// checked it. An indicator arriving with a warmup past the budget would not
+/// fail here in some readable way -- it would land in that test's list of
+/// indicators whose "wiring is dead", which is a different and wrong diagnosis.
+///
+/// The bound is the tick budget rather than the bar budget, because `warmup`
+/// counts inputs of the indicator's own family: a bar family gets 400 of them
+/// and a price family gets `TRADES_PER_BAR` times as many, and the larger
+/// number is the one that holds for both. So this proves the budget is not
+/// wildly short, not that it is tight.
+#[test]
+fn every_declared_warmup_is_within_the_drive_budget() {
+    #[allow(clippy::cast_sign_loss)]
+    let budget = (DRIVEN_BARS * TRADES_PER_BAR) as usize;
+    let mut over = Vec::new();
+
+    for (kind, params) in DEFAULTS {
+        let warmup = build_any(kind, params).warmup();
+        if warmup > budget {
+            over.push(format!("{kind} needs {warmup}"));
+        }
+    }
+    for (kind, params) in PROFILES {
+        let warmup = build_profile(kind, params)
+            .unwrap_or_else(|err| panic!("{kind}: {err}"))
+            .warmup();
+        if warmup > budget {
+            over.push(format!("{kind} needs {warmup}"));
+        }
+    }
+
+    assert!(
+        over.is_empty(),
+        "{} declare a warmup past the {budget}-input budget the suite drives:\n  {}",
+        over.len(),
+        over.join(", ")
+    );
 }
