@@ -1,7 +1,7 @@
 # Indicators
 
 The terminal drives the [Wickra](https://github.com/wickra-lib/wickra) indicator
-set directly: **<!--indicator-count-->458<!--/indicator-count--> of them**, constructible by name from a config or at run
+set directly: **<!--indicator-count-->461<!--/indicator-count--> of them**, constructible by name from a config or at run
 time, in every binding.
 
 ## Naming one
@@ -158,7 +158,7 @@ it saw before.
 
 ## What is not registered, and why
 
-46 of the 504 indicators in `wickra-core` are not reachable from the terminal
+43 of the 504 indicators in `wickra-core` are not reachable from the terminal
 yet. They are listed with a reason every time the registry is regenerated, rather
 than quietly dropped:
 
@@ -167,7 +167,6 @@ than quietly dropped:
 | derivatives tick | 17 | no funding/open-interest feed in this repository |
 | cross-section | 15 | no market-wide breadth feed |
 | trade-quote | 3 | no quote feed |
-| return-only input | 3 | the input is a per-period return and the terminal has only a price |
 | output or constructor shape | 8 | profile outputs, `u32` outputs, and variable-length level and bin lists |
 
 `Footprint` is the one that looks like an omission and is not: its output is a

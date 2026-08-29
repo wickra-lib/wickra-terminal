@@ -269,6 +269,39 @@ where
     }
 }
 
+/// Wraps an indicator whose `Input = f64` is a per-period RETURN rather
+/// than a price, feeding it the close-to-close return of each closed bar.
+/// The first bar establishes the close to difference against and yields
+/// `None`; a previous close that is not a normal number is not divided by.
+struct ReturnsIn<I> {
+    inner: I,
+    previous_close: Option<f64>,
+}
+
+impl<I> TickIndicator for ReturnsIn<I>
+where
+    I: Indicator<Input = f64, Output = f64> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        input
+            .candle
+            .and_then(|candle| {
+                let close = candle.close;
+                self.previous_close
+                    .replace(close)
+                    .filter(|previous| previous.is_normal())
+                    .and_then(|previous| self.inner.update(close / previous - 1.0))
+            })
+            .filter(|value| value.is_finite())
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        Vec::new()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period() + 1
+    }
+}
+
 /// Wraps a price indicator whose output is a struct of `f64` fields. The
 /// primary value is the first field; every field is reachable by name.
 struct ScalarPriceFields<I, O> {
@@ -2897,7 +2930,7 @@ fn map_new<T>(kind: &str, made: core::result::Result<T, wc::Error>) -> Result<T>
 }
 
 /// Every registered indicator name, sorted.
-pub const KINDS: [&str; 460] = [
+pub const KINDS: [&str; 463] = [
     "AbandonedBaby",
     "Abcd",
     "AccelerationBands",
@@ -3036,6 +3069,7 @@ pub const KINDS: [&str; 460] = [
     "FractalChaosBands",
     "Frama",
     "FryPanBottom",
+    "GainLossRatio",
     "GainToPainRatio",
     "GapSideBySideWhite",
     "Garch11",
@@ -3147,6 +3181,7 @@ pub const KINDS: [&str; 460] = [
     "Nrtr",
     "Nvi",
     "Obv",
+    "OmegaRatio",
     "OnNeck",
     "OpeningMarubozu",
     "OpeningRange",
@@ -3175,6 +3210,7 @@ pub const KINDS: [&str; 460] = [
     "Ppo",
     "PpoHistogram",
     "ProfileShape",
+    "ProfitFactor",
     "ProjectionBands",
     "ProjectionOscillator",
     "Psar",
@@ -3364,7 +3400,7 @@ pub const KINDS: [&str; 460] = [
 /// same values the library pins its own reference outputs with. Used by the
 /// build-all test so every registered indicator is constructed the way wickra
 /// constructs it, rather than with a guessed parameter count.
-pub const DEFAULTS: [(&str, &[f64]); 458] = [
+pub const DEFAULTS: [(&str, &[f64]); 461] = [
     ("AbandonedBaby", &[]),
     ("Abcd", &[]),
     ("AccelerationBands", &[14.0, 2.0]),
@@ -3502,6 +3538,7 @@ pub const DEFAULTS: [(&str, &[f64]); 458] = [
     ("FractalChaosBands", &[14.0]),
     ("Frama", &[14.0]),
     ("FryPanBottom", &[14.0]),
+    ("GainLossRatio", &[14.0]),
     ("GainToPainRatio", &[14.0]),
     ("GapSideBySideWhite", &[]),
     ("Garch11", &[2e-06, 0.1, 0.88]),
@@ -3612,6 +3649,7 @@ pub const DEFAULTS: [(&str, &[f64]); 458] = [
     ("Nrtr", &[2.0]),
     ("Nvi", &[]),
     ("Obv", &[]),
+    ("OmegaRatio", &[14.0, 2.0]),
     ("OnNeck", &[]),
     ("OpeningMarubozu", &[]),
     ("OpeningRange", &[14.0]),
@@ -3640,6 +3678,7 @@ pub const DEFAULTS: [(&str, &[f64]); 458] = [
     ("Ppo", &[3.0, 7.0]),
     ("PpoHistogram", &[3.0, 7.0, 14.0]),
     ("ProfileShape", &[3.0, 7.0]),
+    ("ProfitFactor", &[14.0]),
     ("ProjectionBands", &[14.0]),
     ("ProjectionOscillator", &[14.0]),
     ("Psar", &[0.02, 0.02, 0.2]),
@@ -4622,6 +4661,10 @@ fn build_inner(
         "FryPanBottom" => Ok(Box::new(CandleIn {
             inner: map_new(kind, wc::FryPanBottom::new(usize_param(params, 0, kind)?))?,
         })),
+        "GainLossRatio" => Ok(Box::new(ReturnsIn {
+            inner: map_new(kind, wc::GainLossRatio::new(usize_param(params, 0, kind)?))?,
+            previous_close: None,
+        })),
         "GainToPainRatio" => Ok(Box::new(ScalarPrice {
             inner: map_new(
                 kind,
@@ -5204,6 +5247,13 @@ fn build_inner(
         "Obv" => Ok(Box::new(CandleIn {
             inner: wc::Obv::new(),
         })),
+        "OmegaRatio" => Ok(Box::new(ReturnsIn {
+            inner: map_new(
+                kind,
+                wc::OmegaRatio::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
+            )?,
+            previous_close: None,
+        })),
         "OnNeck" => Ok(Box::new(CandleIn {
             inner: wc::OnNeck::new(),
         })),
@@ -5348,6 +5398,10 @@ fn build_inner(
                 kind,
                 wc::ProfileShape::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
             )?,
+        })),
+        "ProfitFactor" => Ok(Box::new(ReturnsIn {
+            inner: map_new(kind, wc::ProfitFactor::new(usize_param(params, 0, kind)?))?,
+            previous_close: None,
         })),
         "ProjectionBands" => Ok(Box::new(CandleInFields {
             inner: map_new(

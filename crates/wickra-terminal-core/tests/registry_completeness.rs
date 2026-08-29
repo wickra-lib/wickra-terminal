@@ -722,7 +722,7 @@ fn a_candle_indicator_reads_the_bar_not_the_price() {
 /// third field is the variable-length bin list the profile exists for, so each
 /// reported `price_low` under a profile's name. They stay skipped like
 /// `Footprint`, whose output is the same shape. See `docs/INDICATORS.md`.
-const REGISTERED_FLOOR: usize = 458;
+const REGISTERED_FLOOR: usize = 461;
 
 #[test]
 fn the_registry_has_not_silently_shrunk() {

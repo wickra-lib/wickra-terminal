@@ -73,8 +73,14 @@ WRAPPERS = {
     "Trade": ("TradeIn", "TradeInFields"),
     "OrderBook": ("BookIn", "BookInFields"),
     "(f64,f64)": ("PairIn", "PairInFields"),
+    # Not an `Input` any indicator declares -- a routing target. See
+    # RETURN_INPUT_ONLY below.
+    "returns": ("ReturnsIn", "ReturnsInFields"),
 }
 
+# The families this terminal can feed. `returns` is in here because the routing
+# above assigns it before this check, and no indicator declares it as an
+# `Input`, so it cannot be reached by accident.
 SUPPORTED_INPUTS = set(WRAPPERS)
 
 # Indicators whose `Input = f64` is a per-period RETURN, not a price.
@@ -85,10 +91,11 @@ SUPPORTED_INPUTS = set(WRAPPERS)
 # denominator is zero and they return `inf` for every reading: measured across
 # 400 varied prices, finite=0 and non-finite=1161.
 #
-# So they are skipped rather than registered, the same call P4.3d made for
-# `Footprint`: an indicator that cannot produce a meaningful value from what this
-# terminal can feed it does not belong in the catalogue. Reaching them properly
-# needs a returns input family, which is a feature rather than a fix.
+# They used to be skipped for that reason. They are now routed to the `returns`
+# family instead, which is the feature that comment asked for: the terminal has
+# no return to feed directly, but it builds candles, and the close-to-close
+# return of a closed bar is exactly the per-period return these ratios are
+# defined over. The set below is therefore a ROUTING list, not an exclusion.
 #
 # Only these three are excluded because only these three are provably broken --
 # driving every indicator the terminal can feed, exactly these produce no finite
@@ -108,6 +115,7 @@ INPUT_TY = {
     "Trade": "wc::Trade",
     "OrderBook": "wc::OrderBook",
     "(f64,f64)": "(f64, f64)",
+    "returns": "f64",
 }
 
 # Extra state a wrapper carries beyond the indicator itself. Only the pairwise
@@ -115,6 +123,7 @@ INPUT_TY = {
 # because that is a property of the spec rather than of the tick.
 EXTRA_FIELDS = {
     "(f64,f64)": (("reference", "String"),),
+    "returns": (("previous_close", "Option<f64>"),),
 }
 
 # How each family reaches its value out of a `&TickInput` and feeds it. A tick
@@ -126,6 +135,21 @@ UPDATE_EXPR = {
     "Candle": "input.candle.and_then(|c| self.inner.update(c))",
     "Trade": "input.trade.and_then(|t| self.inner.update(t))",
     "OrderBook": "input.book.clone().and_then(|b| self.inner.update(b))",
+    "returns": (
+        "input.candle.and_then(|candle| {"
+        + chr(10)
+        + "                let close = candle.close;"
+        + chr(10)
+        + "                self.previous_close"
+        + chr(10)
+        + "                    .replace(close)"
+        + chr(10)
+        + "                    .filter(|previous| previous.is_normal())"
+        + chr(10)
+        + "                    .and_then(|previous| self.inner.update(close / previous - 1.0))"
+        + chr(10)
+        + "            })"
+    ),
     "(f64,f64)": (
         "input"
         + chr(10)
@@ -388,6 +412,12 @@ WRAPPER_DOC = {
         "Wraps a book (`Input = OrderBook`) single-output indicator. Ticks whose",
         "book is one-sided yield `None` without advancing it.",
     ),
+    "returns": (
+        "Wraps an indicator whose `Input = f64` is a per-period RETURN rather",
+        "than a price, feeding it the close-to-close return of each closed bar.",
+        "The first bar establishes the close to difference against and yields",
+        "`None`; a previous close that is not a normal number is not divided by.",
+    ),
     "(f64,f64)": (
         "Wraps a pairwise (`Input = (f64, f64)`) single-output indicator: this",
         "market's price against a reference market's. Ticks on which the reference",
@@ -427,6 +457,18 @@ def wants_book(family: str) -> str:
         + chr(10)
         + "    }"
     )
+
+
+# How each family reports its warmup. The returns family spends one bar
+# establishing the close it differences against, so it needs one more than the
+# indicator itself asks for.
+WARMUP_EXPR = {
+    "returns": "self.inner.warmup_period() + 1",
+}
+
+
+def warmup_expr(family: str) -> str:
+    return WARMUP_EXPR.get(family, "self.inner.warmup_period()")
 
 
 def extra_decls(family: str) -> str:
@@ -472,7 +514,7 @@ where
         Vec::new()
     }}
     fn warmup(&self) -> usize {{
-        self.inner.warmup_period()
+        {warmup_expr(family)}
     }}{wants_book(family)}{wants_reference(family)}
 }}
 """
@@ -596,7 +638,7 @@ where
 {fields_body}
     }}
     fn warmup(&self) -> usize {{
-        self.inner.warmup_period()
+        {warmup_expr(family)}
     }}{wants_book(family)}{wants_reference(family)}
 }}
 """
@@ -685,9 +727,11 @@ def main() -> None:
                 skipped_names.setdefault("no associated types", []).append(ty)
                 continue
             if ty in RETURN_INPUT_ONLY:
-                skipped["input is a return, not a price"] += 1
-                skipped_names.setdefault("input is a return, not a price", []).append(ty)
-                continue
+                # Routed to the returns family rather than skipped: the terminal
+                # has no return to feed directly, but it builds candles, and a
+                # close-to-close return is exactly the per-period return these
+                # ratios are defined over.
+                inp = "returns"
             if inp not in SUPPORTED_INPUTS:
                 skipped[f"input {inp}"] += 1
                 skipped_names.setdefault(f"input {inp}", []).append(ty)
@@ -728,7 +772,7 @@ def main() -> None:
         extra = "".join(
             f", {name}: pair_reference(kind, reference)?.to_string()"
             if name == "reference"
-            else ""
+            else f", {name}: None"
             for name, _ in EXTRA_FIELDS.get(inp, ())
         )
         if fields:
