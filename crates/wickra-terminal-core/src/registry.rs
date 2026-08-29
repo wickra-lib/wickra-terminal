@@ -3074,7 +3074,7 @@ fn map_new<T>(kind: &str, made: core::result::Result<T, wc::Error>) -> Result<T>
 }
 
 /// Every registered indicator name, sorted.
-pub const KINDS: [&str; 497] = [
+pub const KINDS: [&str; 498] = [
     "AbandonedBaby",
     "Abcd",
     "AbsoluteBreadthIndex",
@@ -3129,6 +3129,7 @@ pub const KINDS: [&str; 497] = [
     "BomarBands",
     "BreadthThrust",
     "Breakaway",
+    "BullishPercentIndex",
     "BurkeRatio",
     "Butterfly",
     "CalendarSpread",
@@ -3578,7 +3579,7 @@ pub const KINDS: [&str; 497] = [
 /// same values the library pins its own reference outputs with. Used by the
 /// build-all test so every registered indicator is constructed the way wickra
 /// constructs it, rather than with a guessed parameter count.
-pub const DEFAULTS: [(&str, &[f64]); 495] = [
+pub const DEFAULTS: [(&str, &[f64]); 496] = [
     ("AbandonedBaby", &[]),
     ("Abcd", &[]),
     ("AbsoluteBreadthIndex", &[]),
@@ -3632,6 +3633,7 @@ pub const DEFAULTS: [(&str, &[f64]); 495] = [
     ("BomarBands", &[4.0, 0.85]),
     ("BreadthThrust", &[10.0]),
     ("Breakaway", &[]),
+    ("BullishPercentIndex", &[]),
     ("BurkeRatio", &[14.0]),
     ("Butterfly", &[]),
     ("CalendarSpread", &[]),
@@ -4117,12 +4119,13 @@ pub const PAIRWISE: [&str; 24] = [
 ];
 
 /// Every registered indicator that reads the whole tracked universe, sorted.
-pub const CROSS_SECTION: [&str; 14] = [
+pub const CROSS_SECTION: [&str; 15] = [
     "AbsoluteBreadthIndex",
     "AdVolumeLine",
     "AdvanceDecline",
     "AdvanceDeclineRatio",
     "BreadthThrust",
+    "BullishPercentIndex",
     "CumulativeVolumeIndex",
     "HighLowIndex",
     "McClellanOscillator",
@@ -4479,6 +4482,9 @@ fn build_inner(
         })),
         "Breakaway" => Ok(Box::new(CandleIn {
             inner: wc::Breakaway::new(),
+        })),
+        "BullishPercentIndex" => Ok(Box::new(CrossIn {
+            inner: wc::BullishPercentIndex::new(),
         })),
         "BurkeRatio" => Ok(Box::new(ScalarPrice {
             inner: map_new(kind, wc::BurkeRatio::new(usize_param(params, 0, kind)?))?,

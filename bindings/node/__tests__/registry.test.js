@@ -52,7 +52,7 @@ test("the catalogue lists the whole registry", () => {
   const term = subscribed();
   const raw = term.command(JSON.stringify({ type: "ListIndicators" }));
   const { indicators } = JSON.parse(raw);
-  assert.ok(indicators.length >= 495, `only ${indicators.length} entries`);
+  assert.ok(indicators.length >= 496, `only ${indicators.length} entries`);
   // Every row carries the parameters needed to construct it. These are wickra's
   // reference values rather than the terminal's overlay: the catalogue answers
   // what this build can do, the overlay what it is showing.

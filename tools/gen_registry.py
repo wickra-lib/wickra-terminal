@@ -93,24 +93,6 @@ WRAPPERS = {
 # The families this terminal can feed. `returns` is in here because the routing
 # above assigns it before this check, and no indicator declares it as an
 # `Input`, so it cannot be reached by accident.
-# Breadth indicators reading a per-symbol signal this terminal does not keep.
-#
-# `Member` carries six fields. Five are folded from each market's closed bars --
-# change, volume, new_high, new_low, and above_ma against a reference moving
-# average. The sixth, `on_buy_signal`, is whether a symbol sits on a
-# point-and-figure BUY signal, which needs P&F column state per symbol: box size,
-# reversal, and the column history a breakout is judged against. The terminal
-# keeps none of that.
-#
-# Registering the one indicator that reads it would mean feeding `false` for
-# every member, so `BullishPercentIndex` would report a constant zero under a
-# name that promises a breadth reading. That is the same call P4.3d made for
-# `Footprint` and P12.1 made for `VolumeProfile`: an honest absence beats a
-# confident wrong answer. Wiring P&F per symbol removes this entry.
-CROSS_SECTION_UNAVAILABLE = {
-    "BullishPercentIndex",
-}
-
 SUPPORTED_INPUTS = set(WRAPPERS)
 
 # Indicators whose `Input = f64` is a per-period RETURN, not a price.
@@ -832,12 +814,6 @@ def main() -> None:
             if inp is None or out is None:
                 skipped["no associated types"] += 1
                 skipped_names.setdefault("no associated types", []).append(ty)
-                continue
-            if ty in CROSS_SECTION_UNAVAILABLE:
-                skipped["reads a per-symbol signal the terminal has no source for"] += 1
-                skipped_names.setdefault(
-                    "reads a per-symbol signal the terminal has no source for", []
-                ).append(ty)
                 continue
             if ty in RETURN_INPUT_ONLY:
                 # Routed to the returns family rather than skipped: the terminal

@@ -20,6 +20,88 @@ use crate::error::{Error, Result};
 use crate::registry::{self, TickIndicator, TickInput};
 use crate::source::{DataSource, SourceId, Symbol};
 
+/// Box size for the point-and-figure column state, as a fraction of price.
+///
+/// A percentage box rather than a fixed increment, because this terminal tracks
+/// whatever markets a config names: one box of $1 is noise on an index and a
+/// whole trend on a small cap. One percent is the conventional default for a
+/// percentage-box chart.
+const PNF_BOX_FRACTION: f64 = 0.01;
+
+/// Boxes of counter-move needed to start a new column. Three is the standard.
+const PNF_REVERSAL_BOXES: f64 = 3.0;
+
+/// Point-and-figure column state for one market.
+///
+/// Exists for exactly one reading: `BullishPercentIndex` counts what share of a
+/// universe sits on a P&F BUY signal, and that signal is not a price level — it
+/// is a property of the column history. A market is on a buy signal from the
+/// moment a rising column exceeds the previous rising column's high (a
+/// double-top breakout) until a falling column undercuts the previous falling
+/// column's low.
+///
+/// Price is folded, not sampled: the column only advances when the close moves a
+/// whole box, and only reverses on a counter-move of `PNF_REVERSAL_BOXES`. That
+/// filtering is the point of the chart — it is why a P&F signal is not the same
+/// thing as "the price went up".
+#[derive(Debug, Default)]
+struct PointAndFigure {
+    /// True while the current column is rising (an X column).
+    rising: bool,
+    /// The high of the current X column, or the low of the current O column.
+    extreme: f64,
+    /// The high of the last completed X column, which a breakout must exceed.
+    previous_high: Option<f64>,
+    /// The low of the last completed O column, which a breakdown must undercut.
+    previous_low: Option<f64>,
+    /// Whether the market is currently on a buy signal.
+    on_buy_signal: bool,
+    /// False until the first close has seeded a column.
+    started: bool,
+}
+
+impl PointAndFigure {
+    /// Fold one close.
+    fn update(&mut self, close: f64) {
+        if !close.is_finite() || close <= 0.0 {
+            return;
+        }
+        if !self.started {
+            self.started = true;
+            self.rising = true;
+            self.extreme = close;
+            return;
+        }
+        let box_size = close * PNF_BOX_FRACTION;
+        let reversal = box_size * PNF_REVERSAL_BOXES;
+
+        if self.rising {
+            if close >= self.extreme + box_size {
+                self.extreme = close;
+                // A rising column that clears the previous rising column's high
+                // is the double-top breakout: the signal turns to buy and stays
+                // there until a breakdown takes it away.
+                if self.previous_high.is_some_and(|high| close > high) {
+                    self.on_buy_signal = true;
+                }
+            } else if close <= self.extreme - reversal {
+                self.previous_high = Some(self.extreme);
+                self.rising = false;
+                self.extreme = close;
+            }
+        } else if close <= self.extreme - box_size {
+            self.extreme = close;
+            if self.previous_low.is_some_and(|low| close < low) {
+                self.on_buy_signal = false;
+            }
+        } else if close >= self.extreme + reversal {
+            self.previous_low = Some(self.extreme);
+            self.rising = true;
+            self.extreme = close;
+        }
+    }
+}
+
 /// The reference moving average the `% Above Moving Average` breadth reading is
 /// taken against.
 ///
@@ -209,6 +291,8 @@ struct BreadthState {
     /// The reference moving average, and whether the last close sat above it.
     average: wc::Sma,
     above_ma: bool,
+    /// Point-and-figure column state, for the buy-signal breadth reading.
+    point_and_figure: PointAndFigure,
     /// False until a bar has closed. A symbol that has not produced one is left
     /// out of the universe rather than entered as an unchanged member, which
     /// would drag every ratio toward the middle.
@@ -228,6 +312,7 @@ impl BreadthState {
             average: wc::Sma::new(BREADTH_MA_PERIOD)
                 .expect("BREADTH_MA_PERIOD is a non-zero constant"),
             above_ma: false,
+            point_and_figure: PointAndFigure::default(),
             ready: false,
         }
     }
@@ -258,6 +343,7 @@ impl BreadthState {
             .average
             .update(close)
             .is_some_and(|average| close > average);
+        self.point_and_figure.update(close);
         self.ready = true;
     }
 
@@ -272,12 +358,7 @@ impl BreadthState {
             self.new_high,
             self.new_low,
             self.above_ma,
-            // Left false, and the one indicator that reads it is not registered
-            // because of that. A point-and-figure buy signal needs P&F column
-            // state per symbol, which this terminal does not keep; reporting
-            // `false` for every member would make BullishPercentIndex read a
-            // constant zero under a name that promises a breadth reading.
-            false,
+            self.point_and_figure.on_buy_signal,
         ))
     }
 }
@@ -1868,5 +1949,79 @@ mod tests {
             reading.is_some(),
             "EffectiveSpread produced no reading after 40 prints against a two-sided book"
         );
+    }
+
+    /// Drive a point-and-figure column through a sequence of closes.
+    fn pnf(closes: &[f64]) -> PointAndFigure {
+        let mut chart = PointAndFigure::default();
+        for close in closes {
+            chart.update(*close);
+        }
+        chart
+    }
+
+    /// The signal is a column property, not a price level.
+    ///
+    /// Around 100 the box is ~1.0 and the reversal ~3.0, so: seed at 100, run
+    /// up to 102, reverse down to 98 (which completes an X column at 102),
+    /// reverse back up, then clear 102. That last step is the double-top
+    /// breakout and the only thing that turns the signal on.
+    #[test]
+    fn a_rising_column_clearing_the_previous_one_is_a_buy_signal() {
+        assert!(
+            !pnf(&[100.0, 102.0]).on_buy_signal,
+            "no previous column to clear yet"
+        );
+        assert!(pnf(&[100.0, 102.0, 98.0, 102.0, 104.0]).on_buy_signal);
+    }
+
+    #[test]
+    fn a_falling_column_undercutting_the_previous_one_takes_it_away() {
+        let chart = pnf(&[100.0, 102.0, 98.0, 102.0, 104.0]);
+        assert!(chart.on_buy_signal, "the setup should be on a buy signal");
+        // Down to 100 (completing an X at 104), back up to 104, down again to
+        // 100, then through it: the breakdown below the previous O low.
+        let chart = pnf(&[100.0, 102.0, 98.0, 102.0, 104.0, 100.0, 104.0, 100.0, 96.0]);
+        assert!(!chart.on_buy_signal);
+    }
+
+    #[test]
+    fn a_move_smaller_than_a_box_does_not_advance_the_column() {
+        // Half a box, repeatedly. A P&F chart is a filter: this is the whole
+        // reason its signal is not the same thing as "the price went up".
+        let chart = pnf(&[100.0, 100.5, 100.9, 100.4, 100.8]);
+        assert!(
+            (chart.extreme - 100.0).abs() < 1e-9,
+            "the column did not move"
+        );
+        assert!(chart.rising);
+    }
+
+    #[test]
+    fn a_counter_move_smaller_than_the_reversal_does_not_start_a_column() {
+        // Two boxes down from a rising column is not three, so the column
+        // stands: without this a P&F chart would be an ordinary line chart.
+        let chart = pnf(&[100.0, 104.0, 102.0]);
+        assert!(
+            chart.rising,
+            "a two-box pullback must not reverse the column"
+        );
+        assert!((chart.extreme - 104.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_breadth_member_reports_the_point_and_figure_signal() {
+        // The reason all of this exists: BullishPercentIndex reads this flag,
+        // and it was hard-coded false until the column state existed.
+        let mut breadth = BreadthState::new();
+        let bar = |close: f64| {
+            wc::Candle::new(close, close, close, close, 10.0, 0)
+                .expect("a flat synthetic bar is valid")
+        };
+        for close in [100.0, 102.0, 98.0, 102.0, 104.0] {
+            breadth.update(&bar(close));
+        }
+        let member = breadth.member().expect("bars have closed");
+        assert!(member.on_buy_signal);
     }
 }

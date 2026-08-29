@@ -110,7 +110,7 @@ func TestCatalogueListsTheWholeRegistry(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &catalogue); err != nil {
 		t.Fatal(err)
 	}
-	if len(catalogue.Indicators) < 495 {
+	if len(catalogue.Indicators) < 496 {
 		t.Fatalf("only %d entries in the catalogue", len(catalogue.Indicators))
 	}
 	// Every row carries the parameters needed to construct it: discovery

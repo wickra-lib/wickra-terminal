@@ -78,4 +78,4 @@ fold + build every panel) ~9.7 µs.
 The split matters more than the totals: the fold is nanoseconds and building the
 view-models is microseconds, so the O(1) fold is not what a renderer waits on.
 The indicator count is a direct multiplier on the fold — those figures are the
-two-indicator default, and the registry offers <!--indicator-count-->495<!--/indicator-count-->.
+two-indicator default, and the registry offers <!--indicator-count-->496<!--/indicator-count-->.
