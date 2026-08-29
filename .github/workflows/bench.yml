@@ -39,3 +39,114 @@ jobs:
         with:
           name: benchmark
           path: benchmark.txt
+
+  throughput:
+    name: Per-binding throughput
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Every binding ships a throughput benchmark, and a benchmark nobody runs is
+    # a benchmark that stops compiling. This builds and runs all ten with a small
+    # command count -- it asserts nothing about the numbers, which are
+    # machine-dependent and meaningless on a shared runner. What it asserts is
+    # that each harness still builds against the binding it measures.
+    #
+    # Here rather than in ci.yml because it needs nine toolchains in one job, and
+    # this workflow already runs nightly rather than on every push.
+    env:
+      TICKS: "2000"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
+        timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
+
+      - name: Build the C ABI
+        run: cargo build -p wickra-terminal-c --release
+
+      - name: Rust, no boundary
+        run: cargo run -p wickra-terminal-example --bin throughput --release -- "$TICKS"
+
+      - name: C and C++
+        run: |
+          for lang in c cpp; do
+            cmake -S "bindings/$lang/benchmarks" -B "bindings/$lang/benchmarks/build" -DCMAKE_BUILD_TYPE=Release
+            cmake --build "bindings/$lang/benchmarks/build" --config Release
+            "./bindings/$lang/benchmarks/build/throughput" "$TICKS"
+          done
+
+      - uses: ./.github/actions/setup-python
+        with:
+          python-version: "3.12"
+      - name: Python
+        run: |
+          python -m pip install --require-hashes -r .github/requirements/ci-dev-py3.txt
+          maturin build --release --out bindings/python/dist -m bindings/python/Cargo.toml
+          python -m pip install --no-index --find-links bindings/python/dist --force-reinstall --no-deps wickra-terminal
+          cd bindings/python && python -m benchmarks.throughput --ticks "$TICKS"
+
+      - uses: ./.github/actions/setup-node
+        with:
+          node-version: "22"
+      - name: Node
+        run: |
+          cd bindings/node
+          npm install --no-audit --no-fund
+          npm run build
+          node benchmarks/throughput.js --ticks "$TICKS"
+
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
+        timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
+        with:
+          tool: wasm-pack
+      - name: WASM
+        run: |
+          wasm-pack build bindings/wasm --target nodejs --release --out-dir pkg-node
+          node bindings/wasm/benchmarks/throughput.mjs --ticks "$TICKS"
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.25"
+          cache-dependency-path: bindings/go/go.sum
+      - name: Go
+        run: |
+          mkdir -p bindings/go/lib/linux_amd64
+          cp target/release/libwickra_terminal.so bindings/go/lib/linux_amd64/
+          cd bindings/go && WICKRA_GO_LIBDIR="$PWD/lib/linux_amd64" go run ./benchmarks -ticks "$TICKS"
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "8.0.x"
+      - name: C#
+        run: dotnet run --project bindings/csharp/benchmarks -c Release -- "$TICKS"
+
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: "22"
+      - name: Java
+        # A single source file rather than a second Maven module, so it is
+        # compiled against the binding's sources directly.
+        run: |
+          mkdir -p target/jbench
+          javac -d target/jbench $(find bindings/java/src/main/java -name '*.java') bindings/java/benchmarks/Throughput.java
+          java --enable-native-access=ALL-UNNAMED -cp target/jbench \
+            -Dnative.lib.dir=target/release Throughput "$TICKS"
+
+      - uses: r-lib/actions/setup-r@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2.12.1
+        with:
+          r-version: "release"
+          use-public-rspm: true
+      - name: R
+        env:
+          WKTERM_INC: ${{ github.workspace }}/bindings/c/include
+          WKTERM_LIB: ${{ github.workspace }}/target/release
+        run: |
+          R CMD INSTALL bindings/r
+          Rscript bindings/r/benchmarks/throughput.R "$TICKS"

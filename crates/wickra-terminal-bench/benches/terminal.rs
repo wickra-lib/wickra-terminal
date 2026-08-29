@@ -17,6 +17,27 @@ fn synth_terminal() -> Terminal {
     terminal
 }
 
+/// The exact config the nine per-binding throughput benchmarks build, so the
+/// `command_json_bench_config` row below is the same operation they time with a
+/// language boundary in the way. `command_json_tick` above uses the default
+/// five-panel layout with its default indicators, which is a heavier tick and
+/// not comparable to them.
+const BENCH_CONFIG: &str = concat!(
+    "{\"sources\":[{\"Synth\":{\"seed\":1}}],",
+    "\"layout\":{\"panels\":[",
+    "{\"kind\":\"Chart\",\"rect\":{\"x\":0,\"y\":0,\"w\":100,\"h\":40}},",
+    "{\"kind\":\"Book\",\"rect\":{\"x\":0,\"y\":40,\"w\":50,\"h\":30}},",
+    "{\"kind\":\"Tape\",\"rect\":{\"x\":50,\"y\":40,\"w\":50,\"h\":30}}]}}",
+);
+
+fn bench_terminal() -> Terminal {
+    let mut terminal = Terminal::from_json(BENCH_CONFIG).unwrap();
+    terminal
+        .command_json("{\"type\":\"Subscribe\",\"source\":0,\"symbol\":\"BTC/USDT\"}")
+        .unwrap();
+    terminal
+}
+
 fn trade(sym: &Symbol) -> Event {
     Event::Trade(TradePrint {
         symbol: sym.clone(),
@@ -82,6 +103,19 @@ fn benchmarks(c: &mut Criterion) {
     c.bench_function("tick_synth", |b| {
         let mut terminal = synth_terminal();
         b.iter(|| black_box(terminal.tick()));
+    });
+
+    // The no-boundary baseline for the per-binding throughput benchmarks: same
+    // config, same command, no language boundary in the way.
+    c.bench_function("command_json_bench_config", |b| {
+        let mut terminal = bench_terminal();
+        b.iter(|| {
+            black_box(
+                terminal
+                    .command_json(black_box("{\"type\":\"Tick\"}"))
+                    .unwrap(),
+            );
+        });
     });
 
     c.bench_function("command_json_tick", |b| {

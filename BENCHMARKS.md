@@ -8,7 +8,7 @@ bottleneck under a fast feed.
 
 ## What is measured
 
-The `wickra-terminal-bench` crate (criterion) covers five paths, one benchmark each:
+The `wickra-terminal-bench` crate (criterion) covers six paths, one benchmark each:
 
 - **`fold_trade`** — folding one trade into `AppState`: the tape, the footprint,
   the price history, the candle builder and every configured indicator.
@@ -24,6 +24,12 @@ The `wickra-terminal-bench` crate (criterion) covers five paths, one benchmark e
 - **`command_json_tick`** — the same tick through the data-driven FFI boundary:
   parse the command JSON, apply it, serialise the frame. This is what every
   binding pays per call.
+
+- **`command_json_bench_config`** — the same call on the three-panel config the
+  per-binding benchmarks build, so the section below has a no-boundary number
+  measured on identical work. `command_json_tick` above uses the default
+  five-panel layout with its default indicators, which is a heavier tick and
+  not comparable to them.
 
 ## Methodology
 
@@ -54,6 +60,7 @@ and understated the released one by roughly a tenth.
 | `frame_build`       | build all five panels' view-models            | 8.9 µs   | ~113 K/s   |
 | `tick_synth`        | poll + fold + build the frame                 | 9.7 µs  | ~103 K/s    |
 | `command_json_tick` | the same tick across the FFI boundary         | 17.7 µs  | ~56 K/s    |
+| `command_json_bench_config` | the same, on the three-panel config the per-binding benchmarks use | 16.2 µs | ~62 K/s |
 
 The takeaway: a full tick that rebuilds every panel's view-model costs about ten
 microseconds, so the core sustains a hundred thousand frames per second — far
@@ -72,6 +79,86 @@ building view-models, not folding events.
 the command and serialising a frame of five panels — not the terminal's work, and
 it is the price every binding pays for the boundary being data rather than an
 API. It is also why the frame is serialised once per tick rather than per panel.
+
+## Per-binding throughput — what the boundary costs
+
+The figures above are the core with no language boundary in the way. This
+section answers the question the README's "one core in ten languages" invites
+and never had a number for: what does the boundary cost?
+
+Each binding ships a `throughput` benchmark under `bindings/<lang>/benchmarks/`.
+All ten build the same three-panel synth config, subscribe once, and time a
+tight loop of `Tick` commands — median of three runs after a warmup. The Rust
+row is the same loop with no boundary at all
+(`cargo run -p wickra-terminal-example --bin throughput --release`), which is
+what the other nine are measured against.
+
+50,000 commands, one Windows x86-64 desktop, release builds throughout. Same
+machine for every row; that is the only way these compare.
+
+| Surface | commands/s | µs/command | over the floor |
+|---------|-----------:|-----------:|---------------:|
+| **Rust — no boundary** | 67,321 | 14.85 | — |
+| Node (napi-rs) | 65,709 | 15.22 | +0.4 |
+| C (the ABI itself) | 65,142 | 15.35 | +0.5 |
+| Java (FFM) | 62,449 | 16.01 | +1.2 |
+| Python (PyO3) | 62,142 | 16.09 | +1.2 |
+| C# (P/Invoke) | 60,711 | 16.47 | +1.6 |
+| Go (cgo) | 60,008 | 16.66 | +1.8 |
+| C++ (RAII header) | 59,599 | 16.78 | +1.9 |
+| R (`.Call`) | 44,696 | 22.37 | +7.5 |
+| WASM (wasm-bindgen) | 36,224 | 27.61 | +12.8 |
+
+**The headline is the first eight rows, and it is that the boundary is nearly
+free.** Eight of the nine sit within 2 µs of a Rust call that crosses nothing,
+and the top four are inside a microsecond. That is not because the bindings are
+fast; it is because the command dominates. Roughly 15 µs goes on parsing the
+command JSON, folding the tick and serialising a three-panel frame — work every
+row pays identically — and the crossing itself is a fraction of a microsecond on
+top. Choose a language for the ecosystem you want, not for this table.
+
+The two rows that do separate are the two whose boundary is not a function call:
+
+- **WASM** copies every string into and out of linear memory in both directions.
+  At 341 bytes a frame that is measurable, and on the ~30 kB catalogue response
+  it is the largest gap in the whole set.
+- **R** pays for the interpreted loop around `.Call`, not for `.Call` itself.
+
+**C++ is the one row worth reading against its neighbour.** It calls the same
+five functions as C, so the 1.4 µs between them is the ownership layer:
+`wickra_terminal.hpp` copies the returned frame into a `std::string` and frees
+the original. That is the price of not freeing by hand on every path including
+the ones that throw, and it is visible here precisely so the trade is explicit.
+
+Each harness also times `ListIndicators`, the ~30 kB catalogue and the largest
+payload the boundary ever carries. Those numbers are printed but deliberately
+not tabulated: on a shared desktop their run-to-run spread exceeds the
+differences between bindings — enough that the no-boundary baseline sometimes
+measured slower than a binding, which cannot be true. Read them locally to see
+how a surface handles a large response; do not read them as a ranking.
+
+### Running them
+
+```bash
+cargo build -p wickra-terminal-c --release        # the C ABI, for six of the ten
+
+cargo run -p wickra-terminal-example --bin throughput --release
+cmake -S bindings/c/benchmarks   -B bindings/c/benchmarks/build   && cmake --build bindings/c/benchmarks/build   --config Release
+cmake -S bindings/cpp/benchmarks -B bindings/cpp/benchmarks/build && cmake --build bindings/cpp/benchmarks/build --config Release
+(cd bindings/python && python -m benchmarks.throughput)
+(cd bindings/node   && node benchmarks/throughput.js)
+node bindings/wasm/benchmarks/throughput.mjs
+(cd bindings/go && go run ./benchmarks)
+dotnet run --project bindings/csharp/benchmarks -c Release
+Rscript bindings/r/benchmarks/throughput.R
+```
+
+Java compiles as a single file against the built binding rather than carrying a
+second Maven module; the command is in the header of
+`bindings/java/benchmarks/Throughput.java`.
+
+Every harness takes a command count as its one argument, so a longer run is
+`... 100000`.
 
 ## Caveats
 
