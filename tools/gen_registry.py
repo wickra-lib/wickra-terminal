@@ -11,16 +11,25 @@ Single source of truth: the wickra-core indicator sources themselves
 
 What gets registered, and why only this much:
 
-  Input = f64      fed the last traded price, tick by tick.
-  Input = Candle   fed each bar as it closes, from the CandleBuilder. Only closed
-                   bars: feeding the bar in progress would make every reading
-                   repaint as the bar fills.
+  Input = f64        fed the last traded price, tick by tick.
+  Input = Candle     fed each bar as it closes, from the CandleBuilder. Only
+                     closed bars: feeding the bar in progress would make every
+                     reading repaint as the bar fills.
+  Input = Trade      fed the print with its size and aggressor side, from the
+                     terminal's own tape.
+  Input = OrderBook  fed the book, from the terminal's own book.
+  Input = (f64,f64)  fed this market's price against a reference market's, named
+                     in the spec.
 
-Everything else is skipped and reported. `(f64, f64)` needs a reference symbol,
-`OrderBook` and `Trade` need the terminal's book and tape converted to the core's
-types, and `DerivativesTick`, `CrossSection` and `TradeQuote` need feeds this
-repository does not have at all. Those are separate steps, not silent omissions:
-the run prints what it skipped and why.
+One more family is reached by name rather than by declared input: a handful of
+indicators take an `Input = f64` that wickra-core documents as a per-period
+RETURN. They are routed to the `returns` family, which differences closed bars
+and feeds the close-to-close return. See RETURN_INPUT_ONLY.
+
+What is left is skipped and reported, never dropped in silence: `DerivativesTick`,
+`CrossSection` and `TradeQuote` need feeds this repository has no source for, and
+a handful of Output structs carry variable-length bin lists that the fixed
+named-field shape here cannot represent. The run prints what it skipped and why.
 
 The backtester has a script of the same name doing the same job for a different
 shape. Its `BarInput` carries every feed a strategy may consult on one bar; a
