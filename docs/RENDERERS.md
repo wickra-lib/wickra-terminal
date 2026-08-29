@@ -2,7 +2,7 @@
 
 Web and TUI are **two renderers of one core** —
 not two products. Both consume the identical `Frame` of view-models from
-`terminal-core`; neither contains market logic.
+`wickra-terminal-core`; neither contains market logic.
 
 ## The data-driven boundary
 

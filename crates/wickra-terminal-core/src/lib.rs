@@ -1,4 +1,4 @@
-//! # terminal-core
+//! # wickra-terminal-core
 //!
 //! The data-driven core of the Wickra trading terminal. It folds market events
 //! into an O(1) [`AppState`] and turns [`panels`] into [`view`]-models — plain
@@ -18,7 +18,7 @@
 //!   data-driven FFI boundary the bindings drive.
 //!
 //! ```
-//! use terminal_core::{Config, SourceSpec, Terminal, Symbol};
+//! use wickra_terminal_core::{Config, SourceSpec, Terminal, Symbol};
 //!
 //! let mut cfg = Config::default_layout();
 //! cfg.sources = vec![SourceSpec::Synth { seed: 1 }];
@@ -27,6 +27,13 @@
 //! let frame = term.tick();
 //! assert_eq!(frame.panels.len(), 5);
 //! ```
+
+// docs.rs builds with nightly and passes --cfg docsrs, so this turns on the
+// feature-gate annotations there and nowhere else. `source::live` and
+// `LiveSource` are behind the `live` feature; without this they render on
+// docs.rs as though they were unconditional, because the manifest asks for
+// all-features and nothing then says which items needed one.
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod candle;
 pub mod config;

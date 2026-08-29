@@ -12,7 +12,7 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use terminal_core::Terminal;
+use wickra_terminal_core::Terminal;
 
 /// A trading terminal instance driven by JSON commands.
 ///

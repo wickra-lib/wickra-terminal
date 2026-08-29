@@ -68,3 +68,11 @@ bindings/r/src/wickra-terminal-c.tar.gz
 .env.*
 *.key
 secrets/
+
+# Coverage and benchmark output. ci.yml writes lcov.info at the repo root and
+# bench.yml writes benchmark.txt there; both are run artifacts, not sources.
+*.profraw
+lcov.info
+tarpaulin-report.html
+criterion/
+benchmark.txt

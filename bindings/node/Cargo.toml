@@ -45,7 +45,7 @@ similar_names = "allow"
 many_single_char_names = "allow"
 
 [dependencies]
-terminal-core = { workspace = true }
+wickra-terminal-core = { workspace = true }
 napi = { version = "3.9", features = ["napi8"] }
 napi-derive = "3.5"
 

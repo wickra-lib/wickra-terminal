@@ -3,7 +3,7 @@
 //! feed-to-frame pipeline can never drift silently — and every language binding
 //! is checked against the same files.
 //!
-//! Regenerate with `WICKRA_REGEN=1 cargo test -p terminal-core --test golden`.
+//! Regenerate with `WICKRA_REGEN=1 cargo test -p wickra-terminal-core --test golden`.
 //!
 //! # The corpus
 //!
@@ -36,8 +36,8 @@
 use std::fs;
 
 use rust_decimal::Decimal;
-use terminal_core::{Config, IndicatorSpec, SourceSpec, Symbol, Terminal, Timeframe};
 use wickra_exchange_core::{BookDelta, BookLevel, Event, OrderBookSnapshot, OrderSide, TradePrint};
+use wickra_terminal_core::{Config, IndicatorSpec, SourceSpec, Symbol, Terminal, Timeframe};
 
 fn golden_dir() -> String {
     format!("{}/../../golden", env!("CARGO_MANIFEST_DIR"))
@@ -435,7 +435,7 @@ fn golden_corpus_is_byte_exact() {
         // Parsed back into the typed `Frame`, not into a `Value`: a Value is a
         // map and pretty-printing it sorts the keys, so the human-readable copy
         // would lose the field order the wire form has.
-        let frame: terminal_core::Frame = serde_json::from_str(&frame_min)
+        let frame: wickra_terminal_core::Frame = serde_json::from_str(&frame_min)
             .unwrap_or_else(|err| panic!("{}: frame does not round-trip: {err}", scenario.name));
 
         let config_rel = format!("configs/{}.json", scenario.name);

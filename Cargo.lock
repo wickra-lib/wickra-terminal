@@ -3062,32 +3062,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "terminal-bench"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "rust_decimal",
- "terminal-core",
- "wickra-exchange-core",
-]
-
-[[package]]
-name = "terminal-core"
-version = "0.1.0"
-dependencies = [
- "proptest",
- "rust_decimal",
- "rust_decimal_macros",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "toml",
- "wickra-core 1.0.1",
- "wickra-exchange",
- "wickra-exchange-core",
-]
-
-[[package]]
 name = "terminfo"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3807,21 +3781,47 @@ dependencies = [
  "clap",
  "crossterm",
  "ratatui",
- "terminal-core",
+ "wickra-terminal-core",
+]
+
+[[package]]
+name = "wickra-terminal-bench"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "rust_decimal",
+ "wickra-exchange-core",
+ "wickra-terminal-core",
 ]
 
 [[package]]
 name = "wickra-terminal-c"
 version = "0.1.0"
 dependencies = [
- "terminal-core",
+ "wickra-terminal-core",
+]
+
+[[package]]
+name = "wickra-terminal-core"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "rust_decimal",
+ "rust_decimal_macros",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "toml",
+ "wickra-core 1.0.1",
+ "wickra-exchange",
+ "wickra-exchange-core",
 ]
 
 [[package]]
 name = "wickra-terminal-example"
 version = "0.1.0"
 dependencies = [
- "terminal-core",
+ "wickra-terminal-core",
 ]
 
 [[package]]
@@ -3831,7 +3831,7 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
- "terminal-core",
+ "wickra-terminal-core",
 ]
 
 [[package]]
@@ -3839,7 +3839,7 @@ name = "wickra-terminal-python"
 version = "0.1.0"
 dependencies = [
  "pyo3",
- "terminal-core",
+ "wickra-terminal-core",
 ]
 
 [[package]]
@@ -3849,8 +3849,8 @@ dependencies = [
  "getrandom 0.2.17",
  "getrandom 0.3.4",
  "getrandom 0.4.3",
- "terminal-core",
  "wasm-bindgen",
+ "wickra-terminal-core",
 ]
 
 [[package]]

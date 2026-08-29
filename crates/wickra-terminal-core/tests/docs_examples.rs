@@ -12,7 +12,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use terminal_core::{Config, SourceSpec, Terminal};
+use wickra_terminal_core::{Config, SourceSpec, Terminal};
 
 /// The documents whose examples must work.
 const DOCS: [&str; 8] = [
@@ -211,7 +211,7 @@ fn the_documented_indicator_count_is_the_real_one() {
     // project's, and only this terminal's own figure should move with the
     // registry.
     let root = repo_root();
-    let actual = terminal_core::registry::DEFAULTS.len().to_string();
+    let actual = wickra_terminal_core::registry::DEFAULTS.len().to_string();
 
     for rel in COUNTED {
         let text = read(&root, rel);
@@ -246,7 +246,7 @@ fn the_documented_indicator_count_is_the_real_one() {
 fn the_unreachable_indicator_count_adds_up() {
     const LIBRARY_TOTAL: usize = 504;
     let root = repo_root();
-    let registered = terminal_core::registry::DEFAULTS.len();
+    let registered = wickra_terminal_core::registry::DEFAULTS.len();
     let needle = format!(" of the {LIBRARY_TOTAL}");
     let mut checked = 0;
 
@@ -286,7 +286,7 @@ fn the_citation_abstract_states_the_real_indicator_count() {
 
     let root = repo_root();
     let text = read(&root, "CITATION.cff");
-    let actual = terminal_core::registry::DEFAULTS.len().to_string();
+    let actual = wickra_terminal_core::registry::DEFAULTS.len().to_string();
 
     let before = text
         .split(PHRASE)
@@ -346,7 +346,7 @@ fn the_citation_claims_no_release() {
 #[test]
 fn every_binding_readme_documents_every_command() {
     let root = repo_root();
-    let source = read(&root, "crates/terminal-core/src/terminal.rs");
+    let source = read(&root, "crates/wickra-terminal-core/src/terminal.rs");
     let start = source
         .find("enum Command {")
         .expect("the Command enum moved or was renamed");
@@ -434,7 +434,7 @@ fn benchmarks_md_lists_the_benchmarks_that_exist() {
     // table rows below. Nobody reads a document against its own source, so this
     // does.
     let root = repo_root();
-    let bench = fs::read_to_string(root.join("crates/terminal-bench/benches/terminal.rs"))
+    let bench = fs::read_to_string(root.join("crates/wickra-terminal-bench/benches/terminal.rs"))
         .expect("the bench source");
     let doc = read(&root, "BENCHMARKS.md");
 

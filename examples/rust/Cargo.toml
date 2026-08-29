@@ -15,4 +15,4 @@ name = "synth"
 path = "src/main.rs"
 
 [dependencies]
-terminal-core = { workspace = true }
+wickra-terminal-core = { workspace = true }

@@ -4,7 +4,7 @@
 //! typed result without panicking, and the produced frame must serialize.
 
 use libfuzzer_sys::fuzz_target;
-use terminal_core::{Config, SourceSpec, Symbol, Terminal};
+use wickra_terminal_core::{Config, SourceSpec, Symbol, Terminal};
 
 fuzz_target!(|data: &[u8]| {
     let Ok(text) = std::str::from_utf8(data) else {

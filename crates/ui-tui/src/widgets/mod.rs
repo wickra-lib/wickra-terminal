@@ -14,7 +14,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::Block;
 use ratatui::Frame;
-use terminal_core::PanelView;
+use wickra_terminal_core::PanelView;
 
 /// The bordered block every panel draws itself into.
 ///

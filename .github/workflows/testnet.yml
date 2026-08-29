@@ -37,6 +37,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       # The Live source's #[ignore] test opens a real HTTP + WebSocket connection
       # to a public venue and folds a few streamed events; run it here, not on
       # every push.
@@ -48,4 +49,4 @@ jobs:
         # The skip still prints a job warning, so a blocked runner stays visible.
         env:
           WICKRA_LIVE_ALLOW_SKIP: "1"
-        run: cargo test -p terminal-core --all-features -- --ignored --nocapture
+        run: cargo test -p wickra-terminal-core --all-features -- --ignored --nocapture

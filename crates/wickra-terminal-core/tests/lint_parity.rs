@@ -82,8 +82,8 @@ fn every_other_crate_inherits_rather_than_copying() {
         "bindings/node/Cargo.toml",
         "bindings/python/Cargo.toml",
         "bindings/wasm/Cargo.toml",
-        "crates/terminal-bench/Cargo.toml",
-        "crates/terminal-core/Cargo.toml",
+        "crates/wickra-terminal-bench/Cargo.toml",
+        "crates/wickra-terminal-core/Cargo.toml",
         "crates/ui-tui/Cargo.toml",
         "examples/rust/Cargo.toml",
     ] {

@@ -54,6 +54,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       # The PyO3 extension cdylib is built and tested by the `python` job via
       # maturin; the C ABI cdylib by the `c-abi` job. Exclude both here — the
       # latter also avoids the wickra_terminal.pdb output-filename collision.
@@ -61,8 +62,17 @@ jobs:
       - run: cargo test --workspace --all-features --exclude wickra-terminal-python --exclude wickra-terminal-c
 
   lint:
-    name: Format & Clippy
-    runs-on: ubuntu-latest
+    name: Format & Clippy (${{ matrix.os }})
+    # Linted on every OS the crate is built for, not just Linux. A lint can be
+    # platform-conditional, and this repository has platform-conditional code:
+    # the wickra_terminal.pdb workaround in `test` and the cygpath branch in the
+    # `r` job both exist because Windows behaves differently. Clippy does not
+    # link, so the pdb collision `test` works around cannot occur here.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -74,6 +84,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
@@ -91,10 +102,11 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       # The Node binding (napi 3) and the ui-tui app (ratatui pulls instability,
       # which needs 1.88) require Rust 1.88 and are checked separately below; the
       # Python binding needs maturin's platform link flags and is built by the
-      # `python` job. The library (terminal-core) and the C ABI stay 1.86.
+      # `python` job. The library (wickra-terminal-core) and the C ABI stay 1.86.
       - run: >
           cargo build --workspace
           --exclude wickra-terminal-python
@@ -115,6 +127,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       - run: cargo build -p wickra-terminal-node -p wickra-terminal
 
   binding-surface:
@@ -164,33 +177,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Set up Python
-        id: setup_python
-        continue-on-error: true
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Wait before Python retry
-        if: steps.setup_python.outcome == 'failure'
-        shell: bash
-        run: |
-          echo "::warning::setup-python failed (likely CDN flake), waiting 30s before retry..."
-          sleep 30
-
-      - name: Set up Python (retry)
-        if: steps.setup_python.outcome == 'failure'
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: ./.github/actions/setup-python
         with:
           python-version: ${{ matrix.python-version }}
       - uses: ./.github/actions/setup-rust
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       - run: pip install -r bindings/python/requirements-ci.txt
       - run: maturin build --out dist
         working-directory: bindings/python
-      - run: pip install --no-index --find-links bindings/python/dist wickra-terminal
+      # --no-index keeps pip off PyPI so the freshly built wheel is the one
+      # under test, --force-reinstall makes it win over anything already
+      # installed, and --no-deps stops pip reaching the network to resolve
+      # dependencies the package does not have (dependencies = [] in
+      # pyproject.toml). Without the last two, pip may still contact an index,
+      # which is what Scorecard reads as an unpinned dependency.
+      - run: pip install --no-index --find-links bindings/python/dist --force-reinstall --no-deps wickra-terminal
       - run: pytest bindings/python/tests -q
 
   # The Linux wheels are built in manylinux/musllinux containers at release time
@@ -250,7 +254,7 @@ jobs:
         # A manylinux wheel is meant to install on any glibc distribution, and
         # the runner is one, so installing it here is the real check.
         run: |
-          python -m pip install --no-index --find-links bindings/python/dist wickra-terminal
+          python -m pip install --no-index --find-links bindings/python/dist --force-reinstall --no-deps wickra-terminal
           python wheel-smoke.py
 
       - name: Import the musllinux wheel in an Alpine container
@@ -259,7 +263,7 @@ jobs:
         # musl, so it cannot install on the glibc runner. Alpine is the platform
         # this wheel exists for, and nothing else in CI ever loads it.
         run: |
-          docker run --rm -v "$PWD:/io" -w /io python:3.12-alpine             sh -c "pip install --no-index --find-links bindings/python/dist wickra-terminal && python wheel-smoke.py"
+          docker run --rm -v "$PWD:/io" -w /io python:3.12-alpine             sh -c "pip install --no-index --find-links bindings/python/dist --force-reinstall --no-deps wickra-terminal && python wheel-smoke.py"
 
   node:
     name: Node ${{ matrix.node-version }} on ${{ matrix.os }}
@@ -278,32 +282,12 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
-      - name: Set up Node
-        id: setup_node
-        continue-on-error: true
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: ./.github/actions/warm-cargo
+      - uses: ./.github/actions/setup-node
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
           cache-dependency-path: bindings/node/package-lock.json
-
-      - name: Wait before Node retry
-        if: steps.setup_node.outcome == 'failure'
-        shell: bash
-        run: |
-          echo "::warning::setup-node failed (likely CDN flake), waiting 30s before retry..."
-          sleep 30
-
-      - name: Set up Node (retry)
-        if: steps.setup_node.outcome == 'failure'
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: npm
-          cache-dependency-path: bindings/node/package-lock.json
-      # npm install (not npm ci): the per-platform optionalDependencies point at
-      # native packages that are not published until the first release, so they
-      # are absent from the lock file and `npm ci` would reject the tree.
       - name: Install Node dependencies
         run: cd bindings/node && npm install --no-audit --no-fund
       # --platform puts the target triple into the filename so the loader finds
@@ -327,13 +311,14 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       - name: Install wasm-pack
         uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: wasm-pack
       # Two targets, two consumers: `web` is what the Vue renderer imports and
-      # what web-deploy.yml ships; `nodejs` is the only form `require()` can
+      # what web.yml builds; `nodejs` is the only form `require()` can
       # load, so the test suite needs it. Building both also proves a change
       # has not broken either output shape.
       - name: Build the wasm binding (web target)
@@ -365,6 +350,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       - name: Install wasm-pack
         uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
@@ -375,23 +361,7 @@ jobs:
       - name: Build the wasm binding (web target)
         run: wasm-pack build --target web
         working-directory: bindings/wasm
-      - name: Set up Node
-        id: setup_node_2
-        continue-on-error: true
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22"
-
-      - name: Wait before Node retry
-        if: steps.setup_node_2.outcome == 'failure'
-        shell: bash
-        run: |
-          echo "::warning::setup-node failed (likely CDN flake), waiting 30s before retry..."
-          sleep 30
-
-      - name: Set up Node (retry)
-        if: steps.setup_node_2.outcome == 'failure'
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: ./.github/actions/setup-node
         with:
           node-version: "22"
       - name: Install web dependencies
@@ -418,6 +388,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       - name: Install cbindgen
         uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
@@ -462,6 +433,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
 
       - name: Build the C ABI library
         run: cargo build -p wickra-terminal-c --release
@@ -523,6 +495,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: "8.0"
@@ -556,6 +529,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       # The binding loads the C ABI hub via the Java FFM API; the pom points
       # native.lib.dir at target/debug, so build it in the debug profile here.
       - name: Build the C ABI library
@@ -589,6 +563,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       # The package compiles a thin .Call glue layer against the C ABI hub and
       # links -lwickra_terminal from WKTERM_LIB; build the library first.
       - name: Build the C ABI library
@@ -633,6 +608,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
@@ -640,19 +616,19 @@ jobs:
           tool: cargo-llvm-cov
       - name: Generate coverage (lcov)
         # Both product crates, not just the core: ui-tui is a thousand lines of
-        # renderer with its own tests, and measuring only terminal-core reported a
-        # number for a third of the code while the rest went unseen. terminal-bench
+        # renderer with its own tests, and measuring only wickra-terminal-core reported a
+        # number for a third of the code while the rest went unseen. wickra-terminal-bench
         # stays out — benches are not product code, and neither sibling repo
         # measures its bench crate.
         #
         # This used to pass `--no-default-features`, with a comment claiming it
         # dropped the `live` feature. It did not. `wickra-terminal` depends on
-        # `terminal-core` with default features, and feature unification turns
+        # `wickra-terminal-core` with default features, and feature unification turns
         # `live` straight back on:
         #
-        #   cargo tree --no-default-features -e features -i terminal-core
-        #     terminal-core feature "default" <- wickra-terminal
-        #     terminal-core feature "live"    <- terminal-core feature "default"
+        #   cargo tree --no-default-features -e features -i wickra-terminal-core
+        #     wickra-terminal-core feature "default" <- wickra-terminal
+        #     wickra-terminal-core feature "live"    <- wickra-terminal-core feature "default"
         #
         # So the flag did nothing except describe a state that never held, and it
         # could not be made to work without dropping ui-tui from the measurement,
@@ -665,7 +641,7 @@ jobs:
         # feature in coverage; that is the way to close this one too.
         run: >
           cargo llvm-cov
-          -p terminal-core -p wickra-terminal
+          -p wickra-terminal-core -p wickra-terminal
           --lcov --output-path lcov.info
       - name: Upload to Codecov
         if: env.CODECOV_TOKEN != ''
@@ -704,6 +680,9 @@ jobs:
         timeout-minutes: 6
         with:
           workspaces: fuzz
+      - uses: ./.github/actions/warm-cargo
+        with:
+          working-directory: fuzz
       - name: Install cargo-fuzz
         uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
@@ -772,46 +751,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        id: setup_node_examples
-        continue-on-error: true
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: ./.github/actions/setup-node
         with:
           node-version: "22"
-
-      - name: Wait before Node retry
-        if: steps.setup_node_examples.outcome == 'failure'
-        shell: bash
-        run: |
-          echo "::warning::setup-node failed (likely CDN flake), waiting 30s before retry..."
-          sleep 30
-
-      - name: Set up Node (retry)
-        if: steps.setup_node_examples.outcome == 'failure'
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22"
-
-      - name: Set up Python
-        id: setup_python_examples
-        continue-on-error: true
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: ./.github/actions/setup-python
         with:
           python-version: "3.12"
-
-      - name: Wait before Python retry
-        if: steps.setup_python_examples.outcome == 'failure'
-        shell: bash
-        run: |
-          echo "::warning::setup-python failed (likely CDN flake), waiting 30s before retry..."
-          sleep 30
-
-      - name: Set up Python (retry)
-        if: steps.setup_python_examples.outcome == 'failure'
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-
       - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
         with:
           distribution: temurin

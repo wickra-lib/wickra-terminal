@@ -5,7 +5,7 @@
 //! bound action. That keeps key bindings data-driven rather than hard-coded.
 
 use crossterm::event::{KeyCode, KeyEvent};
-use terminal_core::Keybinds;
+use wickra_terminal_core::Keybinds;
 
 /// A resolved user intent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

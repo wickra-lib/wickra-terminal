@@ -19,7 +19,7 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use rust_decimal::Decimal;
-use terminal_core::{Config, SourceSpec, Symbol, Terminal};
+use wickra_terminal_core::{Config, SourceSpec, Symbol, Terminal};
 
 #[test]
 #[ignore = "hits live Binance public endpoints; run via testnet.yml"]

@@ -1,7 +1,7 @@
 # Architecture
 
 `wickra-terminal` is **one core with two renderers**. A single
-data-driven core (`terminal-core`) folds market events into state and emits
+data-driven core (`wickra-terminal-core`) folds market events into state and emits
 view-models; two reference front-ends render those view-models — a native TUI
 (ratatui) and a Web app (WASM + Vue). They are separate programs over one
 core, not two modes of one binary. The core
@@ -13,7 +13,7 @@ language can build their own front-end on the same core.
 ```
 RENDERERS   TUI: crates/ui-tui (ratatui)      ·      Web: web/ (Vue) over bindings/wasm
       ▲ view-models (JSON / structs)
-CORE   crates/terminal-core
+CORE   crates/wickra-terminal-core
        DataSource(Live | Replay | Synth)  ·  AppState<(SourceId,Symbol), SymbolState> (O(1) fold)  ·  Panels → view-models
       ▼ exposed as a data API in ten languages (like wickra-backtest's run_json)
 BINDINGS   python · node · wasm · c (ABI hub → c/c++/c#/go/java/r)
@@ -88,6 +88,6 @@ to protect do not exist here yet.
 ## Integration with the rest of Wickra
 
 A Rust build depends on `wickra-core` and `wickra-exchange` as Cargo crates and
-composes them in one binary, no FFI. `terminal-core` re-exports
+composes them in one binary, no FFI. `wickra-terminal-core` re-exports
 `Symbol` and `Event` from `wickra-exchange` so the source layer speaks the
 exchange's types directly.

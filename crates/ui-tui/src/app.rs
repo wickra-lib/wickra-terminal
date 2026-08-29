@@ -11,7 +11,7 @@
 
 use std::str::FromStr;
 
-use terminal_core::{Frame, Symbol, Terminal};
+use wickra_terminal_core::{Frame, Symbol, Terminal};
 
 use crate::input::Action;
 use crate::spec;
@@ -159,7 +159,7 @@ impl App {
         };
         match self.terminal.add_source(&spec) {
             Ok(id) => {
-                if let terminal_core::SourceSpec::Live { symbol, .. } = &spec {
+                if let wickra_terminal_core::SourceSpec::Live { symbol, .. } = &spec {
                     if let Ok(sym) = Symbol::from_str(symbol) {
                         let _ = self.terminal.subscribe(id, &sym);
                     }
@@ -187,7 +187,7 @@ impl App {
     }
 
     /// The source to act on: the focused one, else the most recently added.
-    fn target_source(&self) -> terminal_core::SourceId {
+    fn target_source(&self) -> wickra_terminal_core::SourceId {
         if let Some((source, _)) = self.terminal.state().focus.as_ref() {
             return *source;
         }
@@ -258,7 +258,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use terminal_core::{Config, SourceSpec};
+    use wickra_terminal_core::{Config, SourceSpec};
 
     fn synth_app() -> App {
         let mut cfg = Config::default_layout();

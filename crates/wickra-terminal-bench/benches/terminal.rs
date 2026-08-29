@@ -6,8 +6,8 @@ use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use rust_decimal::Decimal;
-use terminal_core::{AppState, Config, SourceSpec, Symbol, Terminal};
 use wickra_exchange_core::{BookDelta, BookLevel, Event, OrderSide, TradePrint};
+use wickra_terminal_core::{AppState, Config, SourceSpec, Symbol, Terminal};
 
 fn synth_terminal() -> Terminal {
     let mut config = Config::default_layout();

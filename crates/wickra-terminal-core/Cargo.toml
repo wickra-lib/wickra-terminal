@@ -1,5 +1,5 @@
 [package]
-name = "terminal-core"
+name = "wickra-terminal-core"
 description = "Data-driven core of the Wickra trading terminal: sources, O(1) state and panels that emit view-models."
 version.workspace = true
 edition.workspace = true
@@ -9,7 +9,7 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 readme.workspace = true
-documentation = "https://docs.rs/terminal-core"
+documentation = "https://docs.rs/wickra-terminal-core"
 keywords.workspace = true
 categories.workspace = true
 

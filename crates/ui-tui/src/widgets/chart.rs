@@ -4,7 +4,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
-use terminal_core::view::ChartView;
+use wickra_terminal_core::view::ChartView;
 
 /// Block glyphs from empty to full, for the text sparkline.
 const LEVELS: [char; 8] = [

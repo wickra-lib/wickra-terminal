@@ -4,7 +4,7 @@
 //! cargo run -p wickra-terminal-example
 //! ```
 
-use terminal_core::{Config, SourceSpec, Symbol, Terminal};
+use wickra_terminal_core::{Config, SourceSpec, Symbol, Terminal};
 
 fn main() {
     let mut config = Config::default_layout();

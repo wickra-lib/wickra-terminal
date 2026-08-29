@@ -5,7 +5,7 @@ version.workspace = true
 edition.workspace = true
 # ratatui pulls `instability`/`darling`, which require Rust 1.88 (newer than the
 # workspace 1.86 minimum). Left version-free on purpose: the constraint follows
-# ratatui, not one release of it. The library (terminal-core) stays 1.86; this
+# ratatui, not one release of it. The library (wickra-terminal-core) stays 1.86; this
 # TUI application needs 1.88, and is checked by the 1.88 MSRV job.
 rust-version = "1.88"
 license.workspace = true
@@ -26,7 +26,7 @@ name = "wickra-terminal"
 path = "src/main.rs"
 
 [dependencies]
-terminal-core.workspace = true
+wickra-terminal-core.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
 clap.workspace = true

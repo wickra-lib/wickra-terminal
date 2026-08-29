@@ -74,6 +74,35 @@ def scan(forbidden: list[str], allowlist: list[str]) -> list[tuple[str, int, str
     return findings
 
 
+# Each declared identity value, and the file that has to carry it. A value in
+# repo-metadata.toml that nothing checks is a comment: it can say one thing
+# while the README, the issue-template config or the badge link says another,
+# and the audit that exists to catch exactly that drift stays green.
+DECLARED = [
+    ("repo", "homepage", "README.md", "{}"),
+    ("repo", "discussions", ".github/ISSUE_TEMPLATE/config.yml", "{}"),
+    ("repo", "issues_url", ".github/ISSUE_TEMPLATE/config.yml", None),
+    ("repo", "security_url", ".github/ISSUE_TEMPLATE/config.yml", "{}"),
+    ("badges", "codecov_repo", "README.md", "codecov.io/gh/{}"),
+]
+
+
+def check_declared(meta: dict) -> list[str]:
+    """Verify every declared URL actually appears where it is supposed to."""
+    problems: list[str] = []
+    for section, key, rel_path, template in DECLARED:
+        value = meta.get(section, {}).get(key)
+        if value is None or template is None:
+            continue
+        needle = template.format(value)
+        path = REPO_ROOT / rel_path
+        if not path.is_file():
+            problems.append(f"{rel_path}: declared [{section}].{key} but the file is missing")
+            continue
+        if needle not in path.read_text(encoding="utf-8", errors="replace"):
+            problems.append(f"{rel_path}: does not contain {needle!r} from [{section}].{key}")
+    return problems
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true", help="audit-only (default)")
@@ -101,6 +130,13 @@ def main() -> int:
             "(e.g. historical CHANGELOG entries).",
             file=sys.stderr,
         )
+        return 1
+
+    drift = check_declared(meta)
+    if drift:
+        print(f"sync-metadata: {len(drift)} declared value(s) not where repo-metadata.toml says:", file=sys.stderr)
+        for problem in drift:
+            print(f"  {problem}", file=sys.stderr)
         return 1
 
     org = meta["repo"]["org"]

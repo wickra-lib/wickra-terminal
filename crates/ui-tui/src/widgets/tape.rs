@@ -5,7 +5,7 @@ use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
-use terminal_core::view::TapeView;
+use wickra_terminal_core::view::TapeView;
 
 /// Render the tape panel.
 pub(crate) fn render(frame: &mut Frame, area: Rect, view: &TapeView, focused: bool) {

@@ -8,7 +8,7 @@ requests.
 
 0. **Scaffold** — workspace, governance, supply-chain config, `.github`
    scaffolding. ✅
-1. **`terminal-core`** — the `DataSource` trait, `AppState` (O(1) fold),
+1. **`wickra-terminal-core`** — the `DataSource` trait, `AppState` (O(1) fold),
    `Panel`/`PanelView` view-models, and the `Terminal` handle with the
    data-driven `command_json` boundary. ✅
 2. **TUI renderer** — `crates/ui-tui`: a ratatui front-end (`wickra-terminal`
@@ -50,12 +50,12 @@ roughly the order they would pay off.
 - **First release.** Blocked, and not on a decision — on a dependency. The chain,
   in full, because it has one link and no way round it:
 
-  `terminal-core` depends on `wickra-exchange`, pinned to a git revision.
+  `wickra-terminal-core` depends on `wickra-exchange`, pinned to a git revision.
   `wickra-exchange` is not on crates.io. `cargo publish` refuses any crate with a
-  git dependency, so `terminal-core` cannot be published:
+  git dependency, so `wickra-terminal-core` cannot be published:
 
   ```text
-  $ cargo publish --dry-run -p terminal-core
+  $ cargo publish --dry-run -p wickra-terminal-core
   error: failed to prepare local package for uploading
   Caused by:
     no matching package named `wickra-exchange` found

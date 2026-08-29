@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Repository scaffolding: Cargo workspace, supply-chain configuration
   (`deny.toml`, `osv-scanner.toml`), lint configuration, `repo-metadata.toml`,
   and dual `MIT OR Apache-2.0` licensing.
-- `terminal-core`: the data-driven core — the `DataSource` trait (Live, Replay,
+- `wickra-terminal-core`: the data-driven core — the `DataSource` trait (Live, Replay,
   Synth, Manual), an O(1) `AppState` fold, panels (chart, book, tape, footprint,
   watchlist) that emit view-models, and the `Terminal` handle with the
   `command_json` boundary.

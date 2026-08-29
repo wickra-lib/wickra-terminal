@@ -15,7 +15,7 @@ use std::ffi::CString;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 
-use terminal_core::Terminal;
+use wickra_terminal_core::Terminal;
 
 /// Success.
 pub const WICKRA_TERMINAL_OK: c_int = 0;

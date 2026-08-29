@@ -1,0 +1,56 @@
+name: Web renderer
+
+# Build the browser renderer (WASM + Vue) on every change that can break it.
+#
+# This workflow does not publish. Cloudflare builds and deploys the renderer
+# from the repository itself through its Git integration, so there is no API
+# token here and no deploy step to gate on one. What this job is for is the
+# other half: catching a renderer that stopped compiling before Cloudflare
+# tries to build it, and covering the two things a Pages build would not --
+# the wasm-pack step and the core it is built against.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "bindings/wasm/**"
+      - "crates/wickra-terminal-core/**"
+      - ".github/workflows/web.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build the web renderer
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-node
+        with:
+          node-version: "22"
+
+      - uses: ./.github/actions/setup-rust
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: ./.github/actions/warm-cargo
+
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
+        timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
+        with:
+          tool: wasm-pack
+
+      - name: Build the WASM package
+        run: wasm-pack build bindings/wasm --target web --release
+
+      - name: Build the web renderer
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build

@@ -2,7 +2,7 @@
 //! object in a heterogeneous collection) and reports the kind it was built for.
 //! This guards the trait shapes the renderers and bindings rely on.
 
-use terminal_core::{
+use wickra_terminal_core::{
     build_panel, build_source, DataSource, Panel, PanelKind, PanelSpec, RectSpec, SourceKind,
     SourceSpec,
 };

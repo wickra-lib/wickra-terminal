@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate crates/terminal-core/src/registry.rs.
+"""Generate crates/wickra-terminal-core/src/registry.rs.
 
 Single source of truth: the wickra-core indicator sources themselves
 (crates/wickra-core/src/indicators/*.rs). For every type that implements the
@@ -29,7 +29,7 @@ set is correspondingly smaller.
 
 Usage (with a sibling wickra checkout):
     python tools/gen_registry.py --wickra ../wickra \
-        --out crates/terminal-core/src/registry.rs
+        --out crates/wickra-terminal-core/src/registry.rs
     cargo fmt --all
 """
 
@@ -215,7 +215,7 @@ HEAD = '''//! Indicator registry: constructs `wickra-core` indicators by name an
 //! GENERATED FILE — do not edit by hand. Regenerate with:
 //!
 //! ```text
-//! python tools/gen_registry.py --wickra ../wickra --out crates/terminal-core/src/registry.rs
+//! python tools/gen_registry.py --wickra ../wickra --out crates/wickra-terminal-core/src/registry.rs
 //! cargo fmt --all
 //! ```
 //!

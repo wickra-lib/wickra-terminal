@@ -4,7 +4,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
-use terminal_core::view::WatchlistView;
+use wickra_terminal_core::view::WatchlistView;
 
 /// Render the watchlist panel.
 pub(crate) fn render(frame: &mut Frame, area: Rect, view: &WatchlistView, focused: bool) {

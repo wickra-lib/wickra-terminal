@@ -12,7 +12,7 @@ libfuzzer-sys = "0.4"
 serde_json = "1"
 # The core without the `live` feature: no native networking, so the fuzz build
 # stays lean and no target ever opens a socket.
-terminal-core = { path = "../crates/terminal-core", default-features = false }
+wickra-terminal-core = { path = "../crates/wickra-terminal-core", default-features = false }
 
 # Detach from the parent workspace — cargo-fuzz builds this crate on its own with
 # sanitizer flags on a nightly toolchain.

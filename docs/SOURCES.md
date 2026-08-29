@@ -1,7 +1,7 @@
 # Sources
 
 A source is a feed the terminal subscribes to and drains. Every source
-implements the [`DataSource`](../crates/terminal-core/src/source/mod.rs) trait:
+implements the [`DataSource`](../crates/wickra-terminal-core/src/source/mod.rs) trait:
 
 ```rust
 trait DataSource {
@@ -34,7 +34,7 @@ removed and hot-swapped at runtime, and every symbol is keyed by
 
 `Live` wraps the native exchange client, which needs raw sockets and cannot run
 in a browser sandbox. It is gated behind the `live` feature (on by default for
-native builds). The WASM binding builds `terminal-core` without `live`, so the
+native builds). The WASM binding builds `wickra-terminal-core` without `live`, so the
 core compiles to `wasm32`. In the browser, live data instead comes through a
 `Manual` source: the page opens the exchange WebSocket itself and pushes each
 message in with the `Feed` command. The web renderer ships a Binance bridge
