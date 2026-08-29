@@ -30,6 +30,12 @@ the [Wickra](https://github.com/wickra-lib/wickra) core — live charts, order-b
 tape and <!--indicator-count-->497<!--/indicator-count--> streaming indicators — with a native **TUI** and a **Web** front-end
 as a *second renderer* of the same logic, driven by the same config.
 
+Every one of the **514** indicators and bar builders Wickra ships is reachable:
+497 through the indicator registry, 6 as profiles, 10 as alternative bar types,
+and the footprint through the panel that renders it. Three surfaces rather than
+one list, because a reading, a histogram and a bar are not the same shape of
+answer — see [`docs/INDICATORS.md`](docs/INDICATORS.md).
+
 > **▶ Live demo:** the Wickra library's own 514 indicators over real Binance market data, computed live in your browser — **[live.wickra.org](https://live.wickra.org)** · zero backend, powered by `wickra-wasm`.
 
 > **Part of the [Wickra ecosystem](https://github.com/wickra-lib):** the same data-driven core and ten-language binding surface also power [wickra-exchange](https://github.com/wickra-lib/wickra-exchange), [wickra-backtest](https://github.com/wickra-lib/wickra-backtest), [wickra-screener](https://github.com/wickra-lib/wickra-screener) and 20 more — see [the full list](https://github.com/wickra-lib).
