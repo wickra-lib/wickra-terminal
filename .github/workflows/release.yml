@@ -212,15 +212,19 @@ jobs:
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
       - uses: ./.github/actions/warm-cargo
-      # `npm ci` installs exactly what the lock pins, hashes included, which
-      # `npm install` does not promise. This used to say ci would be rejected
-      # because the per-platform optionalDependencies are unpublished and so
-      # absent from the lock. They are absent -- the lock names all six on the
-      # root package and resolves none of them -- but npm skips an optional
-      # dependency it cannot resolve rather than failing, and `npm ci` against
-      # this lock succeeds.
+      # npm install (not ci): the per-platform optionalDependencies are not yet
+      # published, so they are absent from the lock and npm ci rejects it with
+      # `EUSAGE ... Missing: wickra-terminal-darwin-arm64@ from lock file`.
+      #
+      # This was tried and reverted. It matters HOW it passed before failing:
+      # npm 11.1, which ships with Node 20, skips an optional dependency it
+      # cannot resolve, so `npm ci` succeeds locally and on the Node 22 leg of
+      # the matrix. The npm in Node 24 validates them against the lock first and
+      # refuses. One npm version is not evidence about npm. Scorecard's
+      # PinnedDependenciesID on this line stays open until the first release
+      # publishes those six packages and they can enter the lock.
       - name: Install Node deps
-        run: cd bindings/node && npm ci --no-audit --no-fund
+        run: cd bindings/node && npm install --no-audit --no-fund
       - name: Build native module
         working-directory: bindings/node
         run: npx napi build --platform --release --target ${{ matrix.target }}
@@ -249,7 +253,7 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
       - name: Install Node deps
-        run: cd bindings/node && npm ci --no-audit --no-fund
+        run: cd bindings/node && npm install --no-audit --no-fund
       - name: Download all platform binaries
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
