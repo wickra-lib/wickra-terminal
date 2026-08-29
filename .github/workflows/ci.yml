@@ -300,6 +300,9 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
           cache-dependency-path: bindings/node/package-lock.json
+      # npm install (not ci): the unpublished per-platform optionalDependencies
+      # are absent from the lock, and the npm in Node 24 rejects that with
+      # EUSAGE. See the longer note in release.yml.
       - name: Install Node dependencies
         run: cd bindings/node && npm install --no-audit --no-fund
       # --platform puts the target triple into the filename so the loader finds
@@ -656,9 +659,18 @@ jobs:
         #
         # `source/live.rs` is therefore measured, and reports as a hole: it is the
         # real-socket path, which the offline suite cannot reach. That number is
-        # honest rather than flattering. wickra closed the same hole by building a
-        # mock-WebSocket suite for its live path and then deliberately ENABLING the
-        # feature in coverage; that is the way to close this one too.
+        # honest rather than flattering, and wickra closed the same hole by
+        # building a mock-WebSocket suite for its live path and then deliberately
+        # ENABLING the feature in coverage.
+        #
+        # This paragraph used to end "that is the way to close this one too",
+        # which read as though live.rs were the thing to do next. It was not:
+        # when the report was first read against it, live.rs was the FIFTH
+        # largest hole, behind the generated registry and several renderer
+        # widgets that no test drew at all. No ranking is given here now, because
+        # that is exactly what went stale -- ask Codecov which files miss the
+        # most before starting, and work from the answer rather than from a
+        # comment.
         run: >
           cargo llvm-cov
           -p wickra-terminal-core -p wickra-terminal

@@ -1,0 +1,46 @@
+{
+  "bars": [
+    {
+      "kind": "RenkoBars",
+      "params": [
+        3.0
+      ]
+    }
+  ],
+  "indicators": [
+    {
+      "kind": "Sma",
+      "params": [
+        20.0
+      ]
+    },
+    {
+      "kind": "Ema",
+      "params": [
+        50.0
+      ]
+    }
+  ],
+  "layout": {
+    "panels": [
+      {
+        "kind": "Bars",
+        "rect": {
+          "h": 100,
+          "w": 100,
+          "x": 0,
+          "y": 0
+        }
+      }
+    ]
+  },
+  "profiles": [],
+  "sources": [
+    {
+      "Replay": {
+        "dataset": "[{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20000\",\"quantity\":\"0.10\",\"aggressor\":\"Sell\",\"timestamp\":0},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20005\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":334},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20010\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":668},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20015\",\"quantity\":\"0.10\",\"aggressor\":\"Sell\",\"timestamp\":1002},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20020\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":1336},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20025\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":1670},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20030\",\"quantity\":\"0.10\",\"aggressor\":\"Sell\",\"timestamp\":2004},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20035\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":2338},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20040\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":2672},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20045\",\"quantity\":\"0.10\",\"aggressor\":\"Sell\",\"timestamp\":3006},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20050\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":3340},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20055\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":3674},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20060\",\"quantity\":\"0.10\",\"aggressor\":\"Sell\",\"timestamp\":4008},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20065\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":4342},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20070\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":4676},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20075\",\"quantity\":\"0.10\",\"aggressor\":\"Sell\",\"timestamp\":5010},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20080\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":5344},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20085\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":5678},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20090\",\"quantity\":\"0.10\",\"aggressor\":\"Sell\",\"timestamp\":6012},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20095\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":6346},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20100\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":6680},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20105\",\"quantity\":\"0.10\",\"aggressor\":\"Sell\",\"timestamp\":7014},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20110\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":7348},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20115\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":7682},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20120\",\"quantity\":\"0.10\",\"aggressor\":\"Sell\",\"timestamp\":8016},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20115\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":8350},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20110\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":8684},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20105\",\"quantity\":\"0.10\",\"aggressor\":\"Sell\",\"timestamp\":9018},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20100\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":9352},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20095\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":9686},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20090\",\"quantity\":\"0.10\",\"aggressor\":\"Sell\",\"timestamp\":10020},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20085\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":10354},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20080\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":10688},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20075\",\"quantity\":\"0.10\",\"aggressor\":\"Sell\",\"timestamp\":11022},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20070\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":11356},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20065\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":11690},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20060\",\"quantity\":\"0.10\",\"aggressor\":\"Sell\",\"timestamp\":12024},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20055\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":12358},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20050\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":12692},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20045\",\"quantity\":\"0.10\",\"aggressor\":\"Sell\",\"timestamp\":13026},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20040\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":13360},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20035\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":13694},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20030\",\"quantity\":\"0.10\",\"aggressor\":\"Sell\",\"timestamp\":14028},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20025\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":14362},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20020\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":14696},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20015\",\"quantity\":\"0.10\",\"aggressor\":\"Sell\",\"timestamp\":15030},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20010\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":15364},{\"type\":\"trade\",\"symbol\":{\"base\":\"BTC\",\"quote\":\"USDT\"},\"price\":\"20005\",\"quantity\":\"0.10\",\"aggressor\":\"Buy\",\"timestamp\":15698}]"
+      }
+    }
+  ],
+  "timeframe": "1s"
+}

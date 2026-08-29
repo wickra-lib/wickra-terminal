@@ -11,25 +11,35 @@ Single source of truth: the wickra-core indicator sources themselves
 
 What gets registered, and why only this much:
 
-  Input = f64        fed the last traded price, tick by tick.
-  Input = Candle     fed each bar as it closes, from the CandleBuilder. Only
-                     closed bars: feeding the bar in progress would make every
-                     reading repaint as the bar fills.
-  Input = Trade      fed the print with its size and aggressor side, from the
-                     terminal's own tape.
-  Input = OrderBook  fed the book, from the terminal's own book.
-  Input = (f64,f64)  fed this market's price against a reference market's, named
-                     in the spec.
+  Input = f64              fed the last traded price, tick by tick.
+  Input = Candle           fed each bar as it closes, from the CandleBuilder.
+                           Only closed bars: feeding the bar in progress would
+                           make every reading repaint as the bar fills.
+  Input = Trade            fed the print with its size and aggressor side, from
+                           the terminal's own tape.
+  Input = OrderBook        fed the book, from the terminal's own book.
+  Input = (f64,f64)        fed this market's price against a reference market's,
+                           named in the spec.
+  Input = CrossSection     fed the breadth of a named universe of markets, from
+                           the members the terminal already tracks.
+  Input = DerivativesTick  fed funding, open interest and the taker flow the
+                           terminal folds out of its own tape.
+  Input = TradeQuote       fed the print together with the mid it arrived
+                           against, so a print can be placed against the book.
 
 One more family is reached by name rather than by declared input: a handful of
 indicators take an `Input = f64` that wickra-core documents as a per-period
 RETURN. They are routed to the `returns` family, which differences closed bars
 and feeds the close-to-close return. See RETURN_INPUT_ONLY.
 
-What is left is skipped and reported, never dropped in silence: `DerivativesTick`,
-`CrossSection` and `TradeQuote` need feeds this repository has no source for, and
-a handful of Output structs carry variable-length bin lists that the fixed
-named-field shape here cannot represent. The run prints what it skipped and why.
+Two shapes of answer do not fit a registry entry and get surfaces of their own
+rather than being flattened into one: indicators whose output is a
+variable-length histogram become PROFILES, and the bar builders -- which do not
+implement `Indicator` at all, and complete zero, one or several bars per candle
+-- become BAR_TYPES.
+
+What is left is skipped and reported, never dropped in silence. The run prints
+what it skipped and why.
 
 The backtester has a script of the same name doing the same job for a different
 shape. Its `BarInput` carries every feed a strategy may consult on one bar; a
@@ -85,30 +95,14 @@ WRAPPERS = {
     # Not an `Input` any indicator declares -- a routing target. See
     # RETURN_INPUT_ONLY below.
     "CrossSection": ("CrossIn", "CrossInFields"),
+    "DerivativesTick": ("DerivIn", "DerivInFields"),
+    "TradeQuote": ("QuoteIn", "QuoteInFields"),
     "returns": ("ReturnsIn", "ReturnsInFields"),
 }
 
 # The families this terminal can feed. `returns` is in here because the routing
 # above assigns it before this check, and no indicator declares it as an
 # `Input`, so it cannot be reached by accident.
-# Breadth indicators reading a per-symbol signal this terminal does not keep.
-#
-# `Member` carries six fields. Five are folded from each market's closed bars --
-# change, volume, new_high, new_low, and above_ma against a reference moving
-# average. The sixth, `on_buy_signal`, is whether a symbol sits on a
-# point-and-figure BUY signal, which needs P&F column state per symbol: box size,
-# reversal, and the column history a breakout is judged against. The terminal
-# keeps none of that.
-#
-# Registering the one indicator that reads it would mean feeding `false` for
-# every member, so `BullishPercentIndex` would report a constant zero under a
-# name that promises a breadth reading. That is the same call P4.3d made for
-# `Footprint` and P12.1 made for `VolumeProfile`: an honest absence beats a
-# confident wrong answer. Wiring P&F per symbol removes this entry.
-CROSS_SECTION_UNAVAILABLE = {
-    "BullishPercentIndex",
-}
-
 SUPPORTED_INPUTS = set(WRAPPERS)
 
 # Indicators whose `Input = f64` is a per-period RETURN, not a price.
@@ -144,6 +138,8 @@ INPUT_TY = {
     "OrderBook": "wc::OrderBook",
     "(f64,f64)": "(f64, f64)",
     "CrossSection": "wc::CrossSection",
+    "DerivativesTick": "wc::DerivativesTick",
+    "TradeQuote": "wc::TradeQuote",
     "returns": "f64",
 }
 
@@ -164,6 +160,20 @@ UPDATE_EXPR = {
     "Candle": "input.candle.and_then(|c| self.inner.update(c))",
     "Trade": "input.trade.and_then(|t| self.inner.update(t))",
     "OrderBook": "input.book.clone().and_then(|b| self.inner.update(b))",
+    "TradeQuote": (
+        "input"
+        + chr(10)
+        + "            .trade_quote"
+        + chr(10)
+        + "            .and_then(|quote| self.inner.update(quote))"
+    ),
+    "DerivativesTick": (
+        "input"
+        + chr(10)
+        + "            .derivatives"
+        + chr(10)
+        + "            .and_then(|derivatives| self.inner.update(derivatives))"
+    ),
     "CrossSection": (
         "input"
         + chr(10)
@@ -196,6 +206,23 @@ UPDATE_EXPR = {
         + "            .and_then(|other| self.inner.update((input.price, other)))"
     ),
 }
+
+
+def bar_builders(text: str) -> list[tuple[str, str]]:
+    """Every `impl BarBuilder for X` in `text`, with the bar type it emits.
+
+    Discovered rather than listed, for the same reason the indicators are: a
+    builder added upstream should show up here on the next regeneration, not
+    when someone notices it missing.
+    """
+    found = []
+    for match in re.finditer(r"impl\s+BarBuilder\s+for\s+([A-Za-z0-9]+)\s*\{", text):
+        name = match.group(1)
+        segment = text[match.end() : match.end() + 400]
+        bar = re.search(r"type\s+Bar\s*=\s*([A-Za-z0-9]+)\s*;", segment)
+        if bar:
+            found.append((name, bar.group(1)))
+    return found
 
 
 def assoc_types(text: str, ty: str) -> tuple[str | None, str | None]:
@@ -241,6 +268,147 @@ FIELD_READERS = {
     # one. Kept out of the vector rather than reported as NaN.
     "Option<f64>": "last.{name}",
 }
+
+# How each alternative bar maps onto the one shape a renderer can draw.
+#
+# The ten builders emit ten different bar types, and they fall into two shapes: a
+# two-point bar that records where a move started and ended, and an OHLC bar that
+# records a range. A renderer cannot hold ten shapes and should not have to, so
+# each is mapped to one `AltBar` here -- the mapping is the honest part of this
+# table, and each entry says what it does with the fields the bar does not have.
+#
+# Keyed by the BAR type rather than the builder, because that is what the impl
+# names and what the mapping is actually about.
+#
+# Each value is (open, high, low, close, direction, volume) as expressions over
+# `bar`. A `None` volume means the bar carries none -- a Renko brick is a price
+# move, not a period, and inventing a zero would read as "no volume traded".
+BAR_SHAPES = {
+    # Two-point bars: a start, an end, and which way it went. High and low are
+    # derived because the bar has no wick -- that is the point of the chart.
+    "RenkoBrick": (
+        "bar.open",
+        "bar.open.max(bar.close)",
+        "bar.open.min(bar.close)",
+        "bar.close",
+        "bar.direction",
+        None,
+    ),
+    "KagiBar": (
+        "bar.start",
+        "bar.start.max(bar.end)",
+        "bar.start.min(bar.end)",
+        "bar.end",
+        "bar.direction",
+        None,
+    ),
+    "LineBreakBar": (
+        "bar.open",
+        "bar.open.max(bar.close)",
+        "bar.open.min(bar.close)",
+        "bar.close",
+        "bar.direction",
+        None,
+    ),
+    "RangeBar": (
+        "bar.open",
+        "bar.open.max(bar.close)",
+        "bar.open.min(bar.close)",
+        "bar.close",
+        "bar.direction",
+        None,
+    ),
+    # A P&F column is a range with a direction and no endpoints of its own: a
+    # rising column opens at its low and closes at its high, and a falling one
+    # the other way round.
+    "PnfColumn": (
+        "if bar.direction >= 0 { bar.low } else { bar.high }",
+        "bar.high",
+        "bar.low",
+        "if bar.direction >= 0 { bar.high } else { bar.low }",
+        "bar.direction",
+        None,
+    ),
+    # OHLC bars: the range is recorded, so only the direction has to be derived
+    # for the ones that do not carry it.
+    "TickBar": (
+        "bar.open",
+        "bar.high",
+        "bar.low",
+        "bar.close",
+        "if bar.close >= bar.open { 1 } else { -1 }",
+        "bar.volume",
+    ),
+    "VolumeBar": (
+        "bar.open",
+        "bar.high",
+        "bar.low",
+        "bar.close",
+        "if bar.close >= bar.open { 1 } else { -1 }",
+        "bar.volume",
+    ),
+    "DollarBar": (
+        "bar.open",
+        "bar.high",
+        "bar.low",
+        "bar.close",
+        "if bar.close >= bar.open { 1 } else { -1 }",
+        "bar.volume",
+    ),
+    "ImbalanceBar": (
+        "bar.open",
+        "bar.high",
+        "bar.low",
+        "bar.close",
+        "bar.direction",
+        None,
+    ),
+    "RunBar": (
+        "bar.open",
+        "bar.high",
+        "bar.low",
+        "bar.close",
+        "bar.direction",
+        None,
+    ),
+}
+
+# Indicators whose output is a variable-length histogram, mapped to the field
+# that carries it and whether it also carries a price range.
+#
+# These are the ones the registry deliberately does not carry. A registry entry
+# promises one name, one number and a fixed set of named fields; a distribution
+# over price levels or times of day is none of those, and its length changes as
+# the session runs. Squeezing it in means reporting one bin under the whole
+# indicator's name -- which is exactly what `VolumeProfile` did before P12.1
+# removed it: it reported `price_low`, a price, under a profile's name.
+#
+# So they get a surface of their own, alongside the registry rather than inside
+# it: `ProfileIndicator` returns the histogram whole.
+#
+# `Footprint` is not here and does not belong here. Its output is a list of
+# price LEVELS, each with its own bid and ask volume, which is a different shape
+# again -- and the terminal already renders it from its own footprint state, as
+# the `footprint` panel.
+PROFILE_OUTPUTS = {
+    "VolumeProfileOutput": ("bins", True),
+    "TpoProfileOutput": ("counts", True),
+    "DayOfWeekProfileOutput": ("bins", False),
+    "IntradayVolatilityProfileOutput": ("bins", False),
+    "TimeOfDayReturnProfileOutput": ("bins", False),
+    "VolumeByTimeProfileOutput": ("bins", False),
+}
+
+# Scalar outputs that are a whole number rather than a float.
+#
+# `DrawdownDuration` answers "how many bars has this drawdown lasted", which is a
+# count and typed as one. It is not a struct, so `out_fields` has nothing to
+# read, and it is not `f64`, so the scalar wrapper's `Output = f64` bound does
+# not admit it -- it fell between the two and was reported as an unreadable
+# output shape. These get a wrapper of their own; the conversion is exact, since
+# a bar count is orders of magnitude below the 2^53 where an integer stops
+# surviving a round trip through `f64`.
+SCALAR_INT_OUTPUTS = {"u32", "u64", "i64", "usize"}
 
 # The field types whose value is absent on some ticks.
 OPTIONAL_FIELDS = {"Option<f64>"}
@@ -300,21 +468,33 @@ HEAD = '''//! Indicator registry: constructs `wickra-core` indicators by name an
 //!
 //! Source of truth: the wickra-core indicator sources — the `Indicator` impls,
 //! their `new` signatures and their Output structs. An indicator is registered
-//! when its input is one of the four families this terminal can feed and its
-//! output is a scalar `f64` or a struct of `f64` fields:
+//! when its input is one of the nine families this terminal can feed and its
+//! output is a number or a struct of named numbers:
 //!
-//! | `Input`     | Fed with                                  | Advances     |
-//! |-------------|-------------------------------------------|--------------|
-//! | `f64`       | the last trade price                      | every trade  |
-//! | `Candle`    | the bar the tick just closed              | every bar    |
-//! | `Trade`     | the print, with size and aggressor side   | every trade  |
-//! | `OrderBook` | the locally maintained L2 book            | every trade  |
+//! | `Input`           | Fed with                                     | Advances    |
+//! |-------------------|----------------------------------------------|-------------|
+//! | `f64`             | the last trade price                         | every trade |
+//! | `Candle`          | the bar the tick just closed                 | every bar   |
+//! | `Trade`           | the print, with size and aggressor side      | every trade |
+//! | `OrderBook`       | the locally maintained L2 book               | every trade |
+//! | `(f64, f64)`      | this price against a reference market's      | every trade |
+//! | returns           | the close-to-close return of the closed bar  | every bar   |
+//! | `CrossSection`    | the breadth of a named universe of markets   | every bar   |
+//! | `DerivativesTick` | funding, open interest and taker flow        | every trade |
+//! | `TradeQuote`      | the print, with the mid it arrived against   | every trade |
 //!
 //! Multi-output indicators expose their fields by name.
+//!
+//! Two answers do not fit that contract and have surfaces of their own here:
+//! [`ProfileIndicator`], for the indicators whose output is a histogram, and
+//! [`BarStream`], for the bar builders, which are not `Indicator`s at all.
 
 use std::collections::BTreeMap;
+use std::marker::PhantomData;
 
-use wickra_core::{self as wc, Candle, Indicator};
+use serde::{Deserialize, Serialize};
+
+use wickra_core::{self as wc, BarBuilder, Candle, Indicator};
 
 use crate::error::{Error, Result};
 
@@ -353,6 +533,17 @@ pub struct TickInput {
     /// one market has closed a bar -- a breadth reading compares closes, and a
     /// universe of markets that have not produced one is not a reading.
     pub cross_section: Option<wc::CrossSection>,
+    /// This market's derivatives microstructure, if the host has fed any.
+    ///
+    /// Absent until the venue's mark, index and futures prices have all arrived:
+    /// `DerivativesTick::new` rejects a non-positive price, so a tick before
+    /// them would not be a tick.
+    pub derivatives: Option<wc::DerivativesTick>,
+    /// This print paired with the mid that was standing when it arrived.
+    ///
+    /// Absent when the book is one-sided, since there is no mid to measure
+    /// against, and on any tick that is not a print.
+    pub trade_quote: Option<wc::TradeQuote>,
 }
 
 impl TickInput {
@@ -371,6 +562,8 @@ impl TickInput {
             book: None,
             references: BTreeMap::new(),
             cross_section: None,
+            derivatives: None,
+            trade_quote: None,
         }
     }
 
@@ -414,6 +607,98 @@ impl TickInput {
 }
 
 /// A uniform, object-safe indicator the terminal drives one tick at a time.
+/// One reading of a profile: a histogram, and the price range it spans when it
+/// has one.
+///
+/// Two of the six are distributions over PRICE and carry the range their bins
+/// cover; the other four are over TIME -- day of week, minute of session -- and
+/// have no price range to report. The bounds are optional rather than zeroed, so
+/// a consumer can tell "spans no price" from "spans zero to zero".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProfileReading {
+    /// The histogram, in bin order.
+    pub bins: Vec<f64>,
+    /// The lowest price the bins cover, for a price profile.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price_low: Option<f64>,
+    /// The highest price the bins cover, for a price profile.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price_high: Option<f64>,
+}
+
+/// One bar from an alternative chart, in the single shape a renderer draws.
+///
+/// The ten builders emit ten bar types in two shapes -- a two-point bar that
+/// records where a move started and ended, and an OHLC bar that records a range.
+/// A renderer should not have to hold ten, so each is mapped onto this one, and
+/// the mapping is written down per bar type in the generator rather than guessed
+/// here.
+///
+/// `volume` is optional because half of them do not have one: a Renko brick is a
+/// price move, not a period, and reporting zero would read as "no volume traded".
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct AltBar {
+    /// Where the bar opened.
+    pub open: f64,
+    /// The highest price it reached.
+    pub high: f64,
+    /// The lowest price it reached.
+    pub low: f64,
+    /// Where it closed.
+    pub close: f64,
+    /// `1` rising, `-1` falling.
+    pub direction: i8,
+    /// Volume, for the bar types that measure one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volume: Option<f64>,
+}
+
+/// A stream of alternative bars, driven by the same closed candles everything
+/// else here reads.
+///
+/// Separate from [`TickIndicator`] and [`ProfileIndicator`] because it answers
+/// with neither a reading nor a distribution: one closed candle can complete
+/// zero, one or several bars, and that is the whole character of these charts --
+/// a quiet hour produces none and a fast one produces many.
+pub trait BarStream: Send {
+    /// Feed one tick; returns every bar completed on it, which is usually none.
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar>;
+}
+
+/// Wraps a bar builder as a [`BarStream`].
+///
+/// Parameterised by the bar type as well as the builder, which is what keeps one
+/// impl per bar from overlapping another.
+struct CandleBars<I, B> {
+    inner: I,
+    /// Only to make the bar type part of this wrapper's identity.
+    bar: PhantomData<B>,
+}
+
+/// An indicator whose output is a histogram rather than a reading.
+///
+/// Deliberately not [`TickIndicator`]: that trait promises one `f64` and a fixed
+/// set of named fields, and a distribution is neither. Kept apart rather than
+/// widening the other, so nothing that consumes a reading has to learn what an
+/// absent histogram means.
+pub trait ProfileIndicator: Send {
+    /// Feed one tick; returns the histogram, or `None` while warming up or when
+    /// this tick carries nothing this profile consumes.
+    fn update(&mut self, input: &TickInput) -> Option<ProfileReading>;
+    /// Number of inputs required before the first histogram.
+    fn warmup(&self) -> usize;
+}
+
+/// Wraps a bar-input indicator whose output is a histogram.
+///
+/// Parameterised by the output struct as well as the indicator, which is what
+/// keeps one impl per output from overlapping another.
+struct CandleProfile<I, O> {
+    inner: I,
+    /// Only to make the output type part of this wrapper's identity.
+    output: PhantomData<O>,
+}
+
 pub trait TickIndicator: Send {
     /// Feed one tick; returns the primary value, or `None` while warming up or
     /// when this tick carries nothing this indicator consumes.
@@ -459,6 +744,18 @@ WRAPPER_DOC = {
         "Wraps a book (`Input = OrderBook`) single-output indicator. Ticks whose",
         "book is one-sided yield `None` without advancing it.",
     ),
+    "TradeQuote": (
+        "Wraps a microstructure (`Input = TradeQuote`) single-output indicator: one",
+        "print paired with the mid that was standing when it arrived. Ticks with a",
+        "one-sided book yield `None` without advancing it -- there is no mid to",
+        "measure the print against.",
+    ),
+    "DerivativesTick": (
+        "Wraps a derivatives (`Input = DerivativesTick`) single-output indicator:",
+        "funding, open interest, positioning and the mark/index/futures prices of",
+        "one perpetual market. Ticks before the host has fed those prices yield",
+        "`None` without advancing it.",
+    ),
     "CrossSection": (
         "Wraps a breadth (`Input = CrossSection`) single-output indicator: the",
         "whole tracked universe on one tick, not one market. Ticks before any",
@@ -479,6 +776,18 @@ WRAPPER_DOC = {
 
 # Prose for the struct-output wrappers, mirroring WRAPPER_DOC.
 FIELD_WRAPPER_DOC = {
+    "TradeQuote": (
+        "Wraps a microstructure indicator whose output is a struct of fields. The",
+        "primary value is the first field; every field is reachable by name.",
+    ),
+    "DerivativesTick": (
+        "Wraps a derivatives indicator whose output is a struct of fields. The",
+        "primary value is the first field; every field is reachable by name.",
+    ),
+    "CrossSection": (
+        "Wraps a breadth indicator whose output is a struct of fields. The",
+        "primary value is the first field; every field is reachable by name.",
+    ),
     "f64": (
         "Wraps a price indicator whose output is a struct of `f64` fields. The",
         "primary value is the first field; every field is reachable by name.",
@@ -542,6 +851,229 @@ def wants_reference(family: str) -> str:
         + chr(10)
         + "    }"
     )
+
+
+def emit_bars(bars: list, defaults: dict) -> str:
+    """The alternative-bar surface: the bar, the trait, the wrappers and the builder.
+
+    Every builder takes `Input = Candle`, so there is one wrapper. It is
+    parameterised by the BAR type as well as the builder, which keeps one impl
+    per bar from overlapping another.
+    """
+    if not bars:
+        return ""
+    impls = []
+    for name, bar_ty, _, _ in sorted(bars):
+        shape = BAR_SHAPES.get(bar_ty)
+        if shape is None:
+            raise SystemExit(
+                f"error: {name} emits {bar_ty}, which has no entry in BAR_SHAPES -- "
+                "add one saying how it maps onto AltBar rather than guessing"
+            )
+        open_, high, low, close, direction, volume = shape
+        vol = f"Some({volume})" if volume else "None"
+        impls.append(
+            f"""
+impl<I> BarStream for CandleBars<I, wc::{bar_ty}>
+where
+    I: BarBuilder<Bar = wc::{bar_ty}> + Send,
+{{
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar> {{
+        let Some(candle) = input.candle else {{
+            return Vec::new();
+        }};
+        self.inner
+            .update(candle)
+            .into_iter()
+            .map(|bar| AltBar {{
+                open: {open_},
+                high: {high},
+                low: {low},
+                close: {close},
+                direction: {direction},
+                volume: {vol},
+            }})
+            .collect()
+    }}
+}}
+"""
+        )
+
+    arms = []
+    for name, bar_ty, argtypes, returns_result in sorted(bars):
+        ctor = f"wc::{name}::new({readers(argtypes)})" if argtypes else f"wc::{name}::new()"
+        made = f"map_new(kind, {ctor})?" if returns_result else ctor
+        arms.append(
+            f'        "{name}" => Ok(Box::new(CandleBars::<_, wc::{bar_ty}> {{'
+            f" inner: {made}, bar: PhantomData }})),"
+        )
+
+    rows = []
+    for name, _, _, _ in sorted(bars):
+        params = defaults.get(name)
+        if params is None:
+            raise SystemExit(f"error: no manifest defaults for the bar type {name}")
+        values = ", ".join(repr(float(v)) for v in params)
+        rows.append(f'    ("{name}", &[{values}]),')
+
+    names = " | ".join(f'"{name}"' for name, _, _, _ in sorted(bars))
+    return f"""
+{"".join(impls)}
+/// Every alternative bar type this terminal can build, with the parameters the
+/// wickra golden manifest pins them at.
+pub const BAR_TYPES: [(&str, &[f64]); {len(rows)}] = [
+{chr(10).join(rows)}
+];
+
+/// Whether `kind` names an alternative bar type rather than an indicator.
+#[must_use]
+pub fn is_bar_type(kind: &str) -> bool {{
+    matches!(kind, {names})
+}}
+
+/// Build an alternative bar stream by name.
+///
+/// # Errors
+///
+/// Returns [`Error::Config`] if `kind` is not a bar type, or if its parameters
+/// are missing or rejected by the constructor.
+pub fn build_bars(kind: &str, params: &[f64]) -> Result<Box<dyn BarStream>> {{
+    match kind {{
+{chr(10).join(arms)}
+        _ => Err(Error::Config(format!("unknown bar type: {{kind}}"))),
+    }}
+}}
+"""
+
+
+def emit_profiles(profiles: list, defaults: dict) -> str:
+    """The profile surface: the reading, the trait, the wrappers and the builder.
+
+    All six take `Input = Candle`, so there is one wrapper rather than one per
+    family. It is parameterised by the OUTPUT struct as well as the indicator,
+    which is what keeps one impl per output from overlapping another -- the same
+    reason the struct-output wrapper carries its output type.
+    """
+    if not profiles:
+        return ""
+    impls = []
+    for name, out, _, _ in sorted(profiles):
+        field, priced = PROFILE_OUTPUTS[out]
+        low = "Some(reading.price_low)" if priced else "None"
+        high = "Some(reading.price_high)" if priced else "None"
+        impls.append(
+            f"""
+impl<I> ProfileIndicator for CandleProfile<I, wc::{out}>
+where
+    I: Indicator<Input = Candle, Output = wc::{out}> + Send,
+{{
+    fn update(&mut self, input: &TickInput) -> Option<ProfileReading> {{
+        input
+            .candle
+            .and_then(|candle| self.inner.update(candle))
+            .map(|reading| ProfileReading {{
+                bins: reading.{field},
+                price_low: {low},
+                price_high: {high},
+            }})
+    }}
+    fn warmup(&self) -> usize {{
+        self.inner.warmup_period()
+    }}
+}}
+"""
+        )
+
+    arms = []
+    for name, out, argtypes, returns_result in sorted(profiles):
+        ctor = f"wc::{name}::new({readers(argtypes)})" if argtypes else f"wc::{name}::new()"
+        made = f"map_new(kind, {ctor})?" if returns_result else ctor
+        arms.append(
+            f'        "{name}" => Ok(Box::new(CandleProfile::<_, wc::{out}> {{'
+            f" inner: {made}, output: PhantomData }})),"
+        )
+
+    rows = []
+    for name, _, _, _ in sorted(profiles):
+        params = defaults.get(name)
+        if params is None:
+            raise SystemExit(f"error: no manifest defaults for the profile {name}")
+        values = ", ".join(repr(float(v)) for v in params)
+        rows.append(f'    ("{name}", &[{values}]),')
+
+    names = " | ".join(f'"{name}"' for name, _, _, _ in sorted(profiles))
+    return f"""
+{"".join(impls)}
+/// Every profile this terminal can build, with the parameters the wickra golden
+/// manifest pins them at.
+///
+/// Kept apart from [`DEFAULTS`] rather than merged into it: a caller asking the
+/// catalogue what it can *read* wants indicators, and a caller laying out a
+/// panel wants profiles. One list holding both would make every consumer filter.
+pub const PROFILES: [(&str, &[f64]); {len(rows)}] = [
+{chr(10).join(rows)}
+];
+
+/// Whether `kind` names a profile rather than an indicator.
+#[must_use]
+pub fn is_profile(kind: &str) -> bool {{
+    matches!(kind, {names})
+}}
+
+/// Build a profile by name.
+///
+/// # Errors
+///
+/// Returns [`Error::Config`] if `kind` is not a profile, or if its parameters
+/// are missing or rejected by the constructor.
+pub fn build_profile(kind: &str, params: &[f64]) -> Result<Box<dyn ProfileIndicator>> {{
+    match kind {{
+{chr(10).join(arms)}
+        _ => Err(Error::Config(format!("unknown profile: {{kind}}"))),
+    }}
+}}
+"""
+
+
+def emit_int_wrappers(families: set[str]) -> str:
+    """One wrapper per family in use, for whole-number scalar outputs.
+
+    A separate type rather than a second impl on the scalar wrapper: two impls of
+    the same trait on one struct, differing only in the bound on `I::Output`,
+    overlap as far as the compiler is concerned.
+    """
+    out = []
+    for family, (wrapper, _) in WRAPPERS.items():
+        if family not in families:
+            continue
+        out.append(
+            f"""
+/// {doc(WRAPPER_DOC[family])}
+///
+/// This one carries an indicator whose output is a whole number -- a count of
+/// bars, not a price -- converted to the `f64` the boundary speaks.
+struct {wrapper}Int<I> {{
+    inner: I,{extra_decls(family)}
+}}
+
+impl<I, O> TickIndicator for {wrapper}Int<I>
+where
+    I: Indicator<Input = {INPUT_TY[family]}, Output = O> + Send,
+    O: Into<f64> + Send,
+{{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {{
+        {UPDATE_EXPR[family]}.map(Into::into)
+    }}
+    fn fields(&self) -> Vec<(&'static str, f64)> {{
+        Vec::new()
+    }}
+    fn warmup(&self) -> usize {{
+        {warmup_expr(family)}
+    }}{wants_book(family)}{wants_reference(family)}
+}}
+"""
+        )
+    return "".join(out)
 
 
 def emit_scalar_wrappers() -> str:
@@ -766,23 +1298,33 @@ def main() -> None:
     bigtext = "\n".join(p.read_text(encoding="utf-8") for p in sorted(src.rglob("*.rs")))
 
     entries = []          # (name, input, output, argtypes, returns_result, fields)
+    profiles = []         # (name, output struct, argtypes, returns_result)
+    bars = []             # (name, bar type, argtypes, returns_result)
     skipped = Counter()
     skipped_names: dict[str, list[str]] = {}
 
     for path in sorted(indicators.glob("*.rs")):
         text = path.read_text(encoding="utf-8")
+        # Alternative bar builders, which are a different trait entirely: they
+        # answer with bars rather than readings, so they never enter `entries`.
+        for name, bar_ty in bar_builders(text):
+            found = find_new(text, name)
+            if found is None:
+                skipped["bar builder with no pub fn new"] += 1
+                skipped_names.setdefault("bar builder with no pub fn new", []).append(name)
+                continue
+            argtypes, returns_result = found
+            if any(a not in ARG_READER for a in argtypes):
+                skipped["bar builder with an unreadable argument"] += 1
+                skipped_names.setdefault("bar builder with an unreadable argument", []).append(name)
+                continue
+            bars.append((name, bar_ty, argtypes, returns_result))
         for m in re.finditer(r"impl\s+Indicator\s+for\s+(\w+)", text):
             ty = m.group(1)
             inp, out = assoc_types(text, ty)
             if inp is None or out is None:
                 skipped["no associated types"] += 1
                 skipped_names.setdefault("no associated types", []).append(ty)
-                continue
-            if ty in CROSS_SECTION_UNAVAILABLE:
-                skipped["reads a per-symbol signal the terminal has no source for"] += 1
-                skipped_names.setdefault(
-                    "reads a per-symbol signal the terminal has no source for", []
-                ).append(ty)
                 continue
             if ty in RETURN_INPUT_ONLY:
                 # Routed to the returns family rather than skipped: the terminal
@@ -805,7 +1347,14 @@ def main() -> None:
                 skipped_names.setdefault("unreadable constructor argument", []).append(ty)
                 continue
             fields: list[tuple[str, str, str]] = []
-            if out != "f64":
+            if out in PROFILE_OUTPUTS:
+                # Not registered and not skipped: carried by the profile surface
+                # below, which returns the histogram whole.
+                profiles.append((ty, out, argtypes, returns_result))
+                continue
+            if out in SCALAR_INT_OUTPUTS:
+                pass
+            elif out != "f64":
                 got = out_fields(bigtext, out)
                 if not got:
                     skipped[f"output {out}"] += 1
@@ -835,6 +1384,8 @@ def main() -> None:
         )
         if fields:
             body = f"Ok(Box::new({field_wrapper} {{ inner: {made}, last: None{extra} }}))"
+        elif out in SCALAR_INT_OUTPUTS:
+            body = f"Ok(Box::new({scalar_wrapper}Int {{ inner: {made}{extra} }}))"
         else:
             body = f"Ok(Box::new({scalar_wrapper} {{ inner: {made}{extra} }}))"
         arms.append(f'        "{ty}" => {body},')
@@ -868,6 +1419,8 @@ def main() -> None:
 
     pairwise = sorted(e[0] for e in entries if e[1] == "(f64,f64)")
     breadth = sorted(e[0] for e in entries if e[1] == "CrossSection")
+    int_families = {e[1] for e in entries if e[2] in SCALAR_INT_OUTPUTS}
+    families = sorted({e[1] for e in entries})
 
     alias_rows = chr(10).join(
         f'    ("{alias}", "{canonical}"),'
@@ -877,6 +1430,15 @@ def main() -> None:
     alias_count = alias_rows.count(chr(10)) + 1 if alias_rows else 0
 
     build_fn = f"""
+/// Every input family this terminal can feed, sorted.
+///
+/// Named rather than counted: a document that lists the families can be checked
+/// against this, and a family added to the registry without a row in that list
+/// fails the check instead of leaving the list quietly short.
+pub const INPUT_FAMILIES: [&str; {len(families)}] = [
+{chr(10).join(f'    "{f}",' for f in families)}
+];
+
 /// Every registered indicator name, sorted.
 pub const KINDS: [&str; {len(names)}] = [
 {chr(10).join(f'    "{n}",' for n in names)}
@@ -977,11 +1539,36 @@ fn build_inner(
 """
 
     field_families = {family for family, _ in structs}
+    # The header carries a table of the families this terminal feeds, and prose
+    # around it that counts them. Both were written when there were four, and
+    # both were still saying four after the fifth, and then the ninth, were
+    # wired -- a generated file describing itself wrongly. The header is prose
+    # and cannot be derived, so it is checked instead: one table row per family,
+    # or the run stops and says which family has none.
+    documented = {
+        row.split("|")[1].strip().strip("`")
+        for row in HEAD.splitlines()
+        if row.startswith("//! | ") and "Fed with" not in row and "---" not in row
+    }
+    undocumented = {f.replace(" ", "") for f in families} - {
+        d.replace(" ", "") for d in documented
+    }
+    if undocumented:
+        raise SystemExit(
+            "error: the registry header's input table does not mention "
+            + ", ".join(sorted(undocumented))
+            + " -- add a row saying what feeds it and when it advances, rather "
+            "than shipping a header that under-describes the file"
+        )
+
     text = (
         HEAD
         + emit_scalar_wrappers()
+        + emit_int_wrappers(int_families)
         + emit_field_structs(field_families)
         + emit_field_impls(structs)
+        + emit_profiles(profiles, defaults)
+        + emit_bars(bars, defaults)
         + PARAMS
         + build_fn
     )

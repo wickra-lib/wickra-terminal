@@ -37,6 +37,8 @@ use std::fs;
 
 use rust_decimal::Decimal;
 use wickra_exchange_core::{BookDelta, BookLevel, Event, OrderBookSnapshot, OrderSide, TradePrint};
+use wickra_terminal_core::config::{Keybinds, PanelSpec, RectSpec};
+use wickra_terminal_core::panels::PanelKind;
 use wickra_terminal_core::{Config, IndicatorSpec, SourceSpec, Symbol, Terminal, Timeframe};
 
 fn golden_dir() -> String {
@@ -242,6 +244,52 @@ fn scenarios() -> Vec<Scenario> {
     let lifecycle_feed = canonical_feed();
     let lifecycle = replay_config(&lifecycle_feed);
 
+    // The three surfaces that are not the registry. Each gets a scenario, so the
+    // nine language suites hold them to byte parity the same way they hold the
+    // readings -- a profile that serialised its bins differently in one binding
+    // would otherwise pass everywhere.
+    // A feed that spans SECONDS, not milliseconds. `indicator_feed` stamps its
+    // forty trades one millisecond apart, so at a one-second bar they all fall
+    // in the same bar and none ever closes -- which a price indicator does not
+    // notice and a bar-input one does. Both surfaces below read closed bars, so
+    // recorded against that feed they would have captured an empty histogram
+    // and an empty bar list, and the scenario would have proved nothing while
+    // passing.
+    let profile_feed = multi_second_feed();
+    let mut with_profile = replay_config(&profile_feed);
+    with_profile.profiles = vec![IndicatorSpec::new("VolumeProfile", vec![4.0, 8.0])];
+    with_profile.layout.panels = vec![PanelSpec {
+        kind: PanelKind::Profile,
+        rect: RectSpec {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 100,
+        },
+    }];
+    with_profile.timeframe = Timeframe::parse("1s").unwrap();
+
+    let bar_feed = multi_second_feed();
+    let mut with_bars = replay_config(&bar_feed);
+    // A three-unit brick on a feed that walks in threes, so bricks complete
+    // within the scenario rather than after it.
+    with_bars.bars = vec![IndicatorSpec::new("RenkoBars", vec![3.0])];
+    with_bars.layout.panels = vec![PanelSpec {
+        kind: PanelKind::Bars,
+        rect: RectSpec {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 100,
+        },
+    }];
+    with_bars.timeframe = Timeframe::parse("1s").unwrap();
+
+    let derivatives_feed = indicator_feed();
+    let mut with_derivatives = replay_config(&derivatives_feed);
+    with_derivatives.indicators = vec![IndicatorSpec::new("FundingRate", vec![])];
+    with_derivatives.timeframe = Timeframe::parse("1s").unwrap();
+
     let mut multi = Config::default_layout();
     multi.sources = vec![
         SourceSpec::Replay {
@@ -362,6 +410,46 @@ fn scenarios() -> Vec<Scenario> {
             feed: None,
         },
         Scenario {
+            // A profile: the panel answers with a histogram rather than a
+            // reading, and its bins have to serialise identically everywhere.
+            name: "profiles",
+            config: with_profile,
+            commands: [vec![subscribe(0)], tick(profile_feed.len())].concat(),
+            replay_path: Some("replay/profiles.json"),
+            feed: Some(profile_feed),
+        },
+        Scenario {
+            // An alternative chart: zero, one or several bars complete per
+            // candle, so the count in the frame is itself the assertion.
+            name: "alt_bars",
+            config: with_bars,
+            commands: [vec![subscribe(0)], tick(bar_feed.len())].concat(),
+            replay_path: Some("replay/alt_bars.json"),
+            feed: Some(bar_feed),
+        },
+        Scenario {
+            // The derivatives command: the only market input a host pushes in
+            // rather than a source producing, so the corpus has to drive it.
+            name: "derivatives",
+            config: with_derivatives,
+            commands: [
+                vec![
+                    subscribe(0),
+                    format!(
+                        r#"{{"type":"FeedDerivatives","source":0,"symbol":"{SYMBOL}","update":{{"funding_rate":0.0001,"mark_price":20010.0,"index_price":20000.0,"futures_price":20020.0,"open_interest":1000000.0,"timestamp":1}}}}"#
+                    ),
+                ],
+                tick(derivatives_feed.len() / 2),
+                vec![format!(
+                    r#"{{"type":"FeedDerivatives","source":0,"symbol":"{SYMBOL}","update":{{"funding_rate":0.0003,"mark_price":20040.0,"timestamp":2}}}}"#
+                )],
+                tick(derivatives_feed.len() / 2),
+            ]
+            .concat(),
+            replay_path: Some("replay/derivatives.json"),
+            feed: Some(derivatives_feed),
+        },
+        Scenario {
             // Two sources at once, with the second subscribed and focused, so the
             // watchlist carries both and the panels follow the focused one.
             name: "multi_source",
@@ -394,16 +482,23 @@ fn run(scenario: &Scenario) -> String {
     frame
 }
 
-/// The config as a binding reads it: sources, layout, indicators and timeframe.
-/// Keybinds are omitted — they carry a non-deterministic map order and never
-/// affect a frame, and `Terminal::new` fills the defaults.
+/// The config as a binding reads it: everything but the keybinds.
+///
+/// Serialised from the `Config` itself and then stripped, rather than built
+/// key by key. The hand-built version listed four fields, and a config field
+/// added after it was written simply never reached the committed file: the
+/// profile and bar scenarios recorded a Rust frame full of data while every
+/// binding, reading the same file, built a terminal with neither configured and
+/// answered with empty lists. Serialising the whole thing cannot forget a field.
+///
+/// Keybinds are the one omission, and stay one: they carry a non-deterministic
+/// map order, never affect a frame, and `Terminal::new` fills the defaults.
 fn config_json(config: &Config) -> serde_json::Value {
-    serde_json::json!({
-        "sources": config.sources,
-        "layout": { "panels": config.layout.panels },
-        "indicators": config.indicators,
-        "timeframe": config.timeframe,
-    })
+    let mut value = serde_json::to_value(config).expect("a config serialises");
+    if let Some(layout) = value.get_mut("layout").and_then(|l| l.as_object_mut()) {
+        layout.remove("keybinds");
+    }
+    value
 }
 
 fn write_or_compare(path: &str, content: &str, regen: bool) {
@@ -423,6 +518,26 @@ fn write_or_compare(path: &str, content: &str, regen: bool) {
     );
 }
 
+/// What a scenario must NOT record: the empty answer for the thing it exists
+/// to show.
+///
+/// A recorded frame is compared byte-for-byte against what the terminal emits,
+/// which makes a scenario that records emptiness pass forever while proving
+/// nothing. Two did exactly that on their first regeneration here: the profile
+/// and alternative-bar scenarios were driven by a feed whose forty trades are
+/// one MILLISECOND apart, so at a one-second bar none ever closed. Both
+/// surfaces read closed bars, both recorded an empty list, and both passed.
+///
+/// Byte parity across nine languages is worth nothing if the bytes say nothing.
+const MUST_NOT_RECORD: [(&str, &str); 4] = [
+    ("indicators", r#""indicators":[]"#),
+    ("profiles", r#""bins":[]"#),
+    ("alt_bars", r#""bars":[]"#),
+    // The derivatives scenario tracks one indicator and feeds it twice; a
+    // null reading means the update never reached it.
+    ("derivatives", r#""value":null"#),
+];
+
 #[test]
 fn golden_corpus_is_byte_exact() {
     let dir = golden_dir();
@@ -437,6 +552,33 @@ fn golden_corpus_is_byte_exact() {
         // would lose the field order the wire form has.
         let frame: wickra_terminal_core::Frame = serde_json::from_str(&frame_min)
             .unwrap_or_else(|err| panic!("{}: frame does not round-trip: {err}", scenario.name));
+
+        for (name, empty) in MUST_NOT_RECORD {
+            if name == scenario.name {
+                assert!(
+                    !frame_min.contains(empty),
+                    "{name} recorded {empty}: the scenario passes byte parity while showing nothing"
+                );
+            }
+        }
+
+        // The file a binding reads must rebuild the config this scenario ran,
+        // and that is checked here rather than trusted. It was not trusted
+        // idly: `config_json` used to list its fields by hand, so a config
+        // field added afterwards never reached the file. Every binding then
+        // built a terminal missing that field and answered with empty lists,
+        // while Rust -- which never reads the file -- stayed green. Only the
+        // scenarios that happened to use the new field caught it, and only in
+        // the foreign suites. This catches any dropped field, in Rust, at once.
+        let written: Config = serde_json::from_value(config_json(&scenario.config))
+            .unwrap_or_else(|err| panic!("{}: config does not round-trip: {err}", scenario.name));
+        let mut expected_config = scenario.config.clone();
+        expected_config.layout.keybinds = Keybinds::default();
+        assert_eq!(
+            written, expected_config,
+            "{}: the config a binding reads differs from the config Rust ran",
+            scenario.name
+        );
 
         let config_rel = format!("configs/{}.json", scenario.name);
         let expected_rel = format!("expected/{}.min.json", scenario.name);

@@ -1,0 +1,99 @@
+{
+  "panels": [
+    {
+      "panel": "bars",
+      "symbol": "BTC/USDT",
+      "streams": [
+        {
+          "label": "RenkoBars(3)",
+          "bars": [
+            {
+              "open": 20058.0,
+              "high": 20058.0,
+              "low": 20055.0,
+              "close": 20055.0,
+              "direction": -1
+            },
+            {
+              "open": 20055.0,
+              "high": 20055.0,
+              "low": 20052.0,
+              "close": 20052.0,
+              "direction": -1
+            },
+            {
+              "open": 20052.0,
+              "high": 20052.0,
+              "low": 20049.0,
+              "close": 20049.0,
+              "direction": -1
+            },
+            {
+              "open": 20049.0,
+              "high": 20049.0,
+              "low": 20046.0,
+              "close": 20046.0,
+              "direction": -1
+            },
+            {
+              "open": 20046.0,
+              "high": 20046.0,
+              "low": 20043.0,
+              "close": 20043.0,
+              "direction": -1
+            },
+            {
+              "open": 20043.0,
+              "high": 20043.0,
+              "low": 20040.0,
+              "close": 20040.0,
+              "direction": -1
+            },
+            {
+              "open": 20040.0,
+              "high": 20040.0,
+              "low": 20037.0,
+              "close": 20037.0,
+              "direction": -1
+            },
+            {
+              "open": 20037.0,
+              "high": 20037.0,
+              "low": 20034.0,
+              "close": 20034.0,
+              "direction": -1
+            },
+            {
+              "open": 20034.0,
+              "high": 20034.0,
+              "low": 20031.0,
+              "close": 20031.0,
+              "direction": -1
+            },
+            {
+              "open": 20031.0,
+              "high": 20031.0,
+              "low": 20028.0,
+              "close": 20028.0,
+              "direction": -1
+            },
+            {
+              "open": 20028.0,
+              "high": 20028.0,
+              "low": 20025.0,
+              "close": 20025.0,
+              "direction": -1
+            },
+            {
+              "open": 20025.0,
+              "high": 20025.0,
+              "low": 20022.0,
+              "close": 20022.0,
+              "direction": -1
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

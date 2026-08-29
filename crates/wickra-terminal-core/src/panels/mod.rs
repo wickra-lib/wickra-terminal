@@ -5,9 +5,11 @@
 //! a panel here makes it appear in every renderer at once, because each renderer
 //! is just a mapping from `PanelView` to its own widget.
 
+pub mod bars;
 pub mod book;
 pub mod chart;
 pub mod footprint;
+pub mod profile;
 pub mod tape;
 pub mod watchlist;
 
@@ -18,9 +20,11 @@ use crate::source::{SourceId, Symbol};
 use crate::state::AppState;
 use crate::view::PanelView;
 
+pub use bars::BarsPanel;
 pub use book::BookPanel;
 pub use chart::ChartPanel;
 pub use footprint::FootprintPanel;
+pub use profile::ProfilePanel;
 pub use tape::TapePanel;
 pub use watchlist::WatchlistPanel;
 
@@ -37,6 +41,10 @@ pub enum PanelKind {
     Watchlist,
     /// A footprint / volume profile.
     Footprint,
+    /// The configured distributions: volume by price, TPO, time-of-day shapes.
+    Profile,
+    /// The configured alternative charts: Renko, Kagi, point-and-figure.
+    Bars,
 }
 
 /// A panel: a pure mapping from state to a view-model.
@@ -57,6 +65,8 @@ pub fn build_panel(spec: &PanelSpec) -> Box<dyn Panel> {
         PanelKind::Tape => Box::new(TapePanel),
         PanelKind::Watchlist => Box::new(WatchlistPanel),
         PanelKind::Footprint => Box::new(FootprintPanel),
+        PanelKind::Profile => Box::new(ProfilePanel),
+        PanelKind::Bars => Box::new(BarsPanel),
     }
 }
 
@@ -68,15 +78,23 @@ mod tests {
     use super::*;
     use crate::config::RectSpec;
 
+    /// Every panel kind, so this test drives the whole enum.
+    ///
+    /// The list was written with five and stayed at five when Profile and Bars
+    /// were added, which left them the only panels nothing ever built.
+    const EVERY_KIND: [PanelKind; 7] = [
+        PanelKind::Chart,
+        PanelKind::Book,
+        PanelKind::Tape,
+        PanelKind::Watchlist,
+        PanelKind::Footprint,
+        PanelKind::Profile,
+        PanelKind::Bars,
+    ];
+
     #[test]
     fn build_panel_matches_the_spec_kind() {
-        for kind in [
-            PanelKind::Chart,
-            PanelKind::Book,
-            PanelKind::Tape,
-            PanelKind::Watchlist,
-            PanelKind::Footprint,
-        ] {
+        for kind in EVERY_KIND {
             let spec = PanelSpec {
                 kind,
                 rect: RectSpec::new(0, 0, 100, 100),

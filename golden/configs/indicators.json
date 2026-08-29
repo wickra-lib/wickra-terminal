@@ -1,4 +1,5 @@
 {
+  "bars": [],
   "indicators": [
     {
       "kind": "Sma",
@@ -70,6 +71,7 @@
       }
     ]
   },
+  "profiles": [],
   "sources": [
     {
       "Replay": {

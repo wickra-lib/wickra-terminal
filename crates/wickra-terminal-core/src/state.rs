@@ -20,6 +20,88 @@ use crate::error::{Error, Result};
 use crate::registry::{self, TickIndicator, TickInput};
 use crate::source::{DataSource, SourceId, Symbol};
 
+/// Box size for the point-and-figure column state, as a fraction of price.
+///
+/// A percentage box rather than a fixed increment, because this terminal tracks
+/// whatever markets a config names: one box of $1 is noise on an index and a
+/// whole trend on a small cap. One percent is the conventional default for a
+/// percentage-box chart.
+const PNF_BOX_FRACTION: f64 = 0.01;
+
+/// Boxes of counter-move needed to start a new column. Three is the standard.
+const PNF_REVERSAL_BOXES: f64 = 3.0;
+
+/// Point-and-figure column state for one market.
+///
+/// Exists for exactly one reading: `BullishPercentIndex` counts what share of a
+/// universe sits on a P&F BUY signal, and that signal is not a price level — it
+/// is a property of the column history. A market is on a buy signal from the
+/// moment a rising column exceeds the previous rising column's high (a
+/// double-top breakout) until a falling column undercuts the previous falling
+/// column's low.
+///
+/// Price is folded, not sampled: the column only advances when the close moves a
+/// whole box, and only reverses on a counter-move of `PNF_REVERSAL_BOXES`. That
+/// filtering is the point of the chart — it is why a P&F signal is not the same
+/// thing as "the price went up".
+#[derive(Debug, Default)]
+struct PointAndFigure {
+    /// True while the current column is rising (an X column).
+    rising: bool,
+    /// The high of the current X column, or the low of the current O column.
+    extreme: f64,
+    /// The high of the last completed X column, which a breakout must exceed.
+    previous_high: Option<f64>,
+    /// The low of the last completed O column, which a breakdown must undercut.
+    previous_low: Option<f64>,
+    /// Whether the market is currently on a buy signal.
+    on_buy_signal: bool,
+    /// False until the first close has seeded a column.
+    started: bool,
+}
+
+impl PointAndFigure {
+    /// Fold one close.
+    fn update(&mut self, close: f64) {
+        if !close.is_finite() || close <= 0.0 {
+            return;
+        }
+        if !self.started {
+            self.started = true;
+            self.rising = true;
+            self.extreme = close;
+            return;
+        }
+        let box_size = close * PNF_BOX_FRACTION;
+        let reversal = box_size * PNF_REVERSAL_BOXES;
+
+        if self.rising {
+            if close >= self.extreme + box_size {
+                self.extreme = close;
+                // A rising column that clears the previous rising column's high
+                // is the double-top breakout: the signal turns to buy and stays
+                // there until a breakdown takes it away.
+                if self.previous_high.is_some_and(|high| close > high) {
+                    self.on_buy_signal = true;
+                }
+            } else if close <= self.extreme - reversal {
+                self.previous_high = Some(self.extreme);
+                self.rising = false;
+                self.extreme = close;
+            }
+        } else if close <= self.extreme - box_size {
+            self.extreme = close;
+            if self.previous_low.is_some_and(|low| close < low) {
+                self.on_buy_signal = false;
+            }
+        } else if close >= self.extreme + reversal {
+            self.previous_low = Some(self.extreme);
+            self.rising = true;
+            self.extreme = close;
+        }
+    }
+}
+
 /// The reference moving average the `% Above Moving Average` breadth reading is
 /// taken against.
 ///
@@ -30,6 +112,152 @@ use crate::source::{DataSource, SourceId, Symbol};
 /// reasonable follow-up; it is not needed for the reading to be correct against
 /// the convention.
 const BREADTH_MA_PERIOD: usize = 50;
+
+/// One derivatives update from the host, in the terminal's wire shape.
+///
+/// Every field is optional because the channels arrive on their own cadences: a
+/// venue publishes funding eight-hourly, open interest by the minute and
+/// mark/index continuously. A host sends whichever it just received and the
+/// terminal folds it into what it already holds.
+///
+/// Defined here rather than reusing `wickra_exchange_core::DerivativesFeed`,
+/// which carries exchange `Decimal`s and no serde derives — this is the command
+/// schema, and the command boundary is JSON.
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DerivativesUpdate {
+    /// Funding rate for the interval, as a fraction (0.0001 is one basis point).
+    pub funding_rate: Option<f64>,
+    /// Mark price, the venue's fair value for the perpetual.
+    pub mark_price: Option<f64>,
+    /// Index price, the underlying spot reference.
+    pub index_price: Option<f64>,
+    /// Futures price, for the dated contract the basis is measured against.
+    pub futures_price: Option<f64>,
+    /// Open interest, in contracts.
+    pub open_interest: Option<f64>,
+    /// Aggregate long positioning.
+    pub long_size: Option<f64>,
+    /// Aggregate short positioning.
+    pub short_size: Option<f64>,
+    /// Long notional forcibly liquidated since the last update.
+    pub long_liquidation: Option<f64>,
+    /// Short notional forcibly liquidated since the last update.
+    pub short_liquidation: Option<f64>,
+    /// Venue timestamp for this update.
+    pub timestamp: i64,
+}
+
+/// The derivatives microstructure of one market, folded from host updates.
+///
+/// Held per symbol and folded rather than replaced, because the channels are
+/// independent: a funding print carries no open interest, and an open-interest
+/// print carries no mark price. Replacing would blank every field the update did
+/// not mention.
+///
+/// Kept here rather than delegating to `wickra_exchange_core`'s
+/// `DerivativesTickBuilder`, and for one concrete reason: that builder passes
+/// **zero** for taker buy and sell volume, with a comment saying they stay zero
+/// "until a trade-derived source sets it". This terminal is a trade-derived
+/// source — it holds the tape, with an aggressor side on every print — so going
+/// through the builder would make `TakerBuySellRatio` read a constant 0/0 under
+/// a name that promises a ratio. Folding the channels here lets the taker
+/// volumes come from where they actually are.
+#[derive(Debug, Default)]
+struct DerivativesState {
+    funding_rate: f64,
+    mark_price: f64,
+    index_price: f64,
+    futures_price: f64,
+    open_interest: f64,
+    long_size: f64,
+    short_size: f64,
+    /// Accumulated from this market's own prints, by aggressor side.
+    taker_buy_volume: f64,
+    taker_sell_volume: f64,
+    /// Accumulated since the last update, the way a liquidation flow is read.
+    long_liquidation: f64,
+    short_liquidation: f64,
+    timestamp: i64,
+    /// False until mark, index and futures prices have all been set.
+    ///
+    /// `DerivativesTick::new` rejects a non-positive price, so a tick cannot be
+    /// built before they arrive. Tracked rather than inferred from the values
+    /// being non-zero, so a venue legitimately publishing a price this terminal
+    /// then loses is not mistaken for one that never sent one.
+    priced: bool,
+}
+
+impl DerivativesState {
+    /// Fold one host update. Absent fields leave what is already held.
+    fn apply(&mut self, update: &DerivativesUpdate) {
+        let set = |target: &mut f64, value: Option<f64>| {
+            if let Some(value) = value {
+                if value.is_finite() {
+                    *target = value;
+                }
+            }
+        };
+        set(&mut self.funding_rate, update.funding_rate);
+        set(&mut self.mark_price, update.mark_price);
+        set(&mut self.index_price, update.index_price);
+        set(&mut self.futures_price, update.futures_price);
+        set(&mut self.open_interest, update.open_interest);
+        set(&mut self.long_size, update.long_size);
+        set(&mut self.short_size, update.short_size);
+
+        // Liquidations accumulate rather than replace: they are a flow over the
+        // interval, and two prints inside one interval are two liquidations.
+        for (target, value) in [
+            (&mut self.long_liquidation, update.long_liquidation),
+            (&mut self.short_liquidation, update.short_liquidation),
+        ] {
+            if let Some(value) = value {
+                if value.is_finite() && value >= 0.0 {
+                    *target += value;
+                }
+            }
+        }
+
+        if update.timestamp != 0 {
+            self.timestamp = update.timestamp;
+        }
+        self.priced = self.mark_price > 0.0 && self.index_price > 0.0 && self.futures_price > 0.0;
+    }
+
+    /// Accumulate one print into the taker flow, by aggressor side.
+    fn add_trade(&mut self, quantity: f64, aggressor: OrderSide) {
+        if !quantity.is_finite() || quantity < 0.0 {
+            return;
+        }
+        match aggressor {
+            OrderSide::Buy => self.taker_buy_volume += quantity,
+            OrderSide::Sell => self.taker_sell_volume += quantity,
+        }
+    }
+
+    /// This market's derivatives tick, or `None` before its prices have arrived.
+    fn tick(&self) -> Option<wc::DerivativesTick> {
+        if !self.priced {
+            return None;
+        }
+        wc::DerivativesTick::new(
+            self.funding_rate,
+            self.mark_price,
+            self.index_price,
+            self.futures_price,
+            self.open_interest,
+            self.long_size,
+            self.short_size,
+            self.taker_buy_volume,
+            self.taker_sell_volume,
+            self.long_liquidation,
+            self.short_liquidation,
+            self.timestamp,
+        )
+        .ok()
+    }
+}
 
 /// What one market contributes to a market-wide cross-section.
 ///
@@ -63,6 +291,8 @@ struct BreadthState {
     /// The reference moving average, and whether the last close sat above it.
     average: wc::Sma,
     above_ma: bool,
+    /// Point-and-figure column state, for the buy-signal breadth reading.
+    point_and_figure: PointAndFigure,
     /// False until a bar has closed. A symbol that has not produced one is left
     /// out of the universe rather than entered as an unchanged member, which
     /// would drag every ratio toward the middle.
@@ -82,6 +312,7 @@ impl BreadthState {
             average: wc::Sma::new(BREADTH_MA_PERIOD)
                 .expect("BREADTH_MA_PERIOD is a non-zero constant"),
             above_ma: false,
+            point_and_figure: PointAndFigure::default(),
             ready: false,
         }
     }
@@ -112,6 +343,7 @@ impl BreadthState {
             .average
             .update(close)
             .is_some_and(|average| close > average);
+        self.point_and_figure.update(close);
         self.ready = true;
     }
 
@@ -126,12 +358,7 @@ impl BreadthState {
             self.new_high,
             self.new_low,
             self.above_ma,
-            // Left false, and the one indicator that reads it is not registered
-            // because of that. A point-and-figure buy signal needs P&F column
-            // state per symbol, which this terminal does not keep; reporting
-            // `false` for every member would make BullishPercentIndex read a
-            // constant zero under a name that promises a breadth reading.
-            false,
+            self.point_and_figure.on_buy_signal,
         ))
     }
 }
@@ -196,6 +423,20 @@ impl BookState {
     pub fn spread(&self) -> Option<Decimal> {
         match (self.best_bid(), self.best_ask()) {
             (Some((bid, _)), Some((ask, _))) => Some(ask - bid),
+            _ => None,
+        }
+    }
+
+    /// The mid price, or `None` if either side is empty.
+    ///
+    /// What the microstructure family measures a print against: the effective
+    /// spread is how far a trade printed from the mid that was standing when
+    /// it arrived, so this has to be read BEFORE the print is folded. A trade
+    /// does not move the book, so in the fold that ordering is free.
+    #[must_use]
+    pub fn mid(&self) -> Option<Decimal> {
+        match (self.best_bid(), self.best_ask()) {
+            (Some((bid, _)), Some((ask, _))) => Some((bid + ask) / Decimal::TWO),
             _ => None,
         }
     }
@@ -490,6 +731,164 @@ impl std::fmt::Debug for IndicatorEntry {
     }
 }
 
+/// One profile tracked for a symbol: its label and its latest histogram.
+struct ProfileEntry {
+    label: String,
+    profile: Box<dyn registry::ProfileIndicator>,
+    last: Option<registry::ProfileReading>,
+}
+
+/// A profile is a trait object, so the label and the histogram are what a
+/// reader can be shown -- the same shape `IndicatorEntry` prints.
+impl std::fmt::Debug for ProfileEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProfileEntry")
+            .field("label", &self.label)
+            .field("last", &self.last)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The set of profiles tracked for a symbol.
+///
+/// Separate from [`IndicatorSet`] because a profile answers with a histogram
+/// rather than a reading. Driving them from one set would mean a reading type
+/// that is sometimes a number and sometimes a distribution, and every consumer
+/// learning which.
+#[derive(Debug, Default)]
+pub struct ProfileSet {
+    entries: Vec<ProfileEntry>,
+}
+
+impl ProfileSet {
+    /// Build the set a config asks for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Config`] naming the profile if a spec's kind is not a
+    /// profile or its parameters are rejected.
+    pub fn from_specs(specs: &[IndicatorSpec]) -> Result<Self> {
+        let entries = specs
+            .iter()
+            .map(|spec| {
+                Ok(ProfileEntry {
+                    label: spec.label(),
+                    profile: registry::build_profile(&spec.kind, &spec.params)?,
+                    last: None,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Self { entries })
+    }
+
+    /// Feed one tick to every profile.
+    pub fn update(&mut self, input: &TickInput) {
+        for entry in &mut self.entries {
+            if let Some(reading) = entry.profile.update(input) {
+                entry.last = Some(reading);
+            }
+        }
+    }
+
+    /// Every profile's label and latest histogram, in configured order.
+    ///
+    /// A profile that has not produced one yet is listed with `None` rather
+    /// than left out, so a panel's rows do not reorder as the session warms up.
+    #[must_use]
+    pub fn readings(&self) -> Vec<(&str, Option<&registry::ProfileReading>)> {
+        self.entries
+            .iter()
+            .map(|entry| (entry.label.as_str(), entry.last.as_ref()))
+            .collect()
+    }
+
+    /// Whether any profile is tracked.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+/// How many completed bars each alternative chart keeps.
+///
+/// Bounded, like everything else the fold writes into: a fast session can
+/// complete several bars from one candle, and an unbounded ring would grow
+/// with the session rather than with the screen.
+const ALT_BARS_KEPT: usize = 256;
+
+/// One named alternative bar stream and the bars it has completed.
+struct BarEntry {
+    label: String,
+    stream: Box<dyn registry::BarStream>,
+    bars: VecDeque<registry::AltBar>,
+}
+
+/// A bar stream is a trait object; the label and the bars are what a reader
+/// can be shown.
+impl std::fmt::Debug for BarEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BarEntry")
+            .field("label", &self.label)
+            .field("bars", &self.bars.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// The set of alternative bar streams tracked for a symbol.
+#[derive(Debug, Default)]
+pub struct BarSet {
+    entries: Vec<BarEntry>,
+}
+
+impl BarSet {
+    /// Build the set a config asks for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Config`] naming the entry if a spec's kind is not a
+    /// bar type or its parameters are rejected.
+    pub fn from_specs(specs: &[IndicatorSpec]) -> Result<Self> {
+        let entries = specs
+            .iter()
+            .map(|spec| {
+                Ok(BarEntry {
+                    label: spec.label(),
+                    stream: registry::build_bars(&spec.kind, &spec.params)?,
+                    bars: VecDeque::with_capacity(ALT_BARS_KEPT),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Self { entries })
+    }
+
+    /// Feed one tick to every stream, keeping what it completes.
+    pub fn update(&mut self, input: &TickInput) {
+        for entry in &mut self.entries {
+            for bar in entry.stream.update(input) {
+                if entry.bars.len() == ALT_BARS_KEPT {
+                    entry.bars.pop_front();
+                }
+                entry.bars.push_back(bar);
+            }
+        }
+    }
+
+    /// Every stream's label and its most recent bars, oldest first.
+    #[must_use]
+    pub fn streams(&self, depth: usize) -> Vec<(&str, Vec<registry::AltBar>)> {
+        self.entries
+            .iter()
+            .map(|entry| {
+                let take = entry.bars.len().saturating_sub(depth);
+                (
+                    entry.label.as_str(),
+                    entry.bars.iter().skip(take).copied().collect(),
+                )
+            })
+            .collect()
+    }
+}
+
 /// The set of indicators tracked for a symbol.
 #[derive(Debug)]
 pub struct IndicatorSet {
@@ -637,6 +1036,10 @@ pub struct SymbolState {
     pub footprint: Footprint,
     /// The chart indicator set.
     pub indicators: IndicatorSet,
+    /// The profile set, for the profile panel.
+    pub profiles: ProfileSet,
+    /// The alternative bar streams, for the bars panel.
+    pub bars: BarSet,
     /// The last traded price seen.
     pub last: Decimal,
     /// A bounded recent price history for the chart series.
@@ -645,6 +1048,8 @@ pub struct SymbolState {
     pub candles: CandleBuilder,
     /// What this market contributes to a market-wide cross-section.
     breadth: BreadthState,
+    /// The derivatives microstructure of this market, folded from host updates.
+    derivatives: DerivativesState,
 }
 
 impl SymbolState {
@@ -654,32 +1059,32 @@ impl SymbolState {
     /// # Errors
     ///
     /// Returns [`Error::Config`] if an indicator spec is not constructible.
-    pub fn new(specs: &[IndicatorSpec], timeframe: Timeframe) -> Result<Self> {
+    pub fn new(
+        specs: &[IndicatorSpec],
+        profiles: &[IndicatorSpec],
+        bars: &[IndicatorSpec],
+        timeframe: Timeframe,
+    ) -> Result<Self> {
         Ok(Self {
             book: BookState::default(),
             tape: TapeRing::default(),
             footprint: Footprint::default(),
             indicators: IndicatorSet::from_specs(specs)?,
+            profiles: ProfileSet::from_specs(profiles)?,
+            bars: BarSet::from_specs(bars)?,
             last: Decimal::ZERO,
             history: VecDeque::with_capacity(512),
             candles: CandleBuilder::new(timeframe),
             breadth: BreadthState::new(),
+            derivatives: DerivativesState::default(),
         })
     }
 }
 
-impl Default for SymbolState {
-    fn default() -> Self {
-        Self {
-            book: BookState::default(),
-            tape: TapeRing::default(),
-            footprint: Footprint::default(),
-            indicators: IndicatorSet::default(),
-            last: Decimal::ZERO,
-            history: VecDeque::with_capacity(512),
-            candles: CandleBuilder::new(Timeframe::default()),
-            breadth: BreadthState::new(),
-        }
+impl SymbolState {
+    /// Fold one derivatives update into this market's microstructure.
+    pub(crate) fn apply_derivatives(&mut self, update: &DerivativesUpdate) {
+        self.derivatives.apply(update);
     }
 }
 
@@ -714,6 +1119,10 @@ pub struct AppState {
     /// the terminal is built or a spec is added, so building a market's set can
     /// no longer fail.
     pub indicators: Vec<IndicatorSpec>,
+    /// The profile specs every market is tracked with, validated the same way.
+    pub profiles: Vec<IndicatorSpec>,
+    /// The alternative bar specs, validated the same way.
+    pub bars: Vec<IndicatorSpec>,
     /// The bar size the candle-input indicators are fed at.
     pub timeframe: Timeframe,
 }
@@ -728,6 +1137,8 @@ impl std::fmt::Debug for AppState {
             .field("focus", &self.focus)
             .field("watchlist", &self.watchlist)
             .field("indicators", &self.indicators)
+            .field("profiles", &self.profiles)
+            .field("bars", &self.bars)
             .field("timeframe", &self.timeframe)
             .finish()
     }
@@ -802,7 +1213,7 @@ impl AppState {
             return;
         }
         let state = self.symbols.entry((src, sym.clone())).or_insert_with(|| {
-            SymbolState::new(&self.indicators, self.timeframe)
+            SymbolState::new(&self.indicators, &self.profiles, &self.bars, self.timeframe)
                 .expect("indicator specs are validated before they reach the state")
         });
         match event {
@@ -833,13 +1244,35 @@ impl AppState {
                 if let Some(bar) = closed.as_ref() {
                     state.breadth.update(bar);
                 }
+                // The taker flow is this terminal's own: the aggressor side
+                // is on every print, and the derivatives feeds do not carry
+                // it -- wickra-exchange's builder passes zero for it and says
+                // so, which is why the fold above is here rather than there.
+                state
+                    .derivatives
+                    .add_trade(print.quantity.to_f64().unwrap_or(0.0), print.aggressor);
                 let mut tick = TickInput::price(price);
                 tick.candle = closed;
                 tick.cross_section = cross_section;
+                tick.derivatives = state.derivatives.tick();
                 tick.trade = core_trade(print);
+                // The mid as it stands NOW, which is the mid this print
+                // arrived against: a trade does not move the book, so it is
+                // still the one the last depth update left. That ordering is
+                // the whole measurement -- an effective spread taken against
+                // a mid the trade itself moved would be measuring nothing.
+                tick.trade_quote = tick.trade.and_then(|trade| {
+                    state
+                        .book
+                        .mid()
+                        .and_then(|mid| mid.to_f64())
+                        .and_then(|mid| wc::TradeQuote::new(trade, mid).ok())
+                });
                 tick.book = book;
                 tick.references = references;
                 state.indicators.update(&tick);
+                state.profiles.update(&tick);
+                state.bars.update(&tick);
                 if state.history.len() == 512 {
                     state.history.pop_front();
                 }
@@ -934,7 +1367,7 @@ impl AppState {
     /// the wrong indicators rather than none at all.
     #[must_use]
     pub fn fresh_market(&self) -> SymbolState {
-        SymbolState::new(&self.indicators, self.timeframe)
+        SymbolState::new(&self.indicators, &self.profiles, &self.bars, self.timeframe)
             .expect("indicator specs are validated before they reach the state")
     }
 
@@ -1046,6 +1479,89 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A tick carrying one closed candle, which is all the bar streams read.
+    fn candle_tick(open: f64, high: f64, low: f64, close: f64) -> TickInput {
+        let mut input = TickInput::price(close);
+        input.candle = Some(
+            wickra_core::Candle::new(open, high, low, close, 1.0, 0).expect("an ordered candle"),
+        );
+        input
+    }
+
+    #[test]
+    fn a_point_and_figure_column_ignores_a_price_that_is_not_one() {
+        // The close comes from a fold that has already seen whatever the feed
+        // sent, so a zero or a NaN reaches here rather than being filtered
+        // upstream. Seeding a column from one would set the extreme to it and
+        // every later box would be measured against nothing.
+        let mut pnf = PointAndFigure::default();
+        for bad in [f64::NAN, f64::INFINITY, 0.0, -5.0] {
+            pnf.update(bad);
+            assert!(!pnf.started, "{bad} started a column");
+        }
+        pnf.update(100.0);
+        assert!(pnf.started);
+    }
+
+    #[test]
+    fn taker_flow_ignores_a_quantity_that_is_not_one() {
+        // Adding a NaN size makes the running total NaN for the rest of the
+        // session, and every derivatives indicator reading with it.
+        let mut state = DerivativesState::default();
+        state.add_trade(f64::NAN, OrderSide::Buy);
+        state.add_trade(-1.0, OrderSide::Sell);
+        assert!(state.taker_buy_volume.abs() < 1e-9);
+        assert!(state.taker_sell_volume.abs() < 1e-9);
+        state.add_trade(2.5, OrderSide::Buy);
+        assert!((state.taker_buy_volume - 2.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_profile_set_knows_whether_it_tracks_anything() {
+        assert!(ProfileSet::from_specs(&[]).unwrap().is_empty());
+        let one =
+            ProfileSet::from_specs(&[IndicatorSpec::new("VolumeProfile", vec![4.0, 8.0])]).unwrap();
+        assert!(!one.is_empty());
+    }
+
+    #[test]
+    fn a_profile_entry_debugs_without_printing_its_whole_histogram() {
+        // The entry holds an indicator that has no Debug and a reading that can
+        // be hundreds of bins, so the impl is written by hand; a reader wants
+        // to know which profile it is looking at.
+        let set =
+            ProfileSet::from_specs(&[IndicatorSpec::new("VolumeProfile", vec![4.0, 8.0])]).unwrap();
+        let shown = format!("{:?}", set.entries[0]);
+        assert!(shown.contains("ProfileEntry"), "{shown}");
+        assert!(shown.contains("VolumeProfile(4,8)"), "{shown}");
+    }
+
+    #[test]
+    fn a_bar_entry_debugs_its_bar_count_rather_than_every_bar() {
+        let set = BarSet::from_specs(&[IndicatorSpec::new("RenkoBars", vec![3.0])]).unwrap();
+        let shown = format!("{:?}", set.entries[0]);
+        assert!(shown.contains("BarEntry"), "{shown}");
+        assert!(shown.contains("RenkoBars(3)"), "{shown}");
+        assert!(shown.contains("bars: 0"), "{shown}");
+    }
+
+    #[test]
+    fn a_bar_stream_keeps_the_most_recent_bars_and_drops_the_oldest() {
+        // These streams run for as long as the terminal does, so the buffer is
+        // bounded. Without the eviction it grows for the whole session.
+        let mut set = BarSet::from_specs(&[IndicatorSpec::new("RenkoBars", vec![1.0])]).unwrap();
+        let mut price = 100.0;
+        for _ in 0..(ALT_BARS_KEPT * 2) {
+            price += 2.0;
+            set.update(&candle_tick(price - 2.0, price, price - 2.0, price));
+        }
+        let kept = set.entries[0].bars.len();
+        assert_eq!(kept, ALT_BARS_KEPT, "kept {kept}");
+        // The survivors are the newest: the last brick closes at the last price.
+        let last = set.entries[0].bars.back().expect("a brick");
+        assert!(last.close >= price - 2.0, "{last:?} against {price}");
+    }
     use rust_decimal_macros::dec;
     use wickra_exchange_core::Symbol;
 
@@ -1511,5 +2027,245 @@ mod tests {
             state.cross_section(1).is_some(),
             "the first bar closed, so the market is now a member"
         );
+    }
+
+    /// The taker flow is the terminal's own contribution to a derivatives tick.
+    ///
+    /// wickra-exchange's `DerivativesTickBuilder` passes zero for both taker
+    /// volumes and says so in a comment: they stay zero "until a trade-derived
+    /// source sets it". This terminal is one -- the aggressor side is on every
+    /// print -- which is the entire reason the channels are folded here rather
+    /// than there. Without this, `TakerBuySellRatio` reads a constant.
+    #[test]
+    fn the_taker_flow_comes_from_the_tape_not_the_derivatives_feed() {
+        let mut derivatives = DerivativesState::default();
+        derivatives.apply(&DerivativesUpdate {
+            mark_price: Some(20_000.0),
+            index_price: Some(20_000.0),
+            futures_price: Some(20_050.0),
+            timestamp: 1,
+            ..DerivativesUpdate::default()
+        });
+        for _ in 0..3 {
+            derivatives.add_trade(2.0, OrderSide::Buy);
+        }
+        derivatives.add_trade(2.0, OrderSide::Sell);
+
+        let tick = derivatives.tick().expect("the three prices have arrived");
+        assert!(
+            (tick.taker_buy_volume - 6.0).abs() < 1e-9,
+            "three buys of two should be six, got {}",
+            tick.taker_buy_volume
+        );
+        assert!(
+            (tick.taker_sell_volume - 2.0).abs() < 1e-9,
+            "one sell of two should be two, got {}",
+            tick.taker_sell_volume
+        );
+    }
+
+    #[test]
+    fn a_derivatives_tick_needs_its_prices_first() {
+        let mut derivatives = DerivativesState::default();
+        // Funding alone is not a tick: `DerivativesTick::new` rejects a
+        // non-positive mark, index or futures price, so a host feeding only
+        // the funding channel must not produce one.
+        derivatives.apply(&DerivativesUpdate {
+            funding_rate: Some(0.0001),
+            timestamp: 1,
+            ..DerivativesUpdate::default()
+        });
+        assert!(derivatives.tick().is_none());
+    }
+
+    #[test]
+    fn liquidations_accumulate_and_other_channels_replace() {
+        let mut derivatives = DerivativesState::default();
+        let priced = DerivativesUpdate {
+            mark_price: Some(20_000.0),
+            index_price: Some(20_000.0),
+            futures_price: Some(20_050.0),
+            timestamp: 1,
+            ..DerivativesUpdate::default()
+        };
+        derivatives.apply(&priced);
+        // A liquidation is a flow over the interval: two prints inside one
+        // interval are two liquidations, not the second one only.
+        for _ in 0..3 {
+            derivatives.apply(&DerivativesUpdate {
+                long_liquidation: Some(1_000.0),
+                open_interest: Some(500.0),
+                ..DerivativesUpdate::default()
+            });
+        }
+        let tick = derivatives.tick().expect("priced");
+        assert!((tick.long_liquidation - 3_000.0).abs() < 1e-9);
+        // Open interest is a level, not a flow, so it replaces.
+        assert!((tick.open_interest - 500.0).abs() < 1e-9);
+    }
+
+    /// The mid is read before the print is folded, not after.
+    ///
+    /// The whole microstructure measurement is how far a print landed from the
+    /// mid that was STANDING when it arrived. A trade does not move the book,
+    /// so reading it in the fold is free -- but reading it from a book the
+    /// print had already been applied to would measure nothing at all.
+    #[test]
+    fn a_trade_quote_pairs_the_print_with_the_standing_mid() {
+        let sym = Symbol::new("BTC", "USDT");
+        let mut book = BookState::default();
+        book.apply_snapshot(&OrderBookSnapshot {
+            symbol: sym.clone(),
+            bids: vec![BookLevel {
+                price: dec!(99),
+                quantity: dec!(5),
+            }],
+            asks: vec![BookLevel {
+                price: dec!(101),
+                quantity: dec!(5),
+            }],
+            last_update_id: 1,
+        });
+        assert_eq!(book.mid(), Some(dec!(100)));
+    }
+
+    #[test]
+    fn a_one_sided_book_has_no_mid_to_measure_against() {
+        let sym = Symbol::new("BTC", "USDT");
+        let mut book = BookState::default();
+        book.apply_snapshot(&OrderBookSnapshot {
+            symbol: sym,
+            bids: vec![BookLevel {
+                price: dec!(99),
+                quantity: dec!(5),
+            }],
+            asks: Vec::new(),
+            last_update_id: 1,
+        });
+        // No ask means no mid, and a TradeQuote without one is not a quote:
+        // `TradeQuote::new` rejects a non-positive mid, and half a book has no
+        // defensible one to offer.
+        assert!(book.mid().is_none());
+    }
+
+    #[test]
+    fn a_microstructure_indicator_reads_prints_against_the_book() {
+        let sym = Symbol::new("BTC", "USDT");
+        let mut state = AppState {
+            indicators: vec![IndicatorSpec {
+                kind: "EffectiveSpread".to_string(),
+                params: Vec::new(),
+                reference: None,
+            }],
+            ..Default::default()
+        };
+        // A book on both sides, then prints that cross it. Without the book
+        // there is no mid and the family stays silent, which is the case the
+        // wiring has to get right.
+        for step in 0..40 {
+            let mid = Decimal::from(100 + step % 3);
+            state.fold(
+                0,
+                &sym,
+                &Event::BookSnapshot(OrderBookSnapshot {
+                    symbol: sym.clone(),
+                    bids: vec![BookLevel {
+                        price: mid - dec!(1),
+                        quantity: dec!(5),
+                    }],
+                    asks: vec![BookLevel {
+                        price: mid + dec!(1),
+                        quantity: dec!(5),
+                    }],
+                    last_update_id: u64::try_from(step).unwrap_or(0),
+                }),
+            );
+            state.fold(0, &sym, &trade(&sym, mid + dec!(1), OrderSide::Buy));
+        }
+        let reading = state
+            .get(&(0, sym))
+            .expect("BTC is tracked")
+            .indicators
+            .values()
+            .first()
+            .and_then(|(_, reading)| *reading);
+        assert!(
+            reading.is_some(),
+            "EffectiveSpread produced no reading after 40 prints against a two-sided book"
+        );
+    }
+
+    /// Drive a point-and-figure column through a sequence of closes.
+    fn pnf(closes: &[f64]) -> PointAndFigure {
+        let mut chart = PointAndFigure::default();
+        for close in closes {
+            chart.update(*close);
+        }
+        chart
+    }
+
+    /// The signal is a column property, not a price level.
+    ///
+    /// Around 100 the box is ~1.0 and the reversal ~3.0, so: seed at 100, run
+    /// up to 102, reverse down to 98 (which completes an X column at 102),
+    /// reverse back up, then clear 102. That last step is the double-top
+    /// breakout and the only thing that turns the signal on.
+    #[test]
+    fn a_rising_column_clearing_the_previous_one_is_a_buy_signal() {
+        assert!(
+            !pnf(&[100.0, 102.0]).on_buy_signal,
+            "no previous column to clear yet"
+        );
+        assert!(pnf(&[100.0, 102.0, 98.0, 102.0, 104.0]).on_buy_signal);
+    }
+
+    #[test]
+    fn a_falling_column_undercutting_the_previous_one_takes_it_away() {
+        let chart = pnf(&[100.0, 102.0, 98.0, 102.0, 104.0]);
+        assert!(chart.on_buy_signal, "the setup should be on a buy signal");
+        // Down to 100 (completing an X at 104), back up to 104, down again to
+        // 100, then through it: the breakdown below the previous O low.
+        let chart = pnf(&[100.0, 102.0, 98.0, 102.0, 104.0, 100.0, 104.0, 100.0, 96.0]);
+        assert!(!chart.on_buy_signal);
+    }
+
+    #[test]
+    fn a_move_smaller_than_a_box_does_not_advance_the_column() {
+        // Half a box, repeatedly. A P&F chart is a filter: this is the whole
+        // reason its signal is not the same thing as "the price went up".
+        let chart = pnf(&[100.0, 100.5, 100.9, 100.4, 100.8]);
+        assert!(
+            (chart.extreme - 100.0).abs() < 1e-9,
+            "the column did not move"
+        );
+        assert!(chart.rising);
+    }
+
+    #[test]
+    fn a_counter_move_smaller_than_the_reversal_does_not_start_a_column() {
+        // Two boxes down from a rising column is not three, so the column
+        // stands: without this a P&F chart would be an ordinary line chart.
+        let chart = pnf(&[100.0, 104.0, 102.0]);
+        assert!(
+            chart.rising,
+            "a two-box pullback must not reverse the column"
+        );
+        assert!((chart.extreme - 104.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_breadth_member_reports_the_point_and_figure_signal() {
+        // The reason all of this exists: BullishPercentIndex reads this flag,
+        // and it was hard-coded false until the column state existed.
+        let mut breadth = BreadthState::new();
+        let bar = |close: f64| {
+            wc::Candle::new(close, close, close, close, 10.0, 0)
+                .expect("a flat synthetic bar is valid")
+        };
+        for close in [100.0, 102.0, 98.0, 102.0, 104.0] {
+            breadth.update(&bar(close));
+        }
+        let member = breadth.member().expect("bars have closed");
+        assert!(member.on_buy_signal);
     }
 }

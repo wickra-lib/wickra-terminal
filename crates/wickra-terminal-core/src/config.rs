@@ -218,6 +218,22 @@ pub struct Config {
     /// The bar size the candle-input indicators are fed at.
     #[serde(default)]
     pub timeframe: Timeframe,
+    /// Profiles tracked for every market, for the `Profile` panel.
+    ///
+    /// Separate from `indicators` because a profile answers with a histogram
+    /// rather than a reading, and the two are consumed by different panels.
+    /// Empty by default: a profile walks a distribution on every closed bar,
+    /// and a configuration with no profile panel should not pay for one.
+    #[serde(default)]
+    pub profiles: Vec<IndicatorSpec>,
+    /// Alternative bar types built from the same closed candles, for the
+    /// `Bars` panel.
+    ///
+    /// Renko, Kagi, point-and-figure and the rest are not indicators and not
+    /// profiles: one closed candle completes zero, one or several of them, and
+    /// that unevenness is the character of the chart rather than a defect.
+    #[serde(default)]
+    pub bars: Vec<IndicatorSpec>,
 }
 
 impl Config {
@@ -256,6 +272,8 @@ impl Default for Config {
             layout: Layout::default(),
             indicators: default_indicators(),
             timeframe: Timeframe::default(),
+            profiles: Vec::new(),
+            bars: Vec::new(),
         }
     }
 }

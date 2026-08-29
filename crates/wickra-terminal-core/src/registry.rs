@@ -11,21 +11,33 @@
 //!
 //! Source of truth: the wickra-core indicator sources — the `Indicator` impls,
 //! their `new` signatures and their Output structs. An indicator is registered
-//! when its input is one of the four families this terminal can feed and its
-//! output is a scalar `f64` or a struct of `f64` fields:
+//! when its input is one of the nine families this terminal can feed and its
+//! output is a number or a struct of named numbers:
 //!
-//! | `Input`     | Fed with                                  | Advances     |
-//! |-------------|-------------------------------------------|--------------|
-//! | `f64`       | the last trade price                      | every trade  |
-//! | `Candle`    | the bar the tick just closed              | every bar    |
-//! | `Trade`     | the print, with size and aggressor side   | every trade  |
-//! | `OrderBook` | the locally maintained L2 book            | every trade  |
+//! | `Input`           | Fed with                                     | Advances    |
+//! |-------------------|----------------------------------------------|-------------|
+//! | `f64`             | the last trade price                         | every trade |
+//! | `Candle`          | the bar the tick just closed                 | every bar   |
+//! | `Trade`           | the print, with size and aggressor side      | every trade |
+//! | `OrderBook`       | the locally maintained L2 book               | every trade |
+//! | `(f64, f64)`      | this price against a reference market's      | every trade |
+//! | returns           | the close-to-close return of the closed bar  | every bar   |
+//! | `CrossSection`    | the breadth of a named universe of markets   | every bar   |
+//! | `DerivativesTick` | funding, open interest and taker flow        | every trade |
+//! | `TradeQuote`      | the print, with the mid it arrived against   | every trade |
 //!
 //! Multi-output indicators expose their fields by name.
+//!
+//! Two answers do not fit that contract and have surfaces of their own here:
+//! [`ProfileIndicator`], for the indicators whose output is a histogram, and
+//! [`BarStream`], for the bar builders, which are not `Indicator`s at all.
 
 use std::collections::BTreeMap;
+use std::marker::PhantomData;
 
-use wickra_core::{self as wc, Candle, Indicator};
+use serde::{Deserialize, Serialize};
+
+use wickra_core::{self as wc, BarBuilder, Candle, Indicator};
 
 use crate::error::{Error, Result};
 
@@ -64,6 +76,17 @@ pub struct TickInput {
     /// one market has closed a bar -- a breadth reading compares closes, and a
     /// universe of markets that have not produced one is not a reading.
     pub cross_section: Option<wc::CrossSection>,
+    /// This market's derivatives microstructure, if the host has fed any.
+    ///
+    /// Absent until the venue's mark, index and futures prices have all arrived:
+    /// `DerivativesTick::new` rejects a non-positive price, so a tick before
+    /// them would not be a tick.
+    pub derivatives: Option<wc::DerivativesTick>,
+    /// This print paired with the mid that was standing when it arrived.
+    ///
+    /// Absent when the book is one-sided, since there is no mid to measure
+    /// against, and on any tick that is not a print.
+    pub trade_quote: Option<wc::TradeQuote>,
 }
 
 impl TickInput {
@@ -82,6 +105,8 @@ impl TickInput {
             book: None,
             references: BTreeMap::new(),
             cross_section: None,
+            derivatives: None,
+            trade_quote: None,
         }
     }
 
@@ -125,6 +150,98 @@ impl TickInput {
 }
 
 /// A uniform, object-safe indicator the terminal drives one tick at a time.
+/// One reading of a profile: a histogram, and the price range it spans when it
+/// has one.
+///
+/// Two of the six are distributions over PRICE and carry the range their bins
+/// cover; the other four are over TIME -- day of week, minute of session -- and
+/// have no price range to report. The bounds are optional rather than zeroed, so
+/// a consumer can tell "spans no price" from "spans zero to zero".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProfileReading {
+    /// The histogram, in bin order.
+    pub bins: Vec<f64>,
+    /// The lowest price the bins cover, for a price profile.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price_low: Option<f64>,
+    /// The highest price the bins cover, for a price profile.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price_high: Option<f64>,
+}
+
+/// One bar from an alternative chart, in the single shape a renderer draws.
+///
+/// The ten builders emit ten bar types in two shapes -- a two-point bar that
+/// records where a move started and ended, and an OHLC bar that records a range.
+/// A renderer should not have to hold ten, so each is mapped onto this one, and
+/// the mapping is written down per bar type in the generator rather than guessed
+/// here.
+///
+/// `volume` is optional because half of them do not have one: a Renko brick is a
+/// price move, not a period, and reporting zero would read as "no volume traded".
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct AltBar {
+    /// Where the bar opened.
+    pub open: f64,
+    /// The highest price it reached.
+    pub high: f64,
+    /// The lowest price it reached.
+    pub low: f64,
+    /// Where it closed.
+    pub close: f64,
+    /// `1` rising, `-1` falling.
+    pub direction: i8,
+    /// Volume, for the bar types that measure one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volume: Option<f64>,
+}
+
+/// A stream of alternative bars, driven by the same closed candles everything
+/// else here reads.
+///
+/// Separate from [`TickIndicator`] and [`ProfileIndicator`] because it answers
+/// with neither a reading nor a distribution: one closed candle can complete
+/// zero, one or several bars, and that is the whole character of these charts --
+/// a quiet hour produces none and a fast one produces many.
+pub trait BarStream: Send {
+    /// Feed one tick; returns every bar completed on it, which is usually none.
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar>;
+}
+
+/// Wraps a bar builder as a [`BarStream`].
+///
+/// Parameterised by the bar type as well as the builder, which is what keeps one
+/// impl per bar from overlapping another.
+struct CandleBars<I, B> {
+    inner: I,
+    /// Only to make the bar type part of this wrapper's identity.
+    bar: PhantomData<B>,
+}
+
+/// An indicator whose output is a histogram rather than a reading.
+///
+/// Deliberately not [`TickIndicator`]: that trait promises one `f64` and a fixed
+/// set of named fields, and a distribution is neither. Kept apart rather than
+/// widening the other, so nothing that consumes a reading has to learn what an
+/// absent histogram means.
+pub trait ProfileIndicator: Send {
+    /// Feed one tick; returns the histogram, or `None` while warming up or when
+    /// this tick carries nothing this profile consumes.
+    fn update(&mut self, input: &TickInput) -> Option<ProfileReading>;
+    /// Number of inputs required before the first histogram.
+    fn warmup(&self) -> usize;
+}
+
+/// Wraps a bar-input indicator whose output is a histogram.
+///
+/// Parameterised by the output struct as well as the indicator, which is what
+/// keeps one impl per output from overlapping another.
+struct CandleProfile<I, O> {
+    inner: I,
+    /// Only to make the output type part of this wrapper's identity.
+    output: PhantomData<O>,
+}
+
 pub trait TickIndicator: Send {
     /// Feed one tick; returns the primary value, or `None` while warming up or
     /// when this tick carries nothing this indicator consumes.
@@ -304,6 +421,58 @@ where
     }
 }
 
+/// Wraps a derivatives (`Input = DerivativesTick`) single-output indicator:
+/// funding, open interest, positioning and the mark/index/futures prices of
+/// one perpetual market. Ticks before the host has fed those prices yield
+/// `None` without advancing it.
+struct DerivIn<I> {
+    inner: I,
+}
+
+impl<I> TickIndicator for DerivIn<I>
+where
+    I: Indicator<Input = wc::DerivativesTick, Output = f64> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        input
+            .derivatives
+            .and_then(|derivatives| self.inner.update(derivatives))
+            .filter(|value| value.is_finite())
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        Vec::new()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+/// Wraps a microstructure (`Input = TradeQuote`) single-output indicator: one
+/// print paired with the mid that was standing when it arrived. Ticks with a
+/// one-sided book yield `None` without advancing it -- there is no mid to
+/// measure the print against.
+struct QuoteIn<I> {
+    inner: I,
+}
+
+impl<I> TickIndicator for QuoteIn<I>
+where
+    I: Indicator<Input = wc::TradeQuote, Output = f64> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        input
+            .trade_quote
+            .and_then(|quote| self.inner.update(quote))
+            .filter(|value| value.is_finite())
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        Vec::new()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
 /// Wraps an indicator whose `Input = f64` is a per-period RETURN rather
 /// than a price, feeding it the close-to-close return of each closed bar.
 /// The first bar establishes the close to difference against and yields
@@ -337,6 +506,30 @@ where
     }
 }
 
+/// Wraps a price (`Input = f64`) single-output indicator.
+///
+/// This one carries an indicator whose output is a whole number -- a count of
+/// bars, not a price -- converted to the `f64` the boundary speaks.
+struct ScalarPriceInt<I> {
+    inner: I,
+}
+
+impl<I, O> TickIndicator for ScalarPriceInt<I>
+where
+    I: Indicator<Input = f64, Output = O> + Send,
+    O: Into<f64> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        self.inner.update(input.price).map(Into::into)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        Vec::new()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
 /// Wraps a price indicator whose output is a struct of `f64` fields. The
 /// primary value is the first field; every field is reachable by name.
 struct ScalarPriceFields<I, O> {
@@ -355,6 +548,13 @@ struct PairInFields<I, O> {
     inner: I,
     last: Option<O>,
     reference: String,
+}
+
+/// Wraps a derivatives indicator whose output is a struct of fields. The
+/// primary value is the first field; every field is reachable by name.
+struct DerivInFields<I, O> {
+    inner: I,
+    last: Option<O>,
 }
 
 impl<I> TickIndicator for PairInFields<I, wc::CointegrationOutput>
@@ -2527,6 +2727,43 @@ where
     }
 }
 
+impl<I> TickIndicator for DerivInFields<I, wc::LiquidationFeaturesOutput>
+where
+    I: Indicator<Input = wc::DerivativesTick, Output = wc::LiquidationFeaturesOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input
+            .derivatives
+            .and_then(|derivatives| self.inner.update(derivatives))
+            .filter(|last| {
+                last.long.is_finite()
+                    && last.short.is_finite()
+                    && last.net.is_finite()
+                    && last.total.is_finite()
+                    && last.imbalance.is_finite()
+            });
+        self.last = out;
+        self.last.as_ref().map(|last| last.long)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("long", last.long),
+                    ("short", last.short),
+                    ("net", last.net),
+                    ("total", last.total),
+                    ("imbalance", last.imbalance),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
 impl<I> TickIndicator for ScalarPriceFields<I, wc::BollingerOutput>
 where
     I: Indicator<Input = f64, Output = wc::BollingerOutput> + Send,
@@ -2914,6 +3151,552 @@ where
     }
 }
 
+impl<I> ProfileIndicator for CandleProfile<I, wc::DayOfWeekProfileOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::DayOfWeekProfileOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<ProfileReading> {
+        input
+            .candle
+            .and_then(|candle| self.inner.update(candle))
+            .map(|reading| ProfileReading {
+                bins: reading.bins,
+                price_low: None,
+                price_high: None,
+            })
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> ProfileIndicator for CandleProfile<I, wc::IntradayVolatilityProfileOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::IntradayVolatilityProfileOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<ProfileReading> {
+        input
+            .candle
+            .and_then(|candle| self.inner.update(candle))
+            .map(|reading| ProfileReading {
+                bins: reading.bins,
+                price_low: None,
+                price_high: None,
+            })
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> ProfileIndicator for CandleProfile<I, wc::TimeOfDayReturnProfileOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::TimeOfDayReturnProfileOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<ProfileReading> {
+        input
+            .candle
+            .and_then(|candle| self.inner.update(candle))
+            .map(|reading| ProfileReading {
+                bins: reading.bins,
+                price_low: None,
+                price_high: None,
+            })
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> ProfileIndicator for CandleProfile<I, wc::TpoProfileOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::TpoProfileOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<ProfileReading> {
+        input
+            .candle
+            .and_then(|candle| self.inner.update(candle))
+            .map(|reading| ProfileReading {
+                bins: reading.counts,
+                price_low: Some(reading.price_low),
+                price_high: Some(reading.price_high),
+            })
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> ProfileIndicator for CandleProfile<I, wc::VolumeByTimeProfileOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::VolumeByTimeProfileOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<ProfileReading> {
+        input
+            .candle
+            .and_then(|candle| self.inner.update(candle))
+            .map(|reading| ProfileReading {
+                bins: reading.bins,
+                price_low: None,
+                price_high: None,
+            })
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> ProfileIndicator for CandleProfile<I, wc::VolumeProfileOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::VolumeProfileOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<ProfileReading> {
+        input
+            .candle
+            .and_then(|candle| self.inner.update(candle))
+            .map(|reading| ProfileReading {
+                bins: reading.bins,
+                price_low: Some(reading.price_low),
+                price_high: Some(reading.price_high),
+            })
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+/// Every profile this terminal can build, with the parameters the wickra golden
+/// manifest pins them at.
+///
+/// Kept apart from [`DEFAULTS`] rather than merged into it: a caller asking the
+/// catalogue what it can *read* wants indicators, and a caller laying out a
+/// panel wants profiles. One list holding both would make every consumer filter.
+pub const PROFILES: [(&str, &[f64]); 6] = [
+    ("DayOfWeekProfile", &[0.0]),
+    ("IntradayVolatilityProfile", &[24.0, 0.0]),
+    ("TimeOfDayReturnProfile", &[24.0, 0.0]),
+    ("TpoProfile", &[30.0, 50.0]),
+    ("VolumeByTimeProfile", &[24.0, 0.0]),
+    ("VolumeProfile", &[20.0, 50.0]),
+];
+
+/// Whether `kind` names a profile rather than an indicator.
+#[must_use]
+pub fn is_profile(kind: &str) -> bool {
+    matches!(
+        kind,
+        "DayOfWeekProfile"
+            | "IntradayVolatilityProfile"
+            | "TimeOfDayReturnProfile"
+            | "TpoProfile"
+            | "VolumeByTimeProfile"
+            | "VolumeProfile"
+    )
+}
+
+/// Build a profile by name.
+///
+/// # Errors
+///
+/// Returns [`Error::Config`] if `kind` is not a profile, or if its parameters
+/// are missing or rejected by the constructor.
+pub fn build_profile(kind: &str, params: &[f64]) -> Result<Box<dyn ProfileIndicator>> {
+    match kind {
+        "DayOfWeekProfile" => Ok(Box::new(CandleProfile::<_, wc::DayOfWeekProfileOutput> {
+            inner: wc::DayOfWeekProfile::new(i32_param(params, 0, kind)?),
+            output: PhantomData,
+        })),
+        "IntradayVolatilityProfile" => Ok(Box::new(CandleProfile::<
+            _,
+            wc::IntradayVolatilityProfileOutput,
+        > {
+            inner: map_new(
+                kind,
+                wc::IntradayVolatilityProfile::new(
+                    usize_param(params, 0, kind)?,
+                    i32_param(params, 1, kind)?,
+                ),
+            )?,
+            output: PhantomData,
+        })),
+        "TimeOfDayReturnProfile" => Ok(Box::new(CandleProfile::<
+            _,
+            wc::TimeOfDayReturnProfileOutput,
+        > {
+            inner: map_new(
+                kind,
+                wc::TimeOfDayReturnProfile::new(
+                    usize_param(params, 0, kind)?,
+                    i32_param(params, 1, kind)?,
+                ),
+            )?,
+            output: PhantomData,
+        })),
+        "TpoProfile" => Ok(Box::new(CandleProfile::<_, wc::TpoProfileOutput> {
+            inner: map_new(
+                kind,
+                wc::TpoProfile::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
+            )?,
+            output: PhantomData,
+        })),
+        "VolumeByTimeProfile" => Ok(Box::new(
+            CandleProfile::<_, wc::VolumeByTimeProfileOutput> {
+                inner: map_new(
+                    kind,
+                    wc::VolumeByTimeProfile::new(
+                        usize_param(params, 0, kind)?,
+                        i32_param(params, 1, kind)?,
+                    ),
+                )?,
+                output: PhantomData,
+            },
+        )),
+        "VolumeProfile" => Ok(Box::new(CandleProfile::<_, wc::VolumeProfileOutput> {
+            inner: map_new(
+                kind,
+                wc::VolumeProfile::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+            output: PhantomData,
+        })),
+        _ => Err(Error::Config(format!("unknown profile: {kind}"))),
+    }
+}
+
+impl<I> BarStream for CandleBars<I, wc::DollarBar>
+where
+    I: BarBuilder<Bar = wc::DollarBar> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar> {
+        let Some(candle) = input.candle else {
+            return Vec::new();
+        };
+        self.inner
+            .update(candle)
+            .into_iter()
+            .map(|bar| AltBar {
+                open: bar.open,
+                high: bar.high,
+                low: bar.low,
+                close: bar.close,
+                direction: if bar.close >= bar.open { 1 } else { -1 },
+                volume: Some(bar.volume),
+            })
+            .collect()
+    }
+}
+
+impl<I> BarStream for CandleBars<I, wc::ImbalanceBar>
+where
+    I: BarBuilder<Bar = wc::ImbalanceBar> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar> {
+        let Some(candle) = input.candle else {
+            return Vec::new();
+        };
+        self.inner
+            .update(candle)
+            .into_iter()
+            .map(|bar| AltBar {
+                open: bar.open,
+                high: bar.high,
+                low: bar.low,
+                close: bar.close,
+                direction: bar.direction,
+                volume: None,
+            })
+            .collect()
+    }
+}
+
+impl<I> BarStream for CandleBars<I, wc::KagiBar>
+where
+    I: BarBuilder<Bar = wc::KagiBar> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar> {
+        let Some(candle) = input.candle else {
+            return Vec::new();
+        };
+        self.inner
+            .update(candle)
+            .into_iter()
+            .map(|bar| AltBar {
+                open: bar.start,
+                high: bar.start.max(bar.end),
+                low: bar.start.min(bar.end),
+                close: bar.end,
+                direction: bar.direction,
+                volume: None,
+            })
+            .collect()
+    }
+}
+
+impl<I> BarStream for CandleBars<I, wc::PnfColumn>
+where
+    I: BarBuilder<Bar = wc::PnfColumn> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar> {
+        let Some(candle) = input.candle else {
+            return Vec::new();
+        };
+        self.inner
+            .update(candle)
+            .into_iter()
+            .map(|bar| AltBar {
+                open: if bar.direction >= 0 {
+                    bar.low
+                } else {
+                    bar.high
+                },
+                high: bar.high,
+                low: bar.low,
+                close: if bar.direction >= 0 {
+                    bar.high
+                } else {
+                    bar.low
+                },
+                direction: bar.direction,
+                volume: None,
+            })
+            .collect()
+    }
+}
+
+impl<I> BarStream for CandleBars<I, wc::RangeBar>
+where
+    I: BarBuilder<Bar = wc::RangeBar> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar> {
+        let Some(candle) = input.candle else {
+            return Vec::new();
+        };
+        self.inner
+            .update(candle)
+            .into_iter()
+            .map(|bar| AltBar {
+                open: bar.open,
+                high: bar.open.max(bar.close),
+                low: bar.open.min(bar.close),
+                close: bar.close,
+                direction: bar.direction,
+                volume: None,
+            })
+            .collect()
+    }
+}
+
+impl<I> BarStream for CandleBars<I, wc::RenkoBrick>
+where
+    I: BarBuilder<Bar = wc::RenkoBrick> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar> {
+        let Some(candle) = input.candle else {
+            return Vec::new();
+        };
+        self.inner
+            .update(candle)
+            .into_iter()
+            .map(|bar| AltBar {
+                open: bar.open,
+                high: bar.open.max(bar.close),
+                low: bar.open.min(bar.close),
+                close: bar.close,
+                direction: bar.direction,
+                volume: None,
+            })
+            .collect()
+    }
+}
+
+impl<I> BarStream for CandleBars<I, wc::RunBar>
+where
+    I: BarBuilder<Bar = wc::RunBar> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar> {
+        let Some(candle) = input.candle else {
+            return Vec::new();
+        };
+        self.inner
+            .update(candle)
+            .into_iter()
+            .map(|bar| AltBar {
+                open: bar.open,
+                high: bar.high,
+                low: bar.low,
+                close: bar.close,
+                direction: bar.direction,
+                volume: None,
+            })
+            .collect()
+    }
+}
+
+impl<I> BarStream for CandleBars<I, wc::LineBreakBar>
+where
+    I: BarBuilder<Bar = wc::LineBreakBar> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar> {
+        let Some(candle) = input.candle else {
+            return Vec::new();
+        };
+        self.inner
+            .update(candle)
+            .into_iter()
+            .map(|bar| AltBar {
+                open: bar.open,
+                high: bar.open.max(bar.close),
+                low: bar.open.min(bar.close),
+                close: bar.close,
+                direction: bar.direction,
+                volume: None,
+            })
+            .collect()
+    }
+}
+
+impl<I> BarStream for CandleBars<I, wc::TickBar>
+where
+    I: BarBuilder<Bar = wc::TickBar> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar> {
+        let Some(candle) = input.candle else {
+            return Vec::new();
+        };
+        self.inner
+            .update(candle)
+            .into_iter()
+            .map(|bar| AltBar {
+                open: bar.open,
+                high: bar.high,
+                low: bar.low,
+                close: bar.close,
+                direction: if bar.close >= bar.open { 1 } else { -1 },
+                volume: Some(bar.volume),
+            })
+            .collect()
+    }
+}
+
+impl<I> BarStream for CandleBars<I, wc::VolumeBar>
+where
+    I: BarBuilder<Bar = wc::VolumeBar> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar> {
+        let Some(candle) = input.candle else {
+            return Vec::new();
+        };
+        self.inner
+            .update(candle)
+            .into_iter()
+            .map(|bar| AltBar {
+                open: bar.open,
+                high: bar.high,
+                low: bar.low,
+                close: bar.close,
+                direction: if bar.close >= bar.open { 1 } else { -1 },
+                volume: Some(bar.volume),
+            })
+            .collect()
+    }
+}
+
+/// Every alternative bar type this terminal can build, with the parameters the
+/// wickra golden manifest pins them at.
+pub const BAR_TYPES: [(&str, &[f64]); 10] = [
+    ("DollarBars", &[50000.0]),
+    ("ImbalanceBars", &[5.0]),
+    ("KagiBars", &[2.0]),
+    ("PointAndFigureBars", &[2.0, 3.0]),
+    ("RangeBars", &[2.0]),
+    ("RenkoBars", &[2.0]),
+    ("RunBars", &[3.0]),
+    ("ThreeLineBreakBars", &[3.0]),
+    ("TickBars", &[2.0]),
+    ("VolumeBars", &[500.0]),
+];
+
+/// Whether `kind` names an alternative bar type rather than an indicator.
+#[must_use]
+pub fn is_bar_type(kind: &str) -> bool {
+    matches!(
+        kind,
+        "DollarBars"
+            | "ImbalanceBars"
+            | "KagiBars"
+            | "PointAndFigureBars"
+            | "RangeBars"
+            | "RenkoBars"
+            | "RunBars"
+            | "ThreeLineBreakBars"
+            | "TickBars"
+            | "VolumeBars"
+    )
+}
+
+/// Build an alternative bar stream by name.
+///
+/// # Errors
+///
+/// Returns [`Error::Config`] if `kind` is not a bar type, or if its parameters
+/// are missing or rejected by the constructor.
+pub fn build_bars(kind: &str, params: &[f64]) -> Result<Box<dyn BarStream>> {
+    match kind {
+        "DollarBars" => Ok(Box::new(CandleBars::<_, wc::DollarBar> {
+            inner: map_new(kind, wc::DollarBars::new(float_param(params, 0, kind)?))?,
+            bar: PhantomData,
+        })),
+        "ImbalanceBars" => Ok(Box::new(CandleBars::<_, wc::ImbalanceBar> {
+            inner: map_new(kind, wc::ImbalanceBars::new(float_param(params, 0, kind)?))?,
+            bar: PhantomData,
+        })),
+        "KagiBars" => Ok(Box::new(CandleBars::<_, wc::KagiBar> {
+            inner: map_new(kind, wc::KagiBars::new(float_param(params, 0, kind)?))?,
+            bar: PhantomData,
+        })),
+        "PointAndFigureBars" => Ok(Box::new(CandleBars::<_, wc::PnfColumn> {
+            inner: map_new(
+                kind,
+                wc::PointAndFigureBars::new(
+                    float_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+            bar: PhantomData,
+        })),
+        "RangeBars" => Ok(Box::new(CandleBars::<_, wc::RangeBar> {
+            inner: map_new(kind, wc::RangeBars::new(float_param(params, 0, kind)?))?,
+            bar: PhantomData,
+        })),
+        "RenkoBars" => Ok(Box::new(CandleBars::<_, wc::RenkoBrick> {
+            inner: map_new(kind, wc::RenkoBars::new(float_param(params, 0, kind)?))?,
+            bar: PhantomData,
+        })),
+        "RunBars" => Ok(Box::new(CandleBars::<_, wc::RunBar> {
+            inner: map_new(kind, wc::RunBars::new(usize_param(params, 0, kind)?))?,
+            bar: PhantomData,
+        })),
+        "ThreeLineBreakBars" => Ok(Box::new(CandleBars::<_, wc::LineBreakBar> {
+            inner: map_new(
+                kind,
+                wc::ThreeLineBreakBars::new(usize_param(params, 0, kind)?),
+            )?,
+            bar: PhantomData,
+        })),
+        "TickBars" => Ok(Box::new(CandleBars::<_, wc::TickBar> {
+            inner: map_new(kind, wc::TickBars::new(usize_param(params, 0, kind)?))?,
+            bar: PhantomData,
+        })),
+        "VolumeBars" => Ok(Box::new(CandleBars::<_, wc::VolumeBar> {
+            inner: map_new(kind, wc::VolumeBars::new(float_param(params, 0, kind)?))?,
+            bar: PhantomData,
+        })),
+        _ => Err(Error::Config(format!("unknown bar type: {kind}"))),
+    }
+}
+
 /// Read a positional parameter as a count.
 fn usize_param(params: &[f64], idx: usize, kind: &str) -> Result<usize> {
     let value = params
@@ -2964,8 +3747,25 @@ fn map_new<T>(kind: &str, made: core::result::Result<T, wc::Error>) -> Result<T>
     made.map_err(|err| Error::Config(format!("{kind}: {err}")))
 }
 
+/// Every input family this terminal can feed, sorted.
+///
+/// Named rather than counted: a document that lists the families can be checked
+/// against this, and a family added to the registry without a row in that list
+/// fails the check instead of leaving the list quietly short.
+pub const INPUT_FAMILIES: [&str; 9] = [
+    "(f64,f64)",
+    "Candle",
+    "CrossSection",
+    "DerivativesTick",
+    "OrderBook",
+    "Trade",
+    "TradeQuote",
+    "f64",
+    "returns",
+];
+
 /// Every registered indicator name, sorted.
-pub const KINDS: [&str; 477] = [
+pub const KINDS: [&str; 499] = [
     "AbandonedBaby",
     "Abcd",
     "AbsoluteBreadthIndex",
@@ -3020,8 +3820,10 @@ pub const KINDS: [&str; 477] = [
     "BomarBands",
     "BreadthThrust",
     "Breakaway",
+    "BullishPercentIndex",
     "BurkeRatio",
     "Butterfly",
+    "CalendarSpread",
     "CalmarRatio",
     "Camarilla",
     "CandleVolume",
@@ -3074,10 +3876,12 @@ pub const KINDS: [&str; 477] = [
     "DownsideGapThreeMethods",
     "Dpo",
     "DragonflyDoji",
+    "DrawdownDuration",
     "DumplingTop",
     "Dx",
     "DynamicMomentumIndex",
     "EaseOfMovement",
+    "EffectiveSpread",
     "EhlersStochastic",
     "Ehma",
     "ElderImpulse",
@@ -3087,6 +3891,7 @@ pub const KINDS: [&str; 477] = [
     "EmpiricalModeDecomposition",
     "Engulfing",
     "Equivolume",
+    "EstimatedLeverageRatio",
     "EvenBetterSinewave",
     "EveningDojiStar",
     "Evwma",
@@ -3110,6 +3915,11 @@ pub const KINDS: [&str; 477] = [
     "FractalChaosBands",
     "Frama",
     "FryPanBottom",
+    "FundingBasis",
+    "FundingImpliedApr",
+    "FundingRate",
+    "FundingRateMean",
+    "FundingRateZScore",
     "GainLossRatio",
     "GainToPainRatio",
     "GapSideBySideWhite",
@@ -3175,6 +3985,7 @@ pub const KINDS: [&str; 477] = [
     "Kst",
     "Kurtosis",
     "Kvo",
+    "KylesLambda",
     "LadderBottom",
     "LaguerreRsi",
     "LeadLagCrossCorrelation",
@@ -3183,9 +3994,11 @@ pub const KINDS: [&str; 477] = [
     "LinRegIntercept",
     "LinRegSlope",
     "LinearRegression",
+    "LiquidationFeatures",
     "LogReturn",
     "LongLeggedDoji",
     "LongLine",
+    "LongShortRatio",
     "M2Measure",
     "MaEnvelope",
     "Macd",
@@ -3225,9 +4038,14 @@ pub const KINDS: [&str; 477] = [
     "NewPriceLines",
     "Nrtr",
     "Nvi",
+    "OIPriceDivergence",
+    "OIWeighted",
     "Obv",
+    "OiToVolumeRatio",
     "OmegaRatio",
     "OnNeck",
+    "OpenInterestDelta",
+    "OpenInterestMomentum",
     "OpeningMarubozu",
     "OpeningRange",
     "OrderBookImbalanceFull",
@@ -3245,6 +4063,7 @@ pub const KINDS: [&str; 477] = [
     "PercentAboveMa",
     "PercentB",
     "PercentageTrailingStop",
+    "PerpetualPremiumIndex",
     "Pgo",
     "PiercingDarkCloud",
     "Pin",
@@ -3266,6 +4085,7 @@ pub const KINDS: [&str; 477] = [
     "QuartileBands",
     "QuotedSpread",
     "RSquared",
+    "RealizedSpread",
     "RealizedVolatility",
     "RecoveryFactor",
     "RectangleRange",
@@ -3338,6 +4158,7 @@ pub const KINDS: [&str; 477] = [
     "SuperTrend",
     "T3",
     "TailRatio",
+    "TakerBuySellRatio",
     "Takuri",
     "TasukiGap",
     "TdCamouflage",
@@ -3360,6 +4181,7 @@ pub const KINDS: [&str; 477] = [
     "TdSetup",
     "TdTrap",
     "Tema",
+    "TermStructureBasis",
     "ThreeDrives",
     "ThreeInside",
     "ThreeLineBreak",
@@ -3449,7 +4271,7 @@ pub const KINDS: [&str; 477] = [
 /// same values the library pins its own reference outputs with. Used by the
 /// build-all test so every registered indicator is constructed the way wickra
 /// constructs it, rather than with a guessed parameter count.
-pub const DEFAULTS: [(&str, &[f64]); 475] = [
+pub const DEFAULTS: [(&str, &[f64]); 497] = [
     ("AbandonedBaby", &[]),
     ("Abcd", &[]),
     ("AbsoluteBreadthIndex", &[]),
@@ -3503,8 +4325,10 @@ pub const DEFAULTS: [(&str, &[f64]); 475] = [
     ("BomarBands", &[4.0, 0.85]),
     ("BreadthThrust", &[10.0]),
     ("Breakaway", &[]),
+    ("BullishPercentIndex", &[]),
     ("BurkeRatio", &[14.0]),
     ("Butterfly", &[]),
+    ("CalendarSpread", &[]),
     ("CalmarRatio", &[14.0]),
     ("Camarilla", &[]),
     ("CandleVolume", &[14.0]),
@@ -3557,10 +4381,12 @@ pub const DEFAULTS: [(&str, &[f64]); 475] = [
     ("DownsideGapThreeMethods", &[]),
     ("Dpo", &[14.0]),
     ("DragonflyDoji", &[]),
+    ("DrawdownDuration", &[]),
     ("DumplingTop", &[14.0]),
     ("Dx", &[14.0]),
     ("DynamicMomentumIndex", &[14.0]),
     ("EaseOfMovement", &[14.0]),
+    ("EffectiveSpread", &[]),
     ("EhlersStochastic", &[14.0]),
     ("Ehma", &[14.0]),
     ("ElderImpulse", &[3.0, 7.0, 14.0, 28.0]),
@@ -3570,6 +4396,7 @@ pub const DEFAULTS: [(&str, &[f64]); 475] = [
     ("EmpiricalModeDecomposition", &[20.0, 0.1]),
     ("Engulfing", &[]),
     ("Equivolume", &[14.0]),
+    ("EstimatedLeverageRatio", &[]),
     ("EvenBetterSinewave", &[40.0, 10.0]),
     ("EveningDojiStar", &[]),
     ("Evwma", &[14.0]),
@@ -3593,6 +4420,11 @@ pub const DEFAULTS: [(&str, &[f64]); 475] = [
     ("FractalChaosBands", &[14.0]),
     ("Frama", &[14.0]),
     ("FryPanBottom", &[14.0]),
+    ("FundingBasis", &[]),
+    ("FundingImpliedApr", &[1095.0]),
+    ("FundingRate", &[]),
+    ("FundingRateMean", &[20.0]),
+    ("FundingRateZScore", &[20.0]),
     ("GainLossRatio", &[14.0]),
     ("GainToPainRatio", &[14.0]),
     ("GapSideBySideWhite", &[]),
@@ -3658,6 +4490,7 @@ pub const DEFAULTS: [(&str, &[f64]); 475] = [
     ("Kst", &[3.0, 7.0, 14.0, 28.0, 35.0, 42.0, 56.0, 63.0, 70.0]),
     ("Kurtosis", &[14.0]),
     ("Kvo", &[3.0, 7.0]),
+    ("KylesLambda", &[20.0]),
     ("LadderBottom", &[]),
     ("LaguerreRsi", &[0.5]),
     ("LeadLagCrossCorrelation", &[20.0, 10.0]),
@@ -3666,9 +4499,11 @@ pub const DEFAULTS: [(&str, &[f64]); 475] = [
     ("LinRegIntercept", &[14.0]),
     ("LinRegSlope", &[14.0]),
     ("LinearRegression", &[14.0]),
+    ("LiquidationFeatures", &[]),
     ("LogReturn", &[14.0]),
     ("LongLeggedDoji", &[]),
     ("LongLine", &[]),
+    ("LongShortRatio", &[]),
     ("M2Measure", &[14.0, 2.0, 0.5]),
     ("MaEnvelope", &[14.0, 2.0]),
     ("MacdExt", &[12.0, 0.0, 26.0, 0.0, 9.0, 0.0]),
@@ -3707,9 +4542,14 @@ pub const DEFAULTS: [(&str, &[f64]); 475] = [
     ("NewPriceLines", &[14.0]),
     ("Nrtr", &[2.0]),
     ("Nvi", &[]),
+    ("OIPriceDivergence", &[20.0]),
+    ("OIWeighted", &[]),
     ("Obv", &[]),
+    ("OiToVolumeRatio", &[]),
     ("OmegaRatio", &[14.0, 2.0]),
     ("OnNeck", &[]),
+    ("OpenInterestDelta", &[]),
+    ("OpenInterestMomentum", &[10.0]),
     ("OpeningMarubozu", &[]),
     ("OpeningRange", &[14.0]),
     ("OrderBookImbalanceFull", &[]),
@@ -3727,6 +4567,7 @@ pub const DEFAULTS: [(&str, &[f64]); 475] = [
     ("PercentAboveMa", &[]),
     ("PercentB", &[14.0, 2.0]),
     ("PercentageTrailingStop", &[2.0]),
+    ("PerpetualPremiumIndex", &[]),
     ("Pgo", &[14.0]),
     ("PiercingDarkCloud", &[]),
     ("Pin", &[20.0]),
@@ -3748,6 +4589,7 @@ pub const DEFAULTS: [(&str, &[f64]); 475] = [
     ("QuartileBands", &[14.0]),
     ("QuotedSpread", &[]),
     ("RSquared", &[14.0]),
+    ("RealizedSpread", &[20.0]),
     ("RealizedVolatility", &[14.0]),
     ("RecoveryFactor", &[]),
     ("RectangleRange", &[]),
@@ -3820,6 +4662,7 @@ pub const DEFAULTS: [(&str, &[f64]); 475] = [
     ("SuperTrend", &[14.0, 2.0]),
     ("T3", &[5.0, 0.7]),
     ("TailRatio", &[14.0]),
+    ("TakerBuySellRatio", &[]),
     ("Takuri", &[]),
     ("TasukiGap", &[]),
     ("TdCamouflage", &[]),
@@ -3842,6 +4685,7 @@ pub const DEFAULTS: [(&str, &[f64]); 475] = [
     ("TdSetup", &[3.0, 7.0]),
     ("TdTrap", &[]),
     ("Tema", &[14.0]),
+    ("TermStructureBasis", &[]),
     ("ThreeDrives", &[]),
     ("ThreeInside", &[]),
     ("ThreeLineBreak", &[14.0]),
@@ -3968,12 +4812,13 @@ pub const PAIRWISE: [&str; 24] = [
 ];
 
 /// Every registered indicator that reads the whole tracked universe, sorted.
-pub const CROSS_SECTION: [&str; 14] = [
+pub const CROSS_SECTION: [&str; 15] = [
     "AbsoluteBreadthIndex",
     "AdVolumeLine",
     "AdvanceDecline",
     "AdvanceDeclineRatio",
     "BreadthThrust",
+    "BullishPercentIndex",
     "CumulativeVolumeIndex",
     "HighLowIndex",
     "McClellanOscillator",
@@ -4331,11 +5176,17 @@ fn build_inner(
         "Breakaway" => Ok(Box::new(CandleIn {
             inner: wc::Breakaway::new(),
         })),
+        "BullishPercentIndex" => Ok(Box::new(CrossIn {
+            inner: wc::BullishPercentIndex::new(),
+        })),
         "BurkeRatio" => Ok(Box::new(ScalarPrice {
             inner: map_new(kind, wc::BurkeRatio::new(usize_param(params, 0, kind)?))?,
         })),
         "Butterfly" => Ok(Box::new(CandleIn {
             inner: wc::Butterfly::new(),
+        })),
+        "CalendarSpread" => Ok(Box::new(DerivIn {
+            inner: wc::CalendarSpread::new(),
         })),
         "CalmarRatio" => Ok(Box::new(ScalarPrice {
             inner: map_new(kind, wc::CalmarRatio::new(usize_param(params, 0, kind)?))?,
@@ -4610,6 +5461,9 @@ fn build_inner(
         "DragonflyDoji" => Ok(Box::new(CandleIn {
             inner: wc::DragonflyDoji::new(),
         })),
+        "DrawdownDuration" => Ok(Box::new(ScalarPriceInt {
+            inner: wc::DrawdownDuration::new(),
+        })),
         "DumplingTop" => Ok(Box::new(CandleIn {
             inner: map_new(kind, wc::DumplingTop::new(usize_param(params, 0, kind)?))?,
         })),
@@ -4624,6 +5478,9 @@ fn build_inner(
         })),
         "EaseOfMovement" => Ok(Box::new(CandleIn {
             inner: map_new(kind, wc::EaseOfMovement::new(usize_param(params, 0, kind)?))?,
+        })),
+        "EffectiveSpread" => Ok(Box::new(QuoteIn {
+            inner: wc::EffectiveSpread::new(),
         })),
         "EhlersStochastic" => Ok(Box::new(ScalarPrice {
             inner: map_new(
@@ -4677,6 +5534,9 @@ fn build_inner(
         "Equivolume" => Ok(Box::new(CandleInFields {
             inner: map_new(kind, wc::Equivolume::new(usize_param(params, 0, kind)?))?,
             last: None,
+        })),
+        "EstimatedLeverageRatio" => Ok(Box::new(DerivIn {
+            inner: wc::EstimatedLeverageRatio::new(),
         })),
         "EvenBetterSinewave" => Ok(Box::new(ScalarPrice {
             inner: map_new(
@@ -4771,6 +5631,30 @@ fn build_inner(
         })),
         "FryPanBottom" => Ok(Box::new(CandleIn {
             inner: map_new(kind, wc::FryPanBottom::new(usize_param(params, 0, kind)?))?,
+        })),
+        "FundingBasis" => Ok(Box::new(DerivIn {
+            inner: wc::FundingBasis::new(),
+        })),
+        "FundingImpliedApr" => Ok(Box::new(DerivIn {
+            inner: map_new(
+                kind,
+                wc::FundingImpliedApr::new(float_param(params, 0, kind)?),
+            )?,
+        })),
+        "FundingRate" => Ok(Box::new(DerivIn {
+            inner: wc::FundingRate::new(),
+        })),
+        "FundingRateMean" => Ok(Box::new(DerivIn {
+            inner: map_new(
+                kind,
+                wc::FundingRateMean::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "FundingRateZScore" => Ok(Box::new(DerivIn {
+            inner: map_new(
+                kind,
+                wc::FundingRateZScore::new(usize_param(params, 0, kind)?),
+            )?,
         })),
         "GainLossRatio" => Ok(Box::new(ReturnsIn {
             inner: map_new(kind, wc::GainLossRatio::new(usize_param(params, 0, kind)?))?,
@@ -5132,6 +6016,9 @@ fn build_inner(
                 wc::Kvo::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
             )?,
         })),
+        "KylesLambda" => Ok(Box::new(QuoteIn {
+            inner: map_new(kind, wc::KylesLambda::new(usize_param(params, 0, kind)?))?,
+        })),
         "LadderBottom" => Ok(Box::new(CandleIn {
             inner: wc::LadderBottom::new(),
         })),
@@ -5177,6 +6064,10 @@ fn build_inner(
                 wc::LinearRegression::new(usize_param(params, 0, kind)?),
             )?,
         })),
+        "LiquidationFeatures" => Ok(Box::new(DerivInFields {
+            inner: wc::LiquidationFeatures::new(),
+            last: None,
+        })),
         "LogReturn" => Ok(Box::new(ScalarPrice {
             inner: map_new(kind, wc::LogReturn::new(usize_param(params, 0, kind)?))?,
         })),
@@ -5185,6 +6076,9 @@ fn build_inner(
         })),
         "LongLine" => Ok(Box::new(CandleIn {
             inner: wc::LongLine::new(),
+        })),
+        "LongShortRatio" => Ok(Box::new(DerivIn {
+            inner: wc::LongShortRatio::new(),
         })),
         "M2Measure" => Ok(Box::new(ScalarPrice {
             inner: map_new(
@@ -5367,8 +6261,20 @@ fn build_inner(
         "Nvi" => Ok(Box::new(CandleIn {
             inner: wc::Nvi::new(),
         })),
+        "OIPriceDivergence" => Ok(Box::new(DerivIn {
+            inner: map_new(
+                kind,
+                wc::OIPriceDivergence::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "OIWeighted" => Ok(Box::new(DerivIn {
+            inner: wc::OIWeighted::new(),
+        })),
         "Obv" => Ok(Box::new(CandleIn {
             inner: wc::Obv::new(),
+        })),
+        "OiToVolumeRatio" => Ok(Box::new(DerivIn {
+            inner: wc::OiToVolumeRatio::new(),
         })),
         "OmegaRatio" => Ok(Box::new(ReturnsIn {
             inner: map_new(
@@ -5379,6 +6285,15 @@ fn build_inner(
         })),
         "OnNeck" => Ok(Box::new(CandleIn {
             inner: wc::OnNeck::new(),
+        })),
+        "OpenInterestDelta" => Ok(Box::new(DerivIn {
+            inner: wc::OpenInterestDelta::new(),
+        })),
+        "OpenInterestMomentum" => Ok(Box::new(DerivIn {
+            inner: map_new(
+                kind,
+                wc::OpenInterestMomentum::new(usize_param(params, 0, kind)?),
+            )?,
         })),
         "OpeningMarubozu" => Ok(Box::new(CandleIn {
             inner: wc::OpeningMarubozu::new(),
@@ -5463,6 +6378,9 @@ fn build_inner(
                 kind,
                 wc::PercentageTrailingStop::new(float_param(params, 0, kind)?),
             )?,
+        })),
+        "PerpetualPremiumIndex" => Ok(Box::new(DerivIn {
+            inner: wc::PerpetualPremiumIndex::new(),
         })),
         "Pgo" => Ok(Box::new(CandleIn {
             inner: map_new(kind, wc::Pgo::new(usize_param(params, 0, kind)?))?,
@@ -5578,6 +6496,9 @@ fn build_inner(
         })),
         "RSquared" => Ok(Box::new(ScalarPrice {
             inner: map_new(kind, wc::RSquared::new(usize_param(params, 0, kind)?))?,
+        })),
+        "RealizedSpread" => Ok(Box::new(QuoteIn {
+            inner: map_new(kind, wc::RealizedSpread::new(usize_param(params, 0, kind)?))?,
         })),
         "RealizedVolatility" => Ok(Box::new(ScalarPrice {
             inner: map_new(
@@ -5952,6 +6873,9 @@ fn build_inner(
         "TailRatio" => Ok(Box::new(ScalarPrice {
             inner: map_new(kind, wc::TailRatio::new(usize_param(params, 0, kind)?))?,
         })),
+        "TakerBuySellRatio" => Ok(Box::new(DerivIn {
+            inner: wc::TakerBuySellRatio::new(),
+        })),
         "Takuri" => Ok(Box::new(CandleIn {
             inner: wc::Takuri::new(),
         })),
@@ -6061,6 +6985,9 @@ fn build_inner(
         })),
         "Tema" => Ok(Box::new(ScalarPrice {
             inner: map_new(kind, wc::Tema::new(usize_param(params, 0, kind)?))?,
+        })),
+        "TermStructureBasis" => Ok(Box::new(DerivIn {
+            inner: wc::TermStructureBasis::new(),
         })),
         "ThreeDrives" => Ok(Box::new(CandleIn {
             inner: wc::ThreeDrives::new(),

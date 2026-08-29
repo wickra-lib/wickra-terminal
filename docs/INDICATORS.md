@@ -1,7 +1,7 @@
 # Indicators
 
 The terminal drives the [Wickra](https://github.com/wickra-lib/wickra) indicator
-set directly: **<!--indicator-count-->475<!--/indicator-count--> of them**, constructible by name from a config or at run
+set directly: **<!--indicator-count-->497<!--/indicator-count--> of them**, constructible by name from a config or at run
 time, in every binding.
 
 ## Naming one
@@ -35,7 +35,7 @@ Each indicator is labelled from its spec: `Sma(20)`, `MacdIndicator(12,26,9)`,
 ## What a tick feeds
 
 The terminal folds individual trades, but most of the indicator set reads
-something other than the bare price. All four families are driven from the same
+something other than the bare price. All nine families are driven from the same
 tick, and each advances only on a tick that carries what it consumes:
 
 | Input | Fed with | Advances |
@@ -45,6 +45,10 @@ tick, and each advances only on a tick that carries what it consumes:
 | tape (`Trade`) | the print, with its size and aggressor side | on every trade |
 | book (`OrderBook`) | the locally maintained L2 book | on every trade |
 | pairwise (`(f64, f64)`) | this market's price and a reference market's | on every trade |
+| returns | the close-to-close return of the bar that just closed | once per `timeframe` |
+| cross-section (`CrossSection`) | the breadth of a named universe of markets | once per `timeframe` |
+| derivatives (`DerivativesTick`) | funding and open interest as fed, with the taker flow folded from the tape | on every trade |
+| quoted trade (`TradeQuote`) | the print, with the mid it arrived against | on every trade |
 
 The tape and book families read state the terminal already keeps, converted into
 the core's types once per tick and shared across the whole set rather than
@@ -158,28 +162,97 @@ it saw before.
 
 ## What is not registered, and why
 
-29 of the 504 indicators in `wickra-core` are not reachable from the terminal
-yet. They are listed with a reason every time the registry is regenerated, rather
-than quietly dropped:
+1 of the 504 indicators in `wickra-core` is not reachable from the terminal.
+The generator lists what it skipped, with a reason, every time it runs:
 
 | Missing | Count | Why |
 |---------|------:|-----|
-| derivatives tick | 17 | no funding/open-interest feed in this repository |
-| cross-section | 1 | `BullishPercentIndex` alone: it reads a point-and-figure buy signal per symbol, which needs P&F column state the terminal does not keep |
-| trade-quote | 3 | no quote feed |
-| output or constructor shape | 8 | profile outputs, `u32` outputs, and variable-length level and bin lists |
+| level output | 1 | `Footprint` answers with a list of price LEVELS, each with its own bid and ask volume |
 
-`Footprint` is the one that looks like an omission and is not: its output is a
-list of price levels whose length changes bar to bar, which does not fit the
-fixed named-field shape the registry exposes. The terminal renders a footprint
-from its own panel instead, which is what the `footprint` panel is.
+`Footprint` is the one that looks like an omission and is not. The terminal
+already renders a footprint -- from its own per-price state, as the `footprint`
+panel -- so the indicator would be a second implementation of a view that
+exists, in a shape the registry cannot carry.
 
-`VolumeProfile` and `TpoProfile` are unreachable for exactly that reason and used
-to be registered anyway. Their outputs pair two prices with a variable-length bin
-list, and the generator kept the prices and dropped the list -- so the reading
-under a profile's name was `price_low`, a price, while the bins that ARE the
-profile were not carried at all. A partial answer under a name that promises a
-whole one is worse than an honest absence, so they are skipped like `Footprint`.
+## Profiles: a histogram is not a reading
+
+Six indicators answer with a **distribution** rather than a number:
+`VolumeProfile` and `TpoProfile` over price, and `DayOfWeekProfile`,
+`IntradayVolatilityProfile`, `TimeOfDayReturnProfile` and `VolumeByTimeProfile`
+over the clock.
+
+They are reachable, and they are not in the registry. A registry entry promises
+one name, one number and a fixed set of named fields; a distribution is none of
+those, and its length changes as the session runs. Squeezing one in means
+reporting a single bin under the whole indicator's name -- which is exactly what
+`VolumeProfile` did before it was removed: it reported `price_low`, a price,
+under a profile's name.
+
+So they have a surface of their own, alongside the registry rather than inside
+it. Configure them under `profiles` and show them with a `Profile` panel:
+
+```json
+{
+  "profiles": [{ "kind": "VolumeProfile", "params": [20, 50] }],
+  "layout": { "panels": [{ "kind": "Profile", "rect": { "x": 0, "y": 0, "w": 100, "h": 100 } }] }
+}
+```
+
+The panel answers with one row per configured profile: its label, its bins in
+order, and -- for the two that are distributions over price -- the range those
+bins cover. A profile over time reports no range rather than zeros, so a
+consumer can tell "spans no price" from "spans zero to zero".
+
+`ListProfiles` is not a command; the six are a fixed set and the
+`registry::PROFILES` constant carries them with the parameters the wickra golden
+manifest pins them at.
+## Alternative bars: not a reading at all
+
+Ten of wickra's types are not indicators. `RenkoBars`, `KagiBars`,
+`PointAndFigureBars`, `ThreeLineBreakBars`, `TickBars`, `VolumeBars`,
+`DollarBars`, `RangeBars`, `ImbalanceBars` and `RunBars` implement a different
+trait — `BarBuilder` — and answer with *bars*.
+
+They are also not a function of time. One closed candle completes zero, one or
+several of them: a quiet hour produces no Renko bricks and a fast one produces
+a run. That unevenness is the character of the chart rather than a defect, and
+it is why they cannot be a reading — there is nothing to report on a tick that
+completed nothing.
+
+Configure them under `bars` and show them with a `Bars` panel:
+
+```json
+{
+  "bars": [{ "kind": "RenkoBars", "params": [2.0] }],
+  "layout": { "panels": [{ "kind": "Bars", "rect": { "x": 0, "y": 0, "w": 100, "h": 100 } }] }
+}
+```
+
+The ten emit ten different bar types, in two shapes: a two-point bar recording
+where a move started and ended, and an OHLC bar recording a range. The panel
+answers with one shape, `AltBar` — open, high, low, close, direction, and a
+volume for the types that measure one. The mapping is written down per bar type
+in the generator rather than guessed: a Kagi bar's `start` and `end` become open
+and close with the high and low derived, and a point-and-figure column opens at
+its low and closes at its high when it is rising, the other way round when it is
+not.
+
+`volume` is absent rather than zero for the types that have none. A Renko brick
+is a price move, not a period; reporting zero would read as "no volume traded".
+
+## What the terminal reaches, in full
+
+| Surface | Count | What it answers with |
+|---------|------:|----------------------|
+| registry | <!--indicator-count-->497<!--/indicator-count--> | one number, plus named fields |
+| profiles | 6 | a histogram |
+| alternative bars | 10 | bars, zero or more per candle |
+| the `footprint` panel | 1 | volume per price, from the terminal's own state |
+
+That is **514** — every indicator and bar builder wickra ships. They are not one
+list because they are not one kind of thing, and flattening them would mean a
+catalogue whose entries answer with three different shapes and a consumer that
+has to know which.
 
 ## Regenerating the registry
 

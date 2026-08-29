@@ -247,7 +247,13 @@ fn the_documented_indicator_count_is_the_real_one() {
 fn the_unreachable_indicator_count_adds_up() {
     const LIBRARY_TOTAL: usize = 504;
     let root = repo_root();
-    let registered = wickra_terminal_core::registry::DEFAULTS.len();
+    // Reachable, not registered. Six of the library's indicators answer with a
+    // histogram rather than a reading, so they are carried by the profile
+    // surface instead of the registry -- reachable from the terminal all the
+    // same, and counting them as unreachable would be a lie in the other
+    // direction.
+    let registered = wickra_terminal_core::registry::DEFAULTS.len()
+        + wickra_terminal_core::registry::PROFILES.len();
     let needle = format!(" of the {LIBRARY_TOTAL}");
     let mut checked = 0;
 
@@ -263,7 +269,7 @@ fn the_unreachable_indicator_count_adds_up() {
             assert_eq!(
                 claimed + registered,
                 LIBRARY_TOTAL,
-                "{rel} says {claimed} unreachable and the registry holds {registered},                  which is not the {LIBRARY_TOTAL} the library ships"
+                "{rel} says {claimed} unreachable and the terminal reaches {registered},                  which is not the {LIBRARY_TOTAL} the library ships"
             );
             checked += 1;
         }
@@ -379,8 +385,8 @@ fn every_binding_readme_documents_every_command() {
         .collect();
     assert_eq!(
         variants.len(),
-        12,
-        "expected twelve commands, found {variants:?}"
+        13,
+        "expected thirteen commands, found {variants:?}"
     );
 
     for rel in BINDING_READMES {
@@ -474,4 +480,118 @@ fn names_between(text: &str, open: &str, close: &str) -> Vec<String> {
     found.sort_unstable();
     found.dedup();
     found
+}
+
+/// The data rows of the markdown table whose header line is `header`.
+fn table_rows<'a>(text: &'a str, header: &str) -> Vec<&'a str> {
+    let start = text
+        .find(header)
+        .unwrap_or_else(|| panic!("no table headed {header}"));
+    text[start..]
+        .lines()
+        .skip(1)
+        .take_while(|line| line.starts_with('|'))
+        .filter(|line| !line.trim_start_matches('|').trim_start().starts_with('-'))
+        .collect()
+}
+
+/// The cell at `index` of a markdown row, trimmed.
+fn cell(row: &str, index: usize) -> &str {
+    row.split('|')
+        .nth(index + 1)
+        .unwrap_or_else(|| panic!("row has no cell {index}: {row}"))
+        .trim()
+}
+
+/// `docs/INDICATORS.md` lists every input family the registry actually feeds.
+///
+/// The prose said "all four families" over a table of five, and stayed saying it
+/// while four more were wired. A count in prose is not checkable, so the table
+/// is checked instead, against the families the generator emitted.
+#[test]
+fn the_documented_input_families_are_the_registered_ones() {
+    let text = read(&repo_root(), "docs/INDICATORS.md");
+    let rows = table_rows(&text, "| Input | Fed with | Advances |");
+    let documented: Vec<String> = rows
+        .iter()
+        .map(|row| cell(row, 0).replace(['`', ' '], ""))
+        .collect();
+
+    for family in wickra_terminal_core::registry::INPUT_FAMILIES {
+        let key = family.replace(' ', "");
+        assert!(
+            documented
+                .iter()
+                .any(|row| row.ends_with(&format!("({key})")) || row == &key),
+            "docs/INDICATORS.md lists no input family for {family}; it has {documented:?}"
+        );
+    }
+    assert_eq!(
+        documented.len(),
+        wickra_terminal_core::registry::INPUT_FAMILIES.len(),
+        "docs/INDICATORS.md lists {} input families, the registry feeds {}",
+        documented.len(),
+        wickra_terminal_core::registry::INPUT_FAMILIES.len()
+    );
+}
+
+/// The reach table adds up, and every document citing its total agrees.
+///
+/// Only the registry row carries a marker, so the other three and the total were
+/// bare numbers that nothing moved when a surface grew. The total is the number
+/// this repository is judged by, which is exactly why it should not be a number
+/// someone remembered to update.
+#[test]
+fn the_reach_table_sums_to_the_documented_total() {
+    // The one indicator no surface fits: `Footprint` answers with price levels,
+    // and the terminal renders it from its own state as the `footprint` panel.
+    const FOOTPRINT: usize = 1;
+    let root = repo_root();
+    let profiles = wickra_terminal_core::registry::PROFILES.len();
+    let bars = wickra_terminal_core::registry::BAR_TYPES.len();
+    let total = wickra_terminal_core::registry::DEFAULTS.len() + profiles + bars + FOOTPRINT;
+
+    let text = read(&root, "docs/INDICATORS.md");
+    let rows = table_rows(&text, "| Surface | Count | What it answers with |");
+    let mut summed = 0;
+    for row in &rows {
+        let surface = cell(row, 0);
+        let claimed = cell(row, 1)
+            .replace(OPEN, "")
+            .replace(CLOSE, "")
+            .parse::<usize>()
+            .unwrap_or_else(|_| panic!("the {surface} row states no count"));
+        let actual = match surface {
+            "registry" => wickra_terminal_core::registry::DEFAULTS.len(),
+            "profiles" => profiles,
+            "alternative bars" => bars,
+            "the `footprint` panel" => FOOTPRINT,
+            other => panic!("unknown surface row {other}; teach this test what counts it"),
+        };
+        assert_eq!(
+            claimed, actual,
+            "the {surface} row claims {claimed}, there are {actual}"
+        );
+        summed += actual;
+    }
+    assert_eq!(summed, total, "the reach table covers {summed} of {total}");
+
+    // Every document that states the total, stating it as bold digits and
+    // nothing else, so the guard cannot be satisfied by an unrelated number.
+    for rel in ["docs/INDICATORS.md", "README.md", "CHANGELOG.md"] {
+        let text = read(&root, rel);
+        let cited: Vec<&str> = text
+            .match_indices("**")
+            .filter_map(|(idx, _)| {
+                let rest = &text[idx + 2..];
+                let end = rest.find("**")?;
+                let inner = &rest[..end];
+                inner.chars().all(|c| c.is_ascii_digit()).then_some(inner)
+            })
+            .collect();
+        assert!(!cited.is_empty(), "{rel} states no reach total");
+        for claim in cited {
+            assert_eq!(claim, total.to_string(), "{rel} claims a reach of {claim}");
+        }
+    }
 }

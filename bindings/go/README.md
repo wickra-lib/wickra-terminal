@@ -120,7 +120,7 @@ Then, with the library on the loader path, run `go test ./...` from
 
 ## The command protocol
 
-Every binding drives the same twelve commands, and the frame that comes back is
+Every binding drives the same thirteen commands, and the frame that comes back is
 the same JSON in all of them:
 
 | Command | Effect |
@@ -131,9 +131,10 @@ the same JSON in all of them:
 | `AddSource` / `RemoveSource` | Attach or detach a feed at run time |
 | `Seek` | Rewind or fast-forward a replay source (the time machine) |
 | `Feed` | Hand an event to a `Manual` source from the host |
+| `FeedDerivatives` | Fold a derivatives update -- funding, open interest, positioning, mark/index/futures -- into a market |
 | `AddIndicator` / `RemoveIndicator` | Track or drop an indicator on every market |
 | `SetTimeframe` | Set the bar size the candle-input indicators are fed at |
-| `ListIndicators` | The catalogue: every registry name with its default parameters |
+| `ListIndicators` | The catalogue: every indicator, profile and bar type this build accepts, each with its default parameters |
 
 `ListIndicators` is the one command that answers rather than renders, and each
 row carries `needs_reference`, which marks the pairwise indicators that compare
@@ -142,7 +143,7 @@ the two friendly aliases also carries `alias_of` naming the canonical kind it
 builds, so `Macd` and `MacdIndicator` read as one indicator rather than two.
 
 A frame is `{"panels": [...]}`, one entry per configured panel, each tagged with
-its `panel` kind — `chart`, `book`, `tape`, `watchlist`, `footprint`. See
+its `panel` kind — `chart`, `book`, `tape`, `watchlist`, `footprint`, `profile`, `bars`. See
 [`docs/`](https://github.com/wickra-lib/wickra-terminal/tree/main/docs) for the panel and source references.
 
 ## Cross-language equality

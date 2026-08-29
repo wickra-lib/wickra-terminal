@@ -79,7 +79,7 @@ class RegistryTest {
             while (matcher.find()) {
                 rows++;
             }
-            assertTrue(rows >= 475, "only " + rows + " entries in the catalogue");
+            assertTrue(rows >= 497, "only " + rows + " entries in the catalogue");
             assertTrue(catalogue.contains("\"kind\":\"Sma\""));
             assertTrue(catalogue.contains("\"kind\":\"MacdIndicator\""));
         }

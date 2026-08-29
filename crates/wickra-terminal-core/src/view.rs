@@ -142,6 +142,56 @@ pub struct FootprintView {
     pub levels: Vec<FootprintLevel>,
 }
 
+/// One profile's histogram, as a panel row.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProfileRow {
+    /// The profile's label, as the spec names it.
+    pub label: String,
+    /// The histogram, in bin order. Empty until the profile has produced one.
+    pub bins: Vec<f64>,
+    /// The lowest price the bins cover, for a distribution over price.
+    ///
+    /// Absent for a distribution over TIME -- day of week, minute of session
+    /// -- which has no price range. Reporting zeros there would be a claim
+    /// about prices that the profile never made.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price_low: Option<f64>,
+    /// The highest price the bins cover, for a distribution over price.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price_high: Option<f64>,
+}
+
+/// The profile panel's view-model.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProfileView {
+    /// The market shown.
+    pub symbol: String,
+    /// The configured profiles, in configured order.
+    pub profiles: Vec<ProfileRow>,
+}
+
+/// One alternative bar stream, as a panel row.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BarStreamView {
+    /// The stream's label, as the spec names it.
+    pub label: String,
+    /// The most recent completed bars, oldest first.
+    ///
+    /// Empty until the stream completes one, which for a Renko brick or a
+    /// point-and-figure column can take many candles: these charts advance on
+    /// price movement rather than on time.
+    pub bars: Vec<crate::registry::AltBar>,
+}
+
+/// The bars panel's view-model.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BarsView {
+    /// The market shown.
+    pub symbol: String,
+    /// The configured streams, in configured order.
+    pub streams: Vec<BarStreamView>,
+}
+
 /// One panel's view-model, tagged by kind.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "panel", rename_all = "snake_case")]
@@ -156,6 +206,10 @@ pub enum PanelView {
     Watchlist(WatchlistView),
     /// A footprint / volume profile.
     Footprint(FootprintView),
+    /// The configured distributions.
+    Profile(ProfileView),
+    /// The configured alternative charts.
+    Bars(BarsView),
 }
 
 /// The output of one `tick`: every active panel's view-model.

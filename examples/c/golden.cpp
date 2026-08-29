@@ -190,7 +190,7 @@ int main() {
      * fraction of what it used to, so the count is floored as the other suites
      * floor theirs. Nothing is truncated here -- a vector has no fixed room --
      * so there is no upper check to make. */
-    if (scenarios.size() < 9) {
+    if (scenarios.size() < 12) {
         std::fprintf(stderr, "only %zu scenarios parsed from the manifest\n", scenarios.size());
         return 1;
     }

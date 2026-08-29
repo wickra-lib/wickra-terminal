@@ -12,8 +12,13 @@
 
 use std::collections::BTreeSet;
 
-use wickra_core::{Candle, CrossSection, Level, Member, OrderBook, Side, Trade};
-use wickra_terminal_core::registry::{build, build_paired, DEFAULTS, KINDS, PAIRWISE};
+use wickra_core::{
+    Candle, CrossSection, DerivativesTick, Level, Member, OrderBook, Side, Trade, TradeQuote,
+};
+use wickra_terminal_core::registry::{
+    build, build_bars, build_paired, build_profile, is_bar_type, is_profile, BAR_TYPES, DEFAULTS,
+    KINDS, PAIRWISE, PROFILES,
+};
 use wickra_terminal_core::{CandleBuilder, TickInput, Timeframe};
 
 /// The market a pairwise indicator is compared against in this suite.
@@ -43,6 +48,56 @@ fn build_any(kind: &str, params: &[f64]) -> Box<dyn wickra_terminal_core::TickIn
 fn reference_at(step: i64) -> f64 {
     let t = step as f64;
     1500.0 + 200.0 * (t * 0.05 + 0.9).sin() + 25.0 * (t * 0.55).sin()
+}
+
+/// The mid a print arrived against, alternating which side the print crosses.
+///
+/// The book fixture is centred on the same price the trade prints at, so
+/// taking its mid literally would make the effective spread exactly zero on
+/// every tick -- and a family that measures how far a print landed from the
+/// mid has nothing to measure. Offsetting by one tick, alternating, is what a
+/// real tape looks like: the mid stands, and the print takes the ask or hits
+/// the bid.
+fn mid_at(price: f64, step: i64) -> f64 {
+    let tick = 0.01;
+    if step % 2 == 0 {
+        price - tick
+    } else {
+        price + tick
+    }
+}
+
+/// A derivatives tick that moves, for the perpetual-futures family.
+///
+/// Every field varies, and each because a constant one silences something:
+/// a flat funding rate leaves `FundingRateZScore` dividing a zero variance,
+/// a mark price pinned to the index leaves `PerpetualPremiumIndex` reporting
+/// zero forever, and equal taker volumes make `TakerBuySellRatio` a constant
+/// one. The prices sit near the price path so a basis is a plausible size
+/// rather than an arbitrage nobody would believe.
+fn derivatives_at(step: i64) -> DerivativesTick {
+    let t = step as f64;
+    let index = price_at(step);
+    // A premium that changes sign, so the basis family sees both.
+    let mark = index * (1.0 + 0.0008 * (t * 0.07).sin());
+    let futures = index * (1.0 + 0.0015 * (t * 0.03).cos());
+    DerivativesTick::new(
+        0.0001 * (t * 0.11).sin(),
+        mark,
+        index,
+        futures,
+        1_000_000.0 + 50_000.0 * (t * 0.05).sin(),
+        600_000.0 + 40_000.0 * (t * 0.09).sin(),
+        400_000.0 + 40_000.0 * (t * 0.09).cos(),
+        900.0 + 300.0 * (t * 0.13).sin(),
+        900.0 + 300.0 * (t * 0.13).cos(),
+        // Liquidations are a flow, and mostly zero: a venue does not force
+        // one every tick, and a family reading them should survive the gaps.
+        if step % 17 == 0 { 25_000.0 } else { 0.0 },
+        if step % 23 == 0 { 18_000.0 } else { 0.0 },
+        step,
+    )
+    .expect("finite funding and positive mark/index/futures prices")
 }
 
 /// A synthetic universe for the breadth family.
@@ -108,6 +163,10 @@ fn price_at(step: i64) -> f64 {
 /// bar gives a real body and real wicks.
 const TRADES_PER_BAR: i64 = 4;
 
+/// The number of bars the suite drives an indicator for. Named rather than
+/// repeated, so the warmup bound and the drive that relies on it move together.
+const DRIVEN_BARS: i64 = 400;
+
 /// Bars are spaced a day apart. A calendar indicator — average daily range, the
 /// overnight gap, turn-of-month — only fires when the input actually crosses a
 /// day boundary; second-spaced bars keep the whole run inside one day and those
@@ -128,7 +187,29 @@ const VOLUME_SCALE: f64 = 10.0;
 const BAR_MS: i64 = 86_400_000;
 
 /// Feed `bars` bars, each built from several trades, and count what came back.
+/// What a driven tick carries.
+///
+/// Withholding one feed is how a test finds out whether an indicator actually
+/// reads it, which is the only way to check that its capability flag is honest.
+#[derive(Clone, Copy)]
+struct Feeds {
+    book: bool,
+    reference: bool,
+}
+
+impl Feeds {
+    /// Everything a tick can carry, which is what an ordinary drive feeds.
+    const ALL: Self = Self {
+        book: true,
+        reference: true,
+    };
+}
+
 fn drive(kind: &str, params: &[f64], bars: i64) -> (usize, usize) {
+    drive_with(kind, params, bars, Feeds::ALL)
+}
+
+fn drive_with(kind: &str, params: &[f64], bars: i64, feeds: Feeds) -> (usize, usize) {
     let mut indicator = build_any(kind, params);
     let mut builder = CandleBuilder::new(Timeframe::parse(BAR_SPACING).unwrap());
     let mut values = 0;
@@ -145,11 +226,19 @@ fn drive(kind: &str, params: &[f64], bars: i64) -> (usize, usize) {
             let mut input = TickInput::price(price);
             input.candle = closed;
             input.trade = Some(trade_at(price, size, step, ts));
-            input.book = Some(book_at(price, step));
-            input
-                .references
-                .insert(REFERENCE.to_string(), reference_at(step));
+            if feeds.book {
+                input.book = Some(book_at(price, step));
+            }
+            if feeds.reference {
+                input
+                    .references
+                    .insert(REFERENCE.to_string(), reference_at(step));
+            }
             input.cross_section = Some(cross_section_at(step));
+            input.derivatives = Some(derivatives_at(step));
+            input.trade_quote = input
+                .trade
+                .and_then(|print| TradeQuote::new(print, mid_at(price, step)).ok());
             if indicator.update(&input).is_some() {
                 values += 1;
             }
@@ -246,10 +335,11 @@ fn every_registered_indicator_constructs() {
 
 #[test]
 fn every_registered_indicator_produces_a_value() {
-    // 400 bars clears every warmup in the set with room to spare.
+    // Enough bars to clear every warmup in the set, which
+    // `every_declared_warmup_is_within_the_drive_budget` holds them to.
     let mut silent = Vec::new();
     for (kind, params) in DEFAULTS {
-        let (values, _) = drive(kind, params, 400);
+        let (values, _) = drive(kind, params, DRIVEN_BARS);
         if values == 0 {
             silent.push(kind);
         }
@@ -326,7 +416,7 @@ fn no_indicator_ever_reports_a_non_finite_value() {
 /// shipped for four phases reporting `price_low` -- a price -- under a profile's
 /// name, because the only multi-output assertion in this suite drove MACD and
 /// asked whether the field list was non-empty.
-const STRUCT_OUTPUT_FIELDS: [(&str, &[&str]); 91] = [
+const STRUCT_OUTPUT_FIELDS: [(&str, &[&str]); 92] = [
     ("AccelerationBands", &["upper", "middle", "lower"]),
     ("Adx", &["plus_di", "minus_di", "adx"]),
     ("Alligator", &["jaw", "teeth", "lips"]),
@@ -432,6 +522,10 @@ const STRUCT_OUTPUT_FIELDS: [(&str, &[&str]); 91] = [
     ("Kst", &["kst", "signal"]),
     ("LeadLagCrossCorrelation", &["lag", "correlation"]),
     ("LinRegChannel", &["upper", "middle", "lower"]),
+    (
+        "LiquidationFeatures",
+        &["long", "short", "net", "total", "imbalance"],
+    ),
     ("MaEnvelope", &["upper", "middle", "lower"]),
     ("MacdExt", &["macd", "signal", "histogram"]),
     ("MacdFix", &["macd", "signal", "histogram"]),
@@ -521,6 +615,10 @@ fn last_reading(
                 .references
                 .insert(REFERENCE.to_string(), reference_at(step));
             input.cross_section = Some(cross_section_at(step));
+            input.derivatives = Some(derivatives_at(step));
+            input.trade_quote = input
+                .trade
+                .and_then(|print| TradeQuote::new(print, mid_at(price, step)).ok());
             // Fields are read on every tick, not only on the ticks that produce a
             // reading. The reading is the FIRST field, so when that one field is
             // optional and absent the indicator returns None while still holding
@@ -759,7 +857,7 @@ fn a_candle_indicator_reads_the_bar_not_the_price() {
 /// third field is the variable-length bin list the profile exists for, so each
 /// reported `price_low` under a profile's name. They stay skipped like
 /// `Footprint`, whose output is the same shape. See `docs/INDICATORS.md`.
-const REGISTERED_FLOOR: usize = 475;
+const REGISTERED_FLOOR: usize = 497;
 
 #[test]
 fn the_registry_has_not_silently_shrunk() {
@@ -909,5 +1007,319 @@ fn multi_output_indicators_survived_the_generation() {
     assert!(
         with_fields >= 60,
         "only {with_fields} indicators reported named fields; the multi-output          wrappers look lost"
+    );
+}
+
+/// Every profile builds and produces a histogram.
+///
+/// The profile surface is generated the same way the registry is, so it
+/// carries the same risk: an arm that constructs the wrong thing, or one no
+/// input can satisfy, compiles perfectly well. Nothing else drives them.
+#[test]
+fn every_profile_builds_and_produces_a_histogram() {
+    for (kind, params) in PROFILES {
+        let mut profile = build_profile(kind, params)
+            .unwrap_or_else(|err| panic!("{kind} did not build from its defaults: {err}"));
+        let mut builder = CandleBuilder::new(Timeframe::parse(BAR_SPACING).unwrap());
+        let mut last = None;
+        for bar in 0..400 {
+            for trade in 0..TRADES_PER_BAR {
+                let step = bar * TRADES_PER_BAR + trade;
+                let price = price_at(step) + intrabar_offset(trade);
+                let ts = bar * BAR_MS + trade * (BAR_MS / TRADES_PER_BAR);
+                let size = VOLUME_SCALE * (1.0 + (step % 7) as f64);
+                let closed = builder.update(price, size, ts);
+                let mut input = TickInput::price(price);
+                input.candle = closed;
+                if let Some(reading) = profile.update(&input) {
+                    last = Some(reading);
+                }
+            }
+        }
+        let reading = last.unwrap_or_else(|| panic!("{kind} produced no histogram in 400 bars"));
+        assert!(
+            !reading.bins.is_empty(),
+            "{kind} produced an empty histogram, which is not a distribution"
+        );
+        assert!(
+            reading.bins.iter().all(|bin| bin.is_finite()),
+            "{kind} produced a non-finite bin"
+        );
+        // A price profile reports the range its bins cover; a time profile
+        // has none, and reporting zeros there would be a claim about prices.
+        match (reading.price_low, reading.price_high) {
+            (Some(low), Some(high)) => assert!(
+                low <= high && low.is_finite() && high.is_finite(),
+                "{kind} reported an inverted or non-finite price range"
+            ),
+            (None, None) => {}
+            _ => panic!("{kind} reported half a price range"),
+        }
+        assert!(
+            is_profile(kind),
+            "{kind} is in PROFILES but is_profile says no"
+        );
+    }
+}
+
+/// A profile is not an indicator, and neither list leaks into the other.
+#[test]
+fn profiles_and_indicators_are_disjoint() {
+    for (kind, _) in PROFILES {
+        assert!(
+            !KINDS.contains(&kind),
+            "{kind} is both a profile and a registered indicator"
+        );
+        assert!(
+            build(kind, &[]).is_err(),
+            "{kind} must not build as an indicator"
+        );
+    }
+    for (kind, _) in DEFAULTS {
+        assert!(
+            !is_profile(kind),
+            "{kind} is a registered indicator and a profile"
+        );
+    }
+}
+
+/// Every alternative bar type builds and completes bars.
+///
+/// These charts advance on price movement rather than on time, so a stream
+/// that completes nothing over four hundred varied bars is not a slow chart --
+/// it is a dead wiring, and nothing else drives them.
+#[test]
+fn every_bar_type_builds_and_completes_bars() {
+    for (kind, params) in BAR_TYPES {
+        let mut stream = build_bars(kind, params)
+            .unwrap_or_else(|err| panic!("{kind} did not build from its defaults: {err}"));
+        let mut builder = CandleBuilder::new(Timeframe::parse(BAR_SPACING).unwrap());
+        let mut completed = Vec::new();
+        for bar in 0..400 {
+            for trade in 0..TRADES_PER_BAR {
+                let step = bar * TRADES_PER_BAR + trade;
+                let price = price_at(step) + intrabar_offset(trade);
+                let ts = bar * BAR_MS + trade * (BAR_MS / TRADES_PER_BAR);
+                let size = VOLUME_SCALE * (1.0 + (step % 7) as f64);
+                let closed = builder.update(price, size, ts);
+                let mut input = TickInput::price(price);
+                input.candle = closed;
+                completed.extend(stream.update(&input));
+            }
+        }
+        assert!(
+            !completed.is_empty(),
+            "{kind} completed no bars over 400 candles"
+        );
+        for alt in &completed {
+            assert!(
+                alt.open.is_finite()
+                    && alt.high.is_finite()
+                    && alt.low.is_finite()
+                    && alt.close.is_finite(),
+                "{kind} completed a bar with a non-finite price"
+            );
+            assert!(
+                alt.low <= alt.high,
+                "{kind} completed a bar whose low is above its high"
+            );
+            assert!(
+                alt.low <= alt.open && alt.open <= alt.high,
+                "{kind} opened outside its own range"
+            );
+            assert!(
+                alt.low <= alt.close && alt.close <= alt.high,
+                "{kind} closed outside its own range"
+            );
+            assert!(
+                alt.direction == 1 || alt.direction == -1,
+                "{kind} reported direction {}, which is neither up nor down",
+                alt.direction
+            );
+            assert!(
+                alt.volume.is_none_or(|v| v.is_finite() && v >= 0.0),
+                "{kind} reported a negative or non-finite volume"
+            );
+        }
+        assert!(
+            is_bar_type(kind),
+            "{kind} is in BAR_TYPES but is_bar_type says no"
+        );
+    }
+}
+
+/// A bar type is neither an indicator nor a profile.
+#[test]
+fn bar_types_are_disjoint_from_indicators_and_profiles() {
+    for (kind, _) in BAR_TYPES {
+        assert!(
+            !KINDS.contains(&kind),
+            "{kind} is both a bar type and an indicator"
+        );
+        assert!(!is_profile(kind), "{kind} is both a bar type and a profile");
+        assert!(
+            build(kind, &[]).is_err(),
+            "{kind} must not build as an indicator"
+        );
+        assert!(
+            build_profile(kind, &[]).is_err(),
+            "{kind} must not build as a profile"
+        );
+    }
+    for (kind, _) in PROFILES {
+        assert!(
+            !is_bar_type(kind),
+            "{kind} is both a profile and a bar type"
+        );
+    }
+}
+
+/// Every declared warmup is inside the budget the suite drives.
+///
+/// `every_registered_indicator_produces_a_value` says in a comment that 400
+/// bars clears every warmup in the set, and drives exactly that many. Nothing
+/// checked it. An indicator arriving with a warmup past the budget would not
+/// fail here in some readable way -- it would land in that test's list of
+/// indicators whose "wiring is dead", which is a different and wrong diagnosis.
+///
+/// The bound is the tick budget rather than the bar budget, because `warmup`
+/// counts inputs of the indicator's own family: a bar family gets 400 of them
+/// and a price family gets `TRADES_PER_BAR` times as many, and the larger
+/// number is the one that holds for both. So this proves the budget is not
+/// wildly short, not that it is tight.
+#[test]
+fn every_declared_warmup_is_within_the_drive_budget() {
+    #[allow(clippy::cast_sign_loss)]
+    let budget = (DRIVEN_BARS * TRADES_PER_BAR) as usize;
+    let mut over = Vec::new();
+
+    for (kind, params) in DEFAULTS {
+        let warmup = build_any(kind, params).warmup();
+        if warmup > budget {
+            over.push(format!("{kind} needs {warmup}"));
+        }
+    }
+    for (kind, params) in PROFILES {
+        let warmup = build_profile(kind, params)
+            .unwrap_or_else(|err| panic!("{kind}: {err}"))
+            .warmup();
+        if warmup > budget {
+            over.push(format!("{kind} needs {warmup}"));
+        }
+    }
+
+    assert!(
+        over.is_empty(),
+        "{} declare a warmup past the {budget}-input budget the suite drives:\n  {}",
+        over.len(),
+        over.join(", ")
+    );
+}
+
+/// Every indicator that reads a feed declares that it does.
+///
+/// `wants_book` and `wants_reference` are not hints. `IndicatorSet` asks them
+/// once per set and the terminal skips assembling the feed entirely when the
+/// answer is no, so an indicator that reads the book and reports false is fed
+/// `None` for the whole session. It then produces nothing -- and an indicator
+/// producing nothing is indistinguishable from one still warming up, which is
+/// why this cannot be left to be noticed in use.
+///
+/// Checked by withholding the feed and comparing: if the readings change, the
+/// indicator reads it, and the flag has to say so. The other direction is left
+/// alone on purpose -- a flag that over-claims costs a book conversion that
+/// nothing reads, which is waste rather than silence.
+#[test]
+fn an_indicator_that_reads_a_feed_declares_it() {
+    const WITHOUT_BOOK: Feeds = Feeds {
+        book: false,
+        reference: true,
+    };
+    const WITHOUT_REFERENCE: Feeds = Feeds {
+        book: true,
+        reference: false,
+    };
+
+    let mut silent = Vec::new();
+    for (kind, params) in DEFAULTS {
+        let full = drive(kind, params, DRIVEN_BARS);
+        let built = build_any(kind, params);
+
+        if drive_with(kind, params, DRIVEN_BARS, WITHOUT_BOOK) != full && !built.wants_book() {
+            silent.push(format!("{kind} reads the book"));
+        }
+        if drive_with(kind, params, DRIVEN_BARS, WITHOUT_REFERENCE) != full
+            && !built.wants_reference()
+        {
+            silent.push(format!("{kind} reads its reference"));
+        }
+    }
+
+    assert!(
+        silent.is_empty(),
+        "{} would be fed nothing and go silent:\n  {}",
+        silent.len(),
+        silent.join(", ")
+    );
+}
+
+/// A parameter a constructor rejects comes back as a config error, never a panic.
+///
+/// Parameters reach the registry from a config file or from a binding's JSON, so
+/// any number can arrive: a zero period, a negative window, a NaN. Most
+/// constructors return a `Result` for exactly that, and the generated build arm
+/// carries it with `?` -- 197 of those arms had never been driven, because
+/// `DEFAULTS` is by definition the set of parameters that work.
+///
+/// What this holds is the contract a caller depends on: a bad parameter is
+/// reported, in a message naming the indicator, and the process survives. A
+/// panic here would abort the host of every binding on the C ABI.
+#[test]
+fn a_rejected_parameter_is_reported_rather_than_panicking() {
+    // A period of zero, a negative window and a NaN: between them these are
+    // rejected by almost every constructor that validates anything at all.
+    const PROBES: [f64; 3] = [0.0, -1.0, f64::NAN];
+
+    let mut rejected = 0_usize;
+    let mut accepted = Vec::new();
+    for (kind, params) in DEFAULTS {
+        if params.is_empty() {
+            continue;
+        }
+        let mut refused = false;
+        for probe in PROBES {
+            let bad = vec![probe; params.len()];
+            let built = if PAIRWISE.contains(&kind) {
+                build_paired(kind, &bad, REFERENCE)
+            } else {
+                build(kind, &bad)
+            };
+            match built {
+                Ok(_) => {}
+                Err(err) => {
+                    refused = true;
+                    rejected += 1;
+                    let message = err.to_string();
+                    assert!(
+                        message.contains(kind),
+                        "{kind} rejected {probe} without naming itself: {message}"
+                    );
+                }
+            }
+        }
+        if !refused {
+            accepted.push(kind);
+        }
+    }
+
+    assert!(rejected > 0, "no constructor rejected anything");
+    // Not "every parameterised kind must refuse": a few take a value where zero,
+    // a negative and a NaN are all legitimate. Those are listed rather than
+    // waved through, so one that starts accepting nonsense shows up here.
+    assert_eq!(
+        accepted,
+        Vec::<&str>::new(),
+        "{} parameterised kinds accepted every probe",
+        accepted.len()
     );
 }

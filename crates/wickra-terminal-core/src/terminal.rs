@@ -18,7 +18,7 @@ use crate::panels::{build_panel, Panel};
 use crate::registry;
 use crate::source::manual::MAX_PENDING_EVENTS;
 use crate::source::{build_source, event_symbol, Event, Fed, SourceId, Symbol};
-use crate::state::{AppState, IndicatorSet, SymbolState};
+use crate::state::{AppState, BarSet, DerivativesUpdate, IndicatorSet, ProfileSet, SymbolState};
 use crate::view::Frame;
 
 /// A command applied through the data-driven boundary.
@@ -94,6 +94,22 @@ enum Command {
         /// The market event to fold (a trade, ticker, book snapshot or diff).
         event: Event,
     },
+    /// Fold a derivatives update -- funding, open interest, positioning,
+    /// mark/index/futures prices -- into a market's microstructure.
+    ///
+    /// Its own command rather than a variant of `Feed`, because these do not
+    /// travel as `Event`s: the exchange layer models them as a separate feed
+    /// with its own cadences, and no venue publishes them on the trade stream.
+    /// Every field of the update is optional, so a host sends whichever channel
+    /// just arrived and the terminal folds it into what it already holds.
+    FeedDerivatives {
+        /// The source id the market is tracked on.
+        source: SourceId,
+        /// The market, as written in a config: `BTC/USDT`.
+        symbol: String,
+        /// The channels that arrived.
+        update: DerivativesUpdate,
+    },
 }
 
 /// The registry catalogue: what `ListIndicators` answers with.
@@ -105,6 +121,35 @@ enum Command {
 pub struct Catalogue {
     /// Every indicator this build accepts.
     pub indicators: Vec<CatalogueEntry>,
+    /// Every profile this build accepts, for `config.profiles`.
+    ///
+    /// A separate list rather than more indicator rows: a profile answers with a
+    /// histogram and an indicator with a number, and one list holding both would
+    /// make every consumer filter before it could use either. Listed at all
+    /// because this is the discovery surface every binding reads -- omitted, a
+    /// caller outside Rust has no way to learn these exist or what they take.
+    pub profiles: Vec<SurfaceEntry>,
+    /// Every alternative bar type this build accepts, for `config.bars`.
+    ///
+    /// Apart from the profiles for the same reason they are apart from the
+    /// indicators: these complete zero or more bars per candle rather than
+    /// answering with anything.
+    pub bar_types: Vec<SurfaceEntry>,
+}
+
+/// One row of a catalogue surface that is not an indicator.
+///
+/// A profile and a bar type are constructible by name with parameters, and
+/// nothing else about a `CatalogueEntry` applies to them: neither reads a second
+/// market, and neither has an alias. Reporting them through that row would mean
+/// two fields that are always false and always absent, which reads as "we did
+/// not think about it" rather than "these do not apply".
+#[derive(Debug, Serialize)]
+pub struct SurfaceEntry {
+    /// The name, as `IndicatorSpec::kind` in `config.profiles` or `config.bars`.
+    pub kind: String,
+    /// The parameters the wickra golden manifest pins it at.
+    pub params: Vec<f64>,
 }
 
 /// One catalogue row.
@@ -164,6 +209,20 @@ impl Catalogue {
                     }
                 })
                 .collect(),
+            profiles: registry::PROFILES
+                .iter()
+                .map(|(kind, params)| SurfaceEntry {
+                    kind: (*kind).to_string(),
+                    params: params.to_vec(),
+                })
+                .collect(),
+            bar_types: registry::BAR_TYPES
+                .iter()
+                .map(|(kind, params)| SurfaceEntry {
+                    kind: (*kind).to_string(),
+                    params: params.to_vec(),
+                })
+                .collect(),
         }
     }
 }
@@ -201,8 +260,14 @@ impl Terminal {
         // parameter must fail here, naming itself, rather than when the first
         // trade arrives.
         IndicatorSet::from_specs(&config.indicators)?;
+        // Same for the profiles, and for the same reason: a config naming a
+        // profile that is not one should say so here, not on the first bar.
+        ProfileSet::from_specs(&config.profiles)?;
+        BarSet::from_specs(&config.bars)?;
         let state = AppState {
             indicators: config.indicators.clone(),
+            profiles: config.profiles.clone(),
+            bars: config.bars.clone(),
             timeframe: config.timeframe,
             ..AppState::default()
         };
@@ -278,10 +343,12 @@ impl Terminal {
         // The specs are cloned out first because `fresh_market` borrows the state
         // that the loop below is already borrowing mutably.
         let specs = self.state.indicators.clone();
+        let profiles = self.state.profiles.clone();
+        let bars = self.state.bars.clone();
         let timeframe = self.state.timeframe;
         for (key, symbol_state) in &mut self.state.symbols {
             if key.0 == id {
-                *symbol_state = SymbolState::new(&specs, timeframe)
+                *symbol_state = SymbolState::new(&specs, &profiles, &bars, timeframe)
                     .expect("indicator specs are validated before they reach the state");
             }
         }
@@ -303,6 +370,35 @@ impl Terminal {
     /// Returns [`Error::UnknownSource`] if `id` is not open, or [`Error::Command`]
     /// if the event has no market or the source does not accept fed events (it is
     /// not a manual source, or the market is not subscribed on it).
+    /// Fold a derivatives update into a tracked market's microstructure.
+    ///
+    /// Unlike [`feed`](Self::feed), this does not queue anything on a source:
+    /// the update is not an event and does not need to be replayed in order.
+    /// It lands directly on the market's state, and the derivatives indicators
+    /// read it on the next print -- which is the cadence they have, since a
+    /// funding print alone does not move a price.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Command`] if the market is not tracked on that source.
+    /// A silent no-op would let a host feed a misspelled symbol forever and
+    /// wonder why the readings never arrive.
+    pub fn feed_derivatives(
+        &mut self,
+        id: SourceId,
+        symbol: &str,
+        update: &DerivativesUpdate,
+    ) -> Result<()> {
+        let market = parse_symbol(symbol)?;
+        let state = self.state.symbols.get_mut(&(id, market)).ok_or_else(|| {
+            Error::Command(format!(
+                "{symbol} is not tracked on source {id}: subscribe it first"
+            ))
+        })?;
+        state.apply_derivatives(update);
+        Ok(())
+    }
+
     pub fn feed(&mut self, id: SourceId, event: Event) -> Result<()> {
         let Some(sym) = event_symbol(&event) else {
             return Err(Error::Command(
@@ -419,6 +515,13 @@ impl Terminal {
             Command::Feed { source, event } => {
                 self.feed(source, event)?;
             }
+            Command::FeedDerivatives {
+                source,
+                symbol,
+                update,
+            } => {
+                self.feed_derivatives(source, &symbol, &update)?;
+            }
             Command::AddIndicator { spec } => {
                 self.state.add_indicator(&spec)?;
                 self.config.indicators.push(spec);
@@ -472,6 +575,8 @@ fn parse_symbol(s: &str) -> Result<Symbol> {
 mod tests {
     const TICK: &str = r#"{"type":"Tick"}"#;
     use super::*;
+    use crate::config::{PanelSpec, RectSpec};
+    use crate::panels::PanelKind;
     use crate::view::PanelView;
     use rust_decimal::Decimal;
     use rust_decimal_macros::dec;
@@ -837,6 +942,50 @@ mod tests {
     }
 
     #[test]
+    fn the_catalogue_lists_every_profile_and_bar_type() {
+        // `ListIndicators` is how a caller outside Rust finds out what this
+        // build can do. It carried the indicators only, so the six profiles and
+        // ten bar types were configurable by name and undiscoverable: a Python
+        // or Go user had no way to learn that `VolumeProfile` exists, let alone
+        // what it takes, short of reading the Rust source.
+        let catalogue = Catalogue::current();
+        for (kind, params) in registry::PROFILES {
+            let row = catalogue
+                .profiles
+                .iter()
+                .find(|row| row.kind == kind)
+                .unwrap_or_else(|| panic!("the catalogue does not list the profile {kind}"));
+            assert_eq!(row.params, params, "{kind} is listed with other parameters");
+        }
+        for (kind, params) in registry::BAR_TYPES {
+            let row = catalogue
+                .bar_types
+                .iter()
+                .find(|row| row.kind == kind)
+                .unwrap_or_else(|| panic!("the catalogue does not list the bar type {kind}"));
+            assert_eq!(row.params, params, "{kind} is listed with other parameters");
+        }
+        assert_eq!(catalogue.profiles.len(), registry::PROFILES.len());
+        assert_eq!(catalogue.bar_types.len(), registry::BAR_TYPES.len());
+    }
+
+    #[test]
+    fn a_catalogue_row_is_constructible_as_it_stands() {
+        // The reason the parameters are carried at all: a caller should be able
+        // to take a row and build it without a second lookup. That was true of
+        // the indicators and is now claimed for the other two surfaces.
+        let catalogue = Catalogue::current();
+        for row in &catalogue.profiles {
+            registry::build_profile(&row.kind, &row.params)
+                .unwrap_or_else(|err| panic!("{}: {err}", row.kind));
+        }
+        for row in &catalogue.bar_types {
+            registry::build_bars(&row.kind, &row.params)
+                .unwrap_or_else(|err| panic!("{}: {err}", row.kind));
+        }
+    }
+
+    #[test]
     fn the_catalogue_lists_every_name_that_can_be_built() {
         // It used to walk `DEFAULTS`, which holds canonical names only, so both
         // friendly aliases were constructible and absent from the one surface a
@@ -1054,5 +1203,293 @@ mod tests {
             panic!("an unknown unit should be rejected");
         };
         assert!(err.to_string().contains("1w"), "{err}");
+    }
+
+    /// A terminal on a synth source tracking one derivatives indicator.
+    fn derivatives_terminal(kind: &str) -> Terminal {
+        let mut cfg = synth_config();
+        cfg.indicators = vec![IndicatorSpec {
+            kind: kind.to_string(),
+            params: Vec::new(),
+            reference: None,
+        }];
+        let mut term = Terminal::new(&cfg).expect("a synth terminal with one indicator");
+        term.subscribe(0, &Symbol::new("BTC", "USDT"))
+            .expect("subscribe");
+        term
+    }
+
+    /// A derivatives update carrying the three prices a tick needs, plus funding.
+    fn priced_update(step: i64) -> DerivativesUpdate {
+        DerivativesUpdate {
+            funding_rate: Some(0.0001 * f64::from(i32::try_from(step % 7).unwrap_or(0))),
+            mark_price: Some(20_000.0 + step as f64),
+            index_price: Some(20_000.0),
+            futures_price: Some(20_050.0),
+            open_interest: Some(1_000_000.0 + step as f64 * 10.0),
+            ..DerivativesUpdate::default()
+        }
+    }
+
+    #[test]
+    fn a_derivatives_indicator_reads_what_the_host_fed() {
+        let mut term = derivatives_terminal("FundingRate");
+        for step in 0..30 {
+            term.feed_derivatives(0, "BTC/USDT", &priced_update(step))
+                .expect("BTC/USDT is subscribed");
+            term.command_json(TICK).expect("tick");
+        }
+        let reading = term
+            .state
+            .get(&(0, Symbol::new("BTC", "USDT")))
+            .expect("BTC is tracked")
+            .indicators
+            .values()
+            .first()
+            .and_then(|(_, reading)| *reading);
+        assert!(
+            reading.is_some(),
+            "FundingRate produced no reading after 30 fed updates"
+        );
+    }
+
+    #[test]
+    fn a_derivatives_update_for_an_untracked_market_is_an_error() {
+        let mut term = derivatives_terminal("FundingRate");
+        // A silent no-op here would let a host feed a misspelled symbol forever
+        // and wonder why the readings never arrive.
+        let err = term
+            .feed_derivatives(0, "ETH/USDT", &priced_update(0))
+            .expect_err("ETH/USDT was never subscribed");
+        assert!(
+            err.to_string().contains("not tracked"),
+            "the error should say the market is not tracked, got: {err}"
+        );
+    }
+
+    #[test]
+    fn a_malformed_symbol_is_refused_before_it_reaches_the_state() {
+        let mut term = derivatives_terminal("FundingRate");
+        assert!(term
+            .feed_derivatives(0, "not a symbol", &priced_update(0))
+            .is_err());
+    }
+
+    #[test]
+    fn the_command_boundary_carries_a_derivatives_update() {
+        // The whole point of the command: a host in any of the ten languages
+        // drives this through JSON, not through the Rust API.
+        let mut term = derivatives_terminal("FundingRate");
+        let command = r#"{"type":"FeedDerivatives","source":0,"symbol":"BTC/USDT",
+            "update":{"funding_rate":0.0002,"mark_price":20100.0,"index_price":20000.0,
+            "futures_price":20050.0,"timestamp":7}}"#;
+        term.command_json(command).expect("a well-formed command");
+        // And an unknown field is refused rather than silently dropped, so a
+        // typo in a host's payload is an error rather than a missing channel.
+        let typo = r#"{"type":"FeedDerivatives","source":0,"symbol":"BTC/USDT",
+            "update":{"funding_rat":0.0002,"timestamp":7}}"#;
+        assert!(term.command_json(typo).is_err());
+    }
+
+    /// Every profile and every alternative bar type, configured by name, reaches
+    /// the frame.
+    ///
+    /// The two tests above prove one of each. That is enough to show the panels
+    /// exist and nothing more: a profile whose name the config layer rejects, or
+    /// whose panel row never gets built, would be invisible here while the
+    /// registry-level suite -- which calls `build_profile` directly and skips
+    /// `Terminal::new` entirely -- stayed green.
+    ///
+    /// What is asserted is reachability, not warmth. Four of the six profiles are
+    /// distributions over the CLOCK -- day of week, minute of session -- and
+    /// clearing their warmup would need days of synthetic bars. That they produce
+    /// a histogram at all is `every_profile_builds_and_produces_a_histogram`'s
+    /// job; that they are reachable by name from a config is this one's.
+    #[test]
+    fn every_profile_and_bar_type_reaches_the_frame() {
+        let mut cfg = synth_config();
+        cfg.timeframe = Timeframe::parse("1s").expect("1s is a timeframe");
+        cfg.layout.panels = vec![
+            PanelSpec {
+                kind: PanelKind::Profile,
+                rect: RectSpec {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 50,
+                },
+            },
+            PanelSpec {
+                kind: PanelKind::Bars,
+                rect: RectSpec {
+                    x: 0,
+                    y: 50,
+                    w: 100,
+                    h: 50,
+                },
+            },
+        ];
+        cfg.profiles = registry::PROFILES
+            .iter()
+            .map(|(kind, params)| IndicatorSpec {
+                kind: (*kind).to_string(),
+                params: params.to_vec(),
+                reference: None,
+            })
+            .collect();
+        cfg.bars = registry::BAR_TYPES
+            .iter()
+            .map(|(kind, params)| IndicatorSpec {
+                kind: (*kind).to_string(),
+                params: params.to_vec(),
+                reference: None,
+            })
+            .collect();
+
+        let mut term = Terminal::new(&cfg).expect("a terminal carrying every profile and bar type");
+        term.subscribe(0, &Symbol::new("BTC", "USDT"))
+            .expect("subscribe");
+        let mut frame = String::new();
+        for _ in 0..400 {
+            frame = term.command_json(TICK).expect("tick");
+        }
+
+        let missing: Vec<&str> = registry::PROFILES
+            .iter()
+            .chain(registry::BAR_TYPES.iter())
+            .map(|(kind, _)| *kind)
+            .filter(|kind| !frame.contains(kind))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "{} of the configured surfaces never reached the frame: {missing:?}",
+            missing.len()
+        );
+    }
+
+    #[test]
+    fn a_configured_profile_reaches_the_frame() {
+        let mut cfg = synth_config();
+        cfg.layout.panels = vec![PanelSpec {
+            kind: PanelKind::Profile,
+            rect: RectSpec {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 100,
+            },
+        }];
+        // One-second bars, so a tick closes a bar. The synth source advances
+        // its clock a second per poll, and VolumeProfile needs twenty closed
+        // bars -- at the default minute that is 1200 ticks to prove a wiring.
+        cfg.timeframe = Timeframe::parse("1s").expect("1s is a timeframe");
+        cfg.profiles = vec![IndicatorSpec {
+            kind: "VolumeProfile".to_string(),
+            params: vec![20.0, 50.0],
+            reference: None,
+        }];
+        let mut term = Terminal::new(&cfg).expect("a terminal with a profile panel");
+        term.subscribe(0, &Symbol::new("BTC", "USDT"))
+            .expect("subscribe");
+        let mut frame = String::new();
+        for _ in 0..400 {
+            frame = term.command_json(TICK).expect("tick");
+        }
+        assert!(
+            frame.contains(r#""panel":"profile""#),
+            "the frame carries no profile panel: {frame}"
+        );
+        assert!(
+            frame.contains("VolumeProfile"),
+            "the profile panel does not name the configured profile: {frame}"
+        );
+        // The histogram itself, not just the row: a panel that reports an
+        // empty `bins` for four hundred bars is a panel that is not wired.
+        let bins = frame
+            .split(r#""bins":["#)
+            .nth(1)
+            .expect("the row carries a bins array");
+        assert!(
+            !bins.starts_with(']'),
+            "the profile produced an empty histogram after 400 bars"
+        );
+    }
+
+    #[test]
+    fn a_config_naming_an_indicator_as_a_profile_is_refused() {
+        // `Sma` is a perfectly good indicator and not a profile at all. The
+        // config should say so when it is built, not when the first bar closes.
+        let mut cfg = synth_config();
+        cfg.profiles = vec![IndicatorSpec {
+            kind: "Sma".to_string(),
+            params: vec![14.0],
+            reference: None,
+        }];
+        let err = Terminal::new(&cfg).expect_err("Sma is not a profile");
+        assert!(
+            err.to_string().contains("Sma"),
+            "the error should name it: {err}"
+        );
+    }
+
+    #[test]
+    fn a_configured_bar_stream_reaches_the_frame() {
+        let mut cfg = synth_config();
+        cfg.layout.panels = vec![PanelSpec {
+            kind: PanelKind::Bars,
+            rect: RectSpec {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 100,
+            },
+        }];
+        // One-second bars, as the profile test does and for the same reason:
+        // a Renko brick needs the price to move a whole box, and at the
+        // default minute that is a great many ticks before anything completes.
+        cfg.timeframe = Timeframe::parse("1s").expect("1s is a timeframe");
+        cfg.bars = vec![IndicatorSpec {
+            kind: "RenkoBars".to_string(),
+            params: vec![2.0],
+            reference: None,
+        }];
+        let mut term = Terminal::new(&cfg).expect("a terminal with a bars panel");
+        term.subscribe(0, &Symbol::new("BTC", "USDT"))
+            .expect("subscribe");
+        let mut frame = String::new();
+        for _ in 0..2000 {
+            frame = term.command_json(TICK).expect("tick");
+        }
+        assert!(
+            frame.contains(r#""panel":"bars""#),
+            "the frame carries no bars panel: {frame}"
+        );
+        assert!(
+            frame.contains("RenkoBars"),
+            "the panel does not name the stream"
+        );
+        let bars = frame
+            .split(r#""bars":["#)
+            .nth(1)
+            .expect("the stream carries a bars array");
+        assert!(
+            !bars.starts_with(']'),
+            "RenkoBars completed nothing in 2000 ticks, so the stream is not wired"
+        );
+    }
+
+    #[test]
+    fn a_config_naming_an_indicator_as_a_bar_type_is_refused() {
+        let mut cfg = synth_config();
+        cfg.bars = vec![IndicatorSpec {
+            kind: "Sma".to_string(),
+            params: vec![14.0],
+            reference: None,
+        }];
+        let err = Terminal::new(&cfg).expect_err("Sma is not a bar type");
+        assert!(
+            err.to_string().contains("Sma"),
+            "the error should name it: {err}"
+        );
     }
 }

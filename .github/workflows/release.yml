@@ -213,7 +213,16 @@ jobs:
         timeout-minutes: 6
       - uses: ./.github/actions/warm-cargo
       # npm install (not ci): the per-platform optionalDependencies are not yet
-      # published, so they are absent from the lock and npm ci would reject it.
+      # published, so they are absent from the lock and npm ci rejects it with
+      # `EUSAGE ... Missing: wickra-terminal-darwin-arm64@ from lock file`.
+      #
+      # This was tried and reverted. It matters HOW it passed before failing:
+      # npm 11.1, which ships with Node 20, skips an optional dependency it
+      # cannot resolve, so `npm ci` succeeds locally and on the Node 22 leg of
+      # the matrix. The npm in Node 24 validates them against the lock first and
+      # refuses. One npm version is not evidence about npm. Scorecard's
+      # PinnedDependenciesID on this line stays open until the first release
+      # publishes those six packages and they can enter the lock.
       - name: Install Node deps
         run: cd bindings/node && npm install --no-audit --no-fund
       - name: Build native module

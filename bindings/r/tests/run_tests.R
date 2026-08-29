@@ -101,7 +101,7 @@ parse_manifest <- function(text) {
 
 g <- golden_dir()
 scenarios <- parse_manifest(slurp(file.path(g, "manifest.json")))
-stopifnot(length(scenarios) >= 9)
+stopifnot(length(scenarios) >= 12)
 
 scenario_names <- character(0)
 for (scenario in scenarios) {
@@ -162,7 +162,7 @@ stopifnot(grepl('"name":"Atr(14)"', removed, fixed = TRUE))
 ## The catalogue answers with the whole registry: one "kind" key per row.
 catalogue <- wkterm_command(rterm, '{"type":"ListIndicators"}')
 rows <- length(gregexpr('"kind":', catalogue, fixed = TRUE)[[1]])
-stopifnot(rows >= 475)
+stopifnot(rows >= 497)
 stopifnot(grepl('"kind":"Sma"', catalogue, fixed = TRUE))
 stopifnot(grepl('"kind":"MacdIndicator"', catalogue, fixed = TRUE))
 
