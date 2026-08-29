@@ -28,6 +28,13 @@
 //! assert_eq!(frame.panels.len(), 5);
 //! ```
 
+// docs.rs builds with nightly and passes --cfg docsrs, so this turns on the
+// feature-gate annotations there and nowhere else. `source::live` and
+// `LiveSource` are behind the `live` feature; without this they render on
+// docs.rs as though they were unconditional, because the manifest asks for
+// all-features and nothing then says which items needed one.
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 pub mod candle;
 pub mod config;
 pub mod error;
