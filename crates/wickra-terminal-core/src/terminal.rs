@@ -18,7 +18,7 @@ use crate::panels::{build_panel, Panel};
 use crate::registry;
 use crate::source::manual::MAX_PENDING_EVENTS;
 use crate::source::{build_source, event_symbol, Event, Fed, SourceId, Symbol};
-use crate::state::{AppState, DerivativesUpdate, IndicatorSet, ProfileSet, SymbolState};
+use crate::state::{AppState, BarSet, DerivativesUpdate, IndicatorSet, ProfileSet, SymbolState};
 use crate::view::Frame;
 
 /// A command applied through the data-driven boundary.
@@ -220,9 +220,11 @@ impl Terminal {
         // Same for the profiles, and for the same reason: a config naming a
         // profile that is not one should say so here, not on the first bar.
         ProfileSet::from_specs(&config.profiles)?;
+        BarSet::from_specs(&config.bars)?;
         let state = AppState {
             indicators: config.indicators.clone(),
             profiles: config.profiles.clone(),
+            bars: config.bars.clone(),
             timeframe: config.timeframe,
             ..AppState::default()
         };
@@ -299,10 +301,11 @@ impl Terminal {
         // that the loop below is already borrowing mutably.
         let specs = self.state.indicators.clone();
         let profiles = self.state.profiles.clone();
+        let bars = self.state.bars.clone();
         let timeframe = self.state.timeframe;
         for (key, symbol_state) in &mut self.state.symbols {
             if key.0 == id {
-                *symbol_state = SymbolState::new(&specs, &profiles, timeframe)
+                *symbol_state = SymbolState::new(&specs, &profiles, &bars, timeframe)
                     .expect("indicator specs are validated before they reach the state");
             }
         }
@@ -1260,6 +1263,67 @@ mod tests {
             reference: None,
         }];
         let err = Terminal::new(&cfg).expect_err("Sma is not a profile");
+        assert!(
+            err.to_string().contains("Sma"),
+            "the error should name it: {err}"
+        );
+    }
+
+    #[test]
+    fn a_configured_bar_stream_reaches_the_frame() {
+        let mut cfg = synth_config();
+        cfg.layout.panels = vec![PanelSpec {
+            kind: PanelKind::Bars,
+            rect: RectSpec {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 100,
+            },
+        }];
+        // One-second bars, as the profile test does and for the same reason:
+        // a Renko brick needs the price to move a whole box, and at the
+        // default minute that is a great many ticks before anything completes.
+        cfg.timeframe = Timeframe::parse("1s").expect("1s is a timeframe");
+        cfg.bars = vec![IndicatorSpec {
+            kind: "RenkoBars".to_string(),
+            params: vec![2.0],
+            reference: None,
+        }];
+        let mut term = Terminal::new(&cfg).expect("a terminal with a bars panel");
+        term.subscribe(0, &Symbol::new("BTC", "USDT"))
+            .expect("subscribe");
+        let mut frame = String::new();
+        for _ in 0..2000 {
+            frame = term.command_json(TICK).expect("tick");
+        }
+        assert!(
+            frame.contains(r#""panel":"bars""#),
+            "the frame carries no bars panel: {frame}"
+        );
+        assert!(
+            frame.contains("RenkoBars"),
+            "the panel does not name the stream"
+        );
+        let bars = frame
+            .split(r#""bars":["#)
+            .nth(1)
+            .expect("the stream carries a bars array");
+        assert!(
+            !bars.starts_with(']'),
+            "RenkoBars completed nothing in 2000 ticks, so the stream is not wired"
+        );
+    }
+
+    #[test]
+    fn a_config_naming_an_indicator_as_a_bar_type_is_refused() {
+        let mut cfg = synth_config();
+        cfg.bars = vec![IndicatorSpec {
+            kind: "Sma".to_string(),
+            params: vec![14.0],
+            reference: None,
+        }];
+        let err = Terminal::new(&cfg).expect_err("Sma is not a bar type");
         assert!(
             err.to_string().contains("Sma"),
             "the error should name it: {err}"

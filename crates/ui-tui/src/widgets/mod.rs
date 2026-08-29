@@ -4,9 +4,10 @@
 //! renderer never inspects state; it only maps the core's view-models to
 //! ratatui, which is exactly what makes the TUI one interchangeable renderer.
 
+pub(crate) mod bars;
 pub(crate) mod book;
 pub(crate) mod chart;
-pub(crate) mod footprint;
+mod footprint;
 mod profile;
 pub(crate) mod tape;
 pub(crate) mod watchlist;
@@ -41,5 +42,6 @@ pub(crate) fn render_panel(frame: &mut Frame, area: Rect, panel: &PanelView, foc
         PanelView::Watchlist(view) => watchlist::render(frame, area, view, focused),
         PanelView::Footprint(view) => footprint::render(frame, area, view, focused),
         PanelView::Profile(view) => profile::render(frame, area, view, focused),
+        PanelView::Bars(view) => bars::render(frame, area, view, focused),
     }
 }

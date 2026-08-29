@@ -809,6 +809,86 @@ impl ProfileSet {
     }
 }
 
+/// How many completed bars each alternative chart keeps.
+///
+/// Bounded, like everything else the fold writes into: a fast session can
+/// complete several bars from one candle, and an unbounded ring would grow
+/// with the session rather than with the screen.
+const ALT_BARS_KEPT: usize = 256;
+
+/// One named alternative bar stream and the bars it has completed.
+struct BarEntry {
+    label: String,
+    stream: Box<dyn registry::BarStream>,
+    bars: VecDeque<registry::AltBar>,
+}
+
+/// A bar stream is a trait object; the label and the bars are what a reader
+/// can be shown.
+impl std::fmt::Debug for BarEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BarEntry")
+            .field("label", &self.label)
+            .field("bars", &self.bars.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// The set of alternative bar streams tracked for a symbol.
+#[derive(Debug, Default)]
+pub struct BarSet {
+    entries: Vec<BarEntry>,
+}
+
+impl BarSet {
+    /// Build the set a config asks for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Config`] naming the entry if a spec's kind is not a
+    /// bar type or its parameters are rejected.
+    pub fn from_specs(specs: &[IndicatorSpec]) -> Result<Self> {
+        let entries = specs
+            .iter()
+            .map(|spec| {
+                Ok(BarEntry {
+                    label: spec.label(),
+                    stream: registry::build_bars(&spec.kind, &spec.params)?,
+                    bars: VecDeque::with_capacity(ALT_BARS_KEPT),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Self { entries })
+    }
+
+    /// Feed one tick to every stream, keeping what it completes.
+    pub fn update(&mut self, input: &TickInput) {
+        for entry in &mut self.entries {
+            for bar in entry.stream.update(input) {
+                if entry.bars.len() == ALT_BARS_KEPT {
+                    entry.bars.pop_front();
+                }
+                entry.bars.push_back(bar);
+            }
+        }
+    }
+
+    /// Every stream's label and its most recent bars, oldest first.
+    #[must_use]
+    pub fn streams(&self, depth: usize) -> Vec<(&str, Vec<registry::AltBar>)> {
+        self.entries
+            .iter()
+            .map(|entry| {
+                let take = entry.bars.len().saturating_sub(depth);
+                (
+                    entry.label.as_str(),
+                    entry.bars.iter().skip(take).copied().collect(),
+                )
+            })
+            .collect()
+    }
+}
+
 /// The set of indicators tracked for a symbol.
 #[derive(Debug)]
 pub struct IndicatorSet {
@@ -958,6 +1038,8 @@ pub struct SymbolState {
     pub indicators: IndicatorSet,
     /// The profile set, for the profile panel.
     pub profiles: ProfileSet,
+    /// The alternative bar streams, for the bars panel.
+    pub bars: BarSet,
     /// The last traded price seen.
     pub last: Decimal,
     /// A bounded recent price history for the chart series.
@@ -980,6 +1062,7 @@ impl SymbolState {
     pub fn new(
         specs: &[IndicatorSpec],
         profiles: &[IndicatorSpec],
+        bars: &[IndicatorSpec],
         timeframe: Timeframe,
     ) -> Result<Self> {
         Ok(Self {
@@ -988,6 +1071,7 @@ impl SymbolState {
             footprint: Footprint::default(),
             indicators: IndicatorSet::from_specs(specs)?,
             profiles: ProfileSet::from_specs(profiles)?,
+            bars: BarSet::from_specs(bars)?,
             last: Decimal::ZERO,
             history: VecDeque::with_capacity(512),
             candles: CandleBuilder::new(timeframe),
@@ -1012,6 +1096,7 @@ impl Default for SymbolState {
             footprint: Footprint::default(),
             indicators: IndicatorSet::default(),
             profiles: ProfileSet::default(),
+            bars: BarSet::default(),
             last: Decimal::ZERO,
             history: VecDeque::with_capacity(512),
             candles: CandleBuilder::new(Timeframe::default()),
@@ -1054,6 +1139,8 @@ pub struct AppState {
     pub indicators: Vec<IndicatorSpec>,
     /// The profile specs every market is tracked with, validated the same way.
     pub profiles: Vec<IndicatorSpec>,
+    /// The alternative bar specs, validated the same way.
+    pub bars: Vec<IndicatorSpec>,
     /// The bar size the candle-input indicators are fed at.
     pub timeframe: Timeframe,
 }
@@ -1069,6 +1156,7 @@ impl std::fmt::Debug for AppState {
             .field("watchlist", &self.watchlist)
             .field("indicators", &self.indicators)
             .field("profiles", &self.profiles)
+            .field("bars", &self.bars)
             .field("timeframe", &self.timeframe)
             .finish()
     }
@@ -1143,7 +1231,7 @@ impl AppState {
             return;
         }
         let state = self.symbols.entry((src, sym.clone())).or_insert_with(|| {
-            SymbolState::new(&self.indicators, &self.profiles, self.timeframe)
+            SymbolState::new(&self.indicators, &self.profiles, &self.bars, self.timeframe)
                 .expect("indicator specs are validated before they reach the state")
         });
         match event {
@@ -1202,6 +1290,7 @@ impl AppState {
                 tick.references = references;
                 state.indicators.update(&tick);
                 state.profiles.update(&tick);
+                state.bars.update(&tick);
                 if state.history.len() == 512 {
                     state.history.pop_front();
                 }
@@ -1296,7 +1385,7 @@ impl AppState {
     /// the wrong indicators rather than none at all.
     #[must_use]
     pub fn fresh_market(&self) -> SymbolState {
-        SymbolState::new(&self.indicators, &self.profiles, self.timeframe)
+        SymbolState::new(&self.indicators, &self.profiles, &self.bars, self.timeframe)
             .expect("indicator specs are validated before they reach the state")
     }
 

@@ -101,7 +101,7 @@ the two friendly aliases also carries `alias_of` naming the canonical kind it
 builds, so `Macd` and `MacdIndicator` read as one indicator rather than two.
 
 A frame is `{"panels": [...]}`, one entry per configured panel, each tagged with
-its `panel` kind — `chart`, `book`, `tape`, `watchlist`, `footprint`, `profile`. See
+its `panel` kind — `chart`, `book`, `tape`, `watchlist`, `footprint`, `profile`, `bars`. See
 [`docs/`](https://github.com/wickra-lib/wickra-terminal/tree/main/docs) for the panel and source references.
 
 ## Cross-language equality

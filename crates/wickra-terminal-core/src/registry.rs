@@ -28,7 +28,7 @@ use std::marker::PhantomData;
 
 use serde::{Deserialize, Serialize};
 
-use wickra_core::{self as wc, Candle, Indicator};
+use wickra_core::{self as wc, BarBuilder, Candle, Indicator};
 
 use crate::error::{Error, Result};
 
@@ -158,6 +158,55 @@ pub struct ProfileReading {
     /// The highest price the bins cover, for a price profile.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub price_high: Option<f64>,
+}
+
+/// One bar from an alternative chart, in the single shape a renderer draws.
+///
+/// The ten builders emit ten bar types in two shapes -- a two-point bar that
+/// records where a move started and ended, and an OHLC bar that records a range.
+/// A renderer should not have to hold ten, so each is mapped onto this one, and
+/// the mapping is written down per bar type in the generator rather than guessed
+/// here.
+///
+/// `volume` is optional because half of them do not have one: a Renko brick is a
+/// price move, not a period, and reporting zero would read as "no volume traded".
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct AltBar {
+    /// Where the bar opened.
+    pub open: f64,
+    /// The highest price it reached.
+    pub high: f64,
+    /// The lowest price it reached.
+    pub low: f64,
+    /// Where it closed.
+    pub close: f64,
+    /// `1` rising, `-1` falling.
+    pub direction: i8,
+    /// Volume, for the bar types that measure one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volume: Option<f64>,
+}
+
+/// A stream of alternative bars, driven by the same closed candles everything
+/// else here reads.
+///
+/// Separate from [`TickIndicator`] and [`ProfileIndicator`] because it answers
+/// with neither a reading nor a distribution: one closed candle can complete
+/// zero, one or several bars, and that is the whole character of these charts --
+/// a quiet hour produces none and a fast one produces many.
+pub trait BarStream: Send {
+    /// Feed one tick; returns every bar completed on it, which is usually none.
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar>;
+}
+
+/// Wraps a bar builder as a [`BarStream`].
+///
+/// Parameterised by the bar type as well as the builder, which is what keeps one
+/// impl per bar from overlapping another.
+struct CandleBars<I, B> {
+    inner: I,
+    /// Only to make the bar type part of this wrapper's identity.
+    bar: PhantomData<B>,
 }
 
 /// An indicator whose output is a histogram rather than a reading.
@@ -3304,6 +3353,338 @@ pub fn build_profile(kind: &str, params: &[f64]) -> Result<Box<dyn ProfileIndica
             output: PhantomData,
         })),
         _ => Err(Error::Config(format!("unknown profile: {kind}"))),
+    }
+}
+
+impl<I> BarStream for CandleBars<I, wc::DollarBar>
+where
+    I: BarBuilder<Bar = wc::DollarBar> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar> {
+        let Some(candle) = input.candle else {
+            return Vec::new();
+        };
+        self.inner
+            .update(candle)
+            .into_iter()
+            .map(|bar| AltBar {
+                open: bar.open,
+                high: bar.high,
+                low: bar.low,
+                close: bar.close,
+                direction: if bar.close >= bar.open { 1 } else { -1 },
+                volume: Some(bar.volume),
+            })
+            .collect()
+    }
+}
+
+impl<I> BarStream for CandleBars<I, wc::ImbalanceBar>
+where
+    I: BarBuilder<Bar = wc::ImbalanceBar> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar> {
+        let Some(candle) = input.candle else {
+            return Vec::new();
+        };
+        self.inner
+            .update(candle)
+            .into_iter()
+            .map(|bar| AltBar {
+                open: bar.open,
+                high: bar.high,
+                low: bar.low,
+                close: bar.close,
+                direction: bar.direction,
+                volume: None,
+            })
+            .collect()
+    }
+}
+
+impl<I> BarStream for CandleBars<I, wc::KagiBar>
+where
+    I: BarBuilder<Bar = wc::KagiBar> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar> {
+        let Some(candle) = input.candle else {
+            return Vec::new();
+        };
+        self.inner
+            .update(candle)
+            .into_iter()
+            .map(|bar| AltBar {
+                open: bar.start,
+                high: bar.start.max(bar.end),
+                low: bar.start.min(bar.end),
+                close: bar.end,
+                direction: bar.direction,
+                volume: None,
+            })
+            .collect()
+    }
+}
+
+impl<I> BarStream for CandleBars<I, wc::PnfColumn>
+where
+    I: BarBuilder<Bar = wc::PnfColumn> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar> {
+        let Some(candle) = input.candle else {
+            return Vec::new();
+        };
+        self.inner
+            .update(candle)
+            .into_iter()
+            .map(|bar| AltBar {
+                open: if bar.direction >= 0 {
+                    bar.low
+                } else {
+                    bar.high
+                },
+                high: bar.high,
+                low: bar.low,
+                close: if bar.direction >= 0 {
+                    bar.high
+                } else {
+                    bar.low
+                },
+                direction: bar.direction,
+                volume: None,
+            })
+            .collect()
+    }
+}
+
+impl<I> BarStream for CandleBars<I, wc::RangeBar>
+where
+    I: BarBuilder<Bar = wc::RangeBar> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar> {
+        let Some(candle) = input.candle else {
+            return Vec::new();
+        };
+        self.inner
+            .update(candle)
+            .into_iter()
+            .map(|bar| AltBar {
+                open: bar.open,
+                high: bar.open.max(bar.close),
+                low: bar.open.min(bar.close),
+                close: bar.close,
+                direction: bar.direction,
+                volume: None,
+            })
+            .collect()
+    }
+}
+
+impl<I> BarStream for CandleBars<I, wc::RenkoBrick>
+where
+    I: BarBuilder<Bar = wc::RenkoBrick> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar> {
+        let Some(candle) = input.candle else {
+            return Vec::new();
+        };
+        self.inner
+            .update(candle)
+            .into_iter()
+            .map(|bar| AltBar {
+                open: bar.open,
+                high: bar.open.max(bar.close),
+                low: bar.open.min(bar.close),
+                close: bar.close,
+                direction: bar.direction,
+                volume: None,
+            })
+            .collect()
+    }
+}
+
+impl<I> BarStream for CandleBars<I, wc::RunBar>
+where
+    I: BarBuilder<Bar = wc::RunBar> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar> {
+        let Some(candle) = input.candle else {
+            return Vec::new();
+        };
+        self.inner
+            .update(candle)
+            .into_iter()
+            .map(|bar| AltBar {
+                open: bar.open,
+                high: bar.high,
+                low: bar.low,
+                close: bar.close,
+                direction: bar.direction,
+                volume: None,
+            })
+            .collect()
+    }
+}
+
+impl<I> BarStream for CandleBars<I, wc::LineBreakBar>
+where
+    I: BarBuilder<Bar = wc::LineBreakBar> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar> {
+        let Some(candle) = input.candle else {
+            return Vec::new();
+        };
+        self.inner
+            .update(candle)
+            .into_iter()
+            .map(|bar| AltBar {
+                open: bar.open,
+                high: bar.open.max(bar.close),
+                low: bar.open.min(bar.close),
+                close: bar.close,
+                direction: bar.direction,
+                volume: None,
+            })
+            .collect()
+    }
+}
+
+impl<I> BarStream for CandleBars<I, wc::TickBar>
+where
+    I: BarBuilder<Bar = wc::TickBar> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar> {
+        let Some(candle) = input.candle else {
+            return Vec::new();
+        };
+        self.inner
+            .update(candle)
+            .into_iter()
+            .map(|bar| AltBar {
+                open: bar.open,
+                high: bar.high,
+                low: bar.low,
+                close: bar.close,
+                direction: if bar.close >= bar.open { 1 } else { -1 },
+                volume: Some(bar.volume),
+            })
+            .collect()
+    }
+}
+
+impl<I> BarStream for CandleBars<I, wc::VolumeBar>
+where
+    I: BarBuilder<Bar = wc::VolumeBar> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar> {
+        let Some(candle) = input.candle else {
+            return Vec::new();
+        };
+        self.inner
+            .update(candle)
+            .into_iter()
+            .map(|bar| AltBar {
+                open: bar.open,
+                high: bar.high,
+                low: bar.low,
+                close: bar.close,
+                direction: if bar.close >= bar.open { 1 } else { -1 },
+                volume: Some(bar.volume),
+            })
+            .collect()
+    }
+}
+
+/// Every alternative bar type this terminal can build, with the parameters the
+/// wickra golden manifest pins them at.
+pub const BAR_TYPES: [(&str, &[f64]); 10] = [
+    ("DollarBars", &[50000.0]),
+    ("ImbalanceBars", &[5.0]),
+    ("KagiBars", &[2.0]),
+    ("PointAndFigureBars", &[2.0, 3.0]),
+    ("RangeBars", &[2.0]),
+    ("RenkoBars", &[2.0]),
+    ("RunBars", &[3.0]),
+    ("ThreeLineBreakBars", &[3.0]),
+    ("TickBars", &[2.0]),
+    ("VolumeBars", &[500.0]),
+];
+
+/// Whether `kind` names an alternative bar type rather than an indicator.
+#[must_use]
+pub fn is_bar_type(kind: &str) -> bool {
+    matches!(
+        kind,
+        "DollarBars"
+            | "ImbalanceBars"
+            | "KagiBars"
+            | "PointAndFigureBars"
+            | "RangeBars"
+            | "RenkoBars"
+            | "RunBars"
+            | "ThreeLineBreakBars"
+            | "TickBars"
+            | "VolumeBars"
+    )
+}
+
+/// Build an alternative bar stream by name.
+///
+/// # Errors
+///
+/// Returns [`Error::Config`] if `kind` is not a bar type, or if its parameters
+/// are missing or rejected by the constructor.
+pub fn build_bars(kind: &str, params: &[f64]) -> Result<Box<dyn BarStream>> {
+    match kind {
+        "DollarBars" => Ok(Box::new(CandleBars::<_, wc::DollarBar> {
+            inner: map_new(kind, wc::DollarBars::new(float_param(params, 0, kind)?))?,
+            bar: PhantomData,
+        })),
+        "ImbalanceBars" => Ok(Box::new(CandleBars::<_, wc::ImbalanceBar> {
+            inner: map_new(kind, wc::ImbalanceBars::new(float_param(params, 0, kind)?))?,
+            bar: PhantomData,
+        })),
+        "KagiBars" => Ok(Box::new(CandleBars::<_, wc::KagiBar> {
+            inner: map_new(kind, wc::KagiBars::new(float_param(params, 0, kind)?))?,
+            bar: PhantomData,
+        })),
+        "PointAndFigureBars" => Ok(Box::new(CandleBars::<_, wc::PnfColumn> {
+            inner: map_new(
+                kind,
+                wc::PointAndFigureBars::new(
+                    float_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+            bar: PhantomData,
+        })),
+        "RangeBars" => Ok(Box::new(CandleBars::<_, wc::RangeBar> {
+            inner: map_new(kind, wc::RangeBars::new(float_param(params, 0, kind)?))?,
+            bar: PhantomData,
+        })),
+        "RenkoBars" => Ok(Box::new(CandleBars::<_, wc::RenkoBrick> {
+            inner: map_new(kind, wc::RenkoBars::new(float_param(params, 0, kind)?))?,
+            bar: PhantomData,
+        })),
+        "RunBars" => Ok(Box::new(CandleBars::<_, wc::RunBar> {
+            inner: map_new(kind, wc::RunBars::new(usize_param(params, 0, kind)?))?,
+            bar: PhantomData,
+        })),
+        "ThreeLineBreakBars" => Ok(Box::new(CandleBars::<_, wc::LineBreakBar> {
+            inner: map_new(
+                kind,
+                wc::ThreeLineBreakBars::new(usize_param(params, 0, kind)?),
+            )?,
+            bar: PhantomData,
+        })),
+        "TickBars" => Ok(Box::new(CandleBars::<_, wc::TickBar> {
+            inner: map_new(kind, wc::TickBars::new(usize_param(params, 0, kind)?))?,
+            bar: PhantomData,
+        })),
+        "VolumeBars" => Ok(Box::new(CandleBars::<_, wc::VolumeBar> {
+            inner: map_new(kind, wc::VolumeBars::new(float_param(params, 0, kind)?))?,
+            bar: PhantomData,
+        })),
+        _ => Err(Error::Config(format!("unknown bar type: {kind}"))),
     }
 }
 

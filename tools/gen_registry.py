@@ -198,6 +198,23 @@ UPDATE_EXPR = {
 }
 
 
+def bar_builders(text: str) -> list[tuple[str, str]]:
+    """Every `impl BarBuilder for X` in `text`, with the bar type it emits.
+
+    Discovered rather than listed, for the same reason the indicators are: a
+    builder added upstream should show up here on the next regeneration, not
+    when someone notices it missing.
+    """
+    found = []
+    for match in re.finditer(r"impl\s+BarBuilder\s+for\s+([A-Za-z0-9]+)\s*\{", text):
+        name = match.group(1)
+        segment = text[match.end() : match.end() + 400]
+        bar = re.search(r"type\s+Bar\s*=\s*([A-Za-z0-9]+)\s*;", segment)
+        if bar:
+            found.append((name, bar.group(1)))
+    return found
+
+
 def assoc_types(text: str, ty: str) -> tuple[str | None, str | None]:
     """The `type Input` / `type Output` of `impl Indicator for ty`."""
     m = re.search(r"impl\s+Indicator\s+for\s+" + re.escape(ty) + r"\b", text)
@@ -240,6 +257,110 @@ FIELD_READERS = {
     # omit the field on the ticks where the core has no value, not to invent
     # one. Kept out of the vector rather than reported as NaN.
     "Option<f64>": "last.{name}",
+}
+
+# How each alternative bar maps onto the one shape a renderer can draw.
+#
+# The ten builders emit ten different bar types, and they fall into two shapes: a
+# two-point bar that records where a move started and ended, and an OHLC bar that
+# records a range. A renderer cannot hold ten shapes and should not have to, so
+# each is mapped to one `AltBar` here -- the mapping is the honest part of this
+# table, and each entry says what it does with the fields the bar does not have.
+#
+# Keyed by the BAR type rather than the builder, because that is what the impl
+# names and what the mapping is actually about.
+#
+# Each value is (open, high, low, close, direction, volume) as expressions over
+# `bar`. A `None` volume means the bar carries none -- a Renko brick is a price
+# move, not a period, and inventing a zero would read as "no volume traded".
+BAR_SHAPES = {
+    # Two-point bars: a start, an end, and which way it went. High and low are
+    # derived because the bar has no wick -- that is the point of the chart.
+    "RenkoBrick": (
+        "bar.open",
+        "bar.open.max(bar.close)",
+        "bar.open.min(bar.close)",
+        "bar.close",
+        "bar.direction",
+        None,
+    ),
+    "KagiBar": (
+        "bar.start",
+        "bar.start.max(bar.end)",
+        "bar.start.min(bar.end)",
+        "bar.end",
+        "bar.direction",
+        None,
+    ),
+    "LineBreakBar": (
+        "bar.open",
+        "bar.open.max(bar.close)",
+        "bar.open.min(bar.close)",
+        "bar.close",
+        "bar.direction",
+        None,
+    ),
+    "RangeBar": (
+        "bar.open",
+        "bar.open.max(bar.close)",
+        "bar.open.min(bar.close)",
+        "bar.close",
+        "bar.direction",
+        None,
+    ),
+    # A P&F column is a range with a direction and no endpoints of its own: a
+    # rising column opens at its low and closes at its high, and a falling one
+    # the other way round.
+    "PnfColumn": (
+        "if bar.direction >= 0 { bar.low } else { bar.high }",
+        "bar.high",
+        "bar.low",
+        "if bar.direction >= 0 { bar.high } else { bar.low }",
+        "bar.direction",
+        None,
+    ),
+    # OHLC bars: the range is recorded, so only the direction has to be derived
+    # for the ones that do not carry it.
+    "TickBar": (
+        "bar.open",
+        "bar.high",
+        "bar.low",
+        "bar.close",
+        "if bar.close >= bar.open { 1 } else { -1 }",
+        "bar.volume",
+    ),
+    "VolumeBar": (
+        "bar.open",
+        "bar.high",
+        "bar.low",
+        "bar.close",
+        "if bar.close >= bar.open { 1 } else { -1 }",
+        "bar.volume",
+    ),
+    "DollarBar": (
+        "bar.open",
+        "bar.high",
+        "bar.low",
+        "bar.close",
+        "if bar.close >= bar.open { 1 } else { -1 }",
+        "bar.volume",
+    ),
+    "ImbalanceBar": (
+        "bar.open",
+        "bar.high",
+        "bar.low",
+        "bar.close",
+        "bar.direction",
+        None,
+    ),
+    "RunBar": (
+        "bar.open",
+        "bar.high",
+        "bar.low",
+        "bar.close",
+        "bar.direction",
+        None,
+    ),
 }
 
 # Indicators whose output is a variable-length histogram, mapped to the field
@@ -354,7 +475,7 @@ use std::marker::PhantomData;
 
 use serde::{Deserialize, Serialize};
 
-use wickra_core::{self as wc, Candle, Indicator};
+use wickra_core::{self as wc, BarBuilder, Candle, Indicator};
 
 use crate::error::{Error, Result};
 
@@ -484,6 +605,55 @@ pub struct ProfileReading {
     /// The highest price the bins cover, for a price profile.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub price_high: Option<f64>,
+}
+
+/// One bar from an alternative chart, in the single shape a renderer draws.
+///
+/// The ten builders emit ten bar types in two shapes -- a two-point bar that
+/// records where a move started and ended, and an OHLC bar that records a range.
+/// A renderer should not have to hold ten, so each is mapped onto this one, and
+/// the mapping is written down per bar type in the generator rather than guessed
+/// here.
+///
+/// `volume` is optional because half of them do not have one: a Renko brick is a
+/// price move, not a period, and reporting zero would read as "no volume traded".
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct AltBar {
+    /// Where the bar opened.
+    pub open: f64,
+    /// The highest price it reached.
+    pub high: f64,
+    /// The lowest price it reached.
+    pub low: f64,
+    /// Where it closed.
+    pub close: f64,
+    /// `1` rising, `-1` falling.
+    pub direction: i8,
+    /// Volume, for the bar types that measure one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volume: Option<f64>,
+}
+
+/// A stream of alternative bars, driven by the same closed candles everything
+/// else here reads.
+///
+/// Separate from [`TickIndicator`] and [`ProfileIndicator`] because it answers
+/// with neither a reading nor a distribution: one closed candle can complete
+/// zero, one or several bars, and that is the whole character of these charts --
+/// a quiet hour produces none and a fast one produces many.
+pub trait BarStream: Send {
+    /// Feed one tick; returns every bar completed on it, which is usually none.
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar>;
+}
+
+/// Wraps a bar builder as a [`BarStream`].
+///
+/// Parameterised by the bar type as well as the builder, which is what keeps one
+/// impl per bar from overlapping another.
+struct CandleBars<I, B> {
+    inner: I,
+    /// Only to make the bar type part of this wrapper's identity.
+    bar: PhantomData<B>,
 }
 
 /// An indicator whose output is a histogram rather than a reading.
@@ -662,6 +832,99 @@ def wants_reference(family: str) -> str:
         + chr(10)
         + "    }"
     )
+
+
+def emit_bars(bars: list, defaults: dict) -> str:
+    """The alternative-bar surface: the bar, the trait, the wrappers and the builder.
+
+    Every builder takes `Input = Candle`, so there is one wrapper. It is
+    parameterised by the BAR type as well as the builder, which keeps one impl
+    per bar from overlapping another.
+    """
+    if not bars:
+        return ""
+    impls = []
+    for name, bar_ty, _, _ in sorted(bars):
+        shape = BAR_SHAPES.get(bar_ty)
+        if shape is None:
+            raise SystemExit(
+                f"error: {name} emits {bar_ty}, which has no entry in BAR_SHAPES -- "
+                "add one saying how it maps onto AltBar rather than guessing"
+            )
+        open_, high, low, close, direction, volume = shape
+        vol = f"Some({volume})" if volume else "None"
+        impls.append(
+            f"""
+impl<I> BarStream for CandleBars<I, wc::{bar_ty}>
+where
+    I: BarBuilder<Bar = wc::{bar_ty}> + Send,
+{{
+    fn update(&mut self, input: &TickInput) -> Vec<AltBar> {{
+        let Some(candle) = input.candle else {{
+            return Vec::new();
+        }};
+        self.inner
+            .update(candle)
+            .into_iter()
+            .map(|bar| AltBar {{
+                open: {open_},
+                high: {high},
+                low: {low},
+                close: {close},
+                direction: {direction},
+                volume: {vol},
+            }})
+            .collect()
+    }}
+}}
+"""
+        )
+
+    arms = []
+    for name, bar_ty, argtypes, returns_result in sorted(bars):
+        ctor = f"wc::{name}::new({readers(argtypes)})" if argtypes else f"wc::{name}::new()"
+        made = f"map_new(kind, {ctor})?" if returns_result else ctor
+        arms.append(
+            f'        "{name}" => Ok(Box::new(CandleBars::<_, wc::{bar_ty}> {{'
+            f" inner: {made}, bar: PhantomData }})),"
+        )
+
+    rows = []
+    for name, _, _, _ in sorted(bars):
+        params = defaults.get(name)
+        if params is None:
+            raise SystemExit(f"error: no manifest defaults for the bar type {name}")
+        values = ", ".join(repr(float(v)) for v in params)
+        rows.append(f'    ("{name}", &[{values}]),')
+
+    names = " | ".join(f'"{name}"' for name, _, _, _ in sorted(bars))
+    return f"""
+{"".join(impls)}
+/// Every alternative bar type this terminal can build, with the parameters the
+/// wickra golden manifest pins them at.
+pub const BAR_TYPES: [(&str, &[f64]); {len(rows)}] = [
+{chr(10).join(rows)}
+];
+
+/// Whether `kind` names an alternative bar type rather than an indicator.
+#[must_use]
+pub fn is_bar_type(kind: &str) -> bool {{
+    matches!(kind, {names})
+}}
+
+/// Build an alternative bar stream by name.
+///
+/// # Errors
+///
+/// Returns [`Error::Config`] if `kind` is not a bar type, or if its parameters
+/// are missing or rejected by the constructor.
+pub fn build_bars(kind: &str, params: &[f64]) -> Result<Box<dyn BarStream>> {{
+    match kind {{
+{chr(10).join(arms)}
+        _ => Err(Error::Config(format!("unknown bar type: {{kind}}"))),
+    }}
+}}
+"""
 
 
 def emit_profiles(profiles: list, defaults: dict) -> str:
@@ -1017,11 +1280,26 @@ def main() -> None:
 
     entries = []          # (name, input, output, argtypes, returns_result, fields)
     profiles = []         # (name, output struct, argtypes, returns_result)
+    bars = []             # (name, bar type, argtypes, returns_result)
     skipped = Counter()
     skipped_names: dict[str, list[str]] = {}
 
     for path in sorted(indicators.glob("*.rs")):
         text = path.read_text(encoding="utf-8")
+        # Alternative bar builders, which are a different trait entirely: they
+        # answer with bars rather than readings, so they never enter `entries`.
+        for name, bar_ty in bar_builders(text):
+            found = find_new(text, name)
+            if found is None:
+                skipped["bar builder with no pub fn new"] += 1
+                skipped_names.setdefault("bar builder with no pub fn new", []).append(name)
+                continue
+            argtypes, returns_result = found
+            if any(a not in ARG_READER for a in argtypes):
+                skipped["bar builder with an unreadable argument"] += 1
+                skipped_names.setdefault("bar builder with an unreadable argument", []).append(name)
+                continue
+            bars.append((name, bar_ty, argtypes, returns_result))
         for m in re.finditer(r"impl\s+Indicator\s+for\s+(\w+)", text):
             ty = m.group(1)
             inp, out = assoc_types(text, ty)
@@ -1239,6 +1517,7 @@ fn build_inner(
         + emit_field_structs(field_families)
         + emit_field_impls(structs)
         + emit_profiles(profiles, defaults)
+        + emit_bars(bars, defaults)
         + PARAMS
         + build_fn
     )

@@ -226,6 +226,14 @@ pub struct Config {
     /// and a configuration with no profile panel should not pay for one.
     #[serde(default)]
     pub profiles: Vec<IndicatorSpec>,
+    /// Alternative bar types built from the same closed candles, for the
+    /// `Bars` panel.
+    ///
+    /// Renko, Kagi, point-and-figure and the rest are not indicators and not
+    /// profiles: one closed candle completes zero, one or several of them, and
+    /// that unevenness is the character of the chart rather than a defect.
+    #[serde(default)]
+    pub bars: Vec<IndicatorSpec>,
 }
 
 impl Config {
@@ -265,6 +273,7 @@ impl Default for Config {
             indicators: default_indicators(),
             timeframe: Timeframe::default(),
             profiles: Vec::new(),
+            bars: Vec::new(),
         }
     }
 }

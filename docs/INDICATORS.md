@@ -202,6 +202,54 @@ consumer can tell "spans no price" from "spans zero to zero".
 `ListProfiles` is not a command; the six are a fixed set and the
 `registry::PROFILES` constant carries them with the parameters the wickra golden
 manifest pins them at.
+## Alternative bars: not a reading at all
+
+Ten of wickra's types are not indicators. `RenkoBars`, `KagiBars`,
+`PointAndFigureBars`, `ThreeLineBreakBars`, `TickBars`, `VolumeBars`,
+`DollarBars`, `RangeBars`, `ImbalanceBars` and `RunBars` implement a different
+trait — `BarBuilder` — and answer with *bars*.
+
+They are also not a function of time. One closed candle completes zero, one or
+several of them: a quiet hour produces no Renko bricks and a fast one produces
+a run. That unevenness is the character of the chart rather than a defect, and
+it is why they cannot be a reading — there is nothing to report on a tick that
+completed nothing.
+
+Configure them under `bars` and show them with a `Bars` panel:
+
+```json
+{
+  "bars": [{ "kind": "RenkoBars", "params": [2.0] }],
+  "layout": { "panels": [{ "kind": "Bars", "rect": { "x": 0, "y": 0, "w": 100, "h": 100 } }] }
+}
+```
+
+The ten emit ten different bar types, in two shapes: a two-point bar recording
+where a move started and ended, and an OHLC bar recording a range. The panel
+answers with one shape, `AltBar` — open, high, low, close, direction, and a
+volume for the types that measure one. The mapping is written down per bar type
+in the generator rather than guessed: a Kagi bar's `start` and `end` become open
+and close with the high and low derived, and a point-and-figure column opens at
+its low and closes at its high when it is rising, the other way round when it is
+not.
+
+`volume` is absent rather than zero for the types that have none. A Renko brick
+is a price move, not a period; reporting zero would read as "no volume traded".
+
+## What the terminal reaches, in full
+
+| Surface | Count | What it answers with |
+|---------|------:|----------------------|
+| registry | <!--indicator-count-->497<!--/indicator-count--> | one number, plus named fields |
+| profiles | 6 | a histogram |
+| alternative bars | 10 | bars, zero or more per candle |
+| the `footprint` panel | 1 | volume per price, from the terminal's own state |
+
+That is **514** — every indicator and bar builder wickra ships. They are not one
+list because they are not one kind of thing, and flattening them would mean a
+catalogue whose entries answer with three different shapes and a consumer that
+has to know which.
+
 ## Regenerating the registry
 
 `crates/wickra-terminal-core/src/registry.rs` is generated. It reads the wickra-core

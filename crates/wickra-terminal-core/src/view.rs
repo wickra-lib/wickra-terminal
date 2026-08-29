@@ -170,6 +170,28 @@ pub struct ProfileView {
     pub profiles: Vec<ProfileRow>,
 }
 
+/// One alternative bar stream, as a panel row.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BarStreamView {
+    /// The stream's label, as the spec names it.
+    pub label: String,
+    /// The most recent completed bars, oldest first.
+    ///
+    /// Empty until the stream completes one, which for a Renko brick or a
+    /// point-and-figure column can take many candles: these charts advance on
+    /// price movement rather than on time.
+    pub bars: Vec<crate::registry::AltBar>,
+}
+
+/// The bars panel's view-model.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BarsView {
+    /// The market shown.
+    pub symbol: String,
+    /// The configured streams, in configured order.
+    pub streams: Vec<BarStreamView>,
+}
+
 /// One panel's view-model, tagged by kind.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "panel", rename_all = "snake_case")]
@@ -186,6 +208,8 @@ pub enum PanelView {
     Footprint(FootprintView),
     /// The configured distributions.
     Profile(ProfileView),
+    /// The configured alternative charts.
+    Bars(BarsView),
 }
 
 /// The output of one `tick`: every active panel's view-model.

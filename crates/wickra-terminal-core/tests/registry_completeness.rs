@@ -16,7 +16,8 @@ use wickra_core::{
     Candle, CrossSection, DerivativesTick, Level, Member, OrderBook, Side, Trade, TradeQuote,
 };
 use wickra_terminal_core::registry::{
-    build, build_paired, build_profile, is_profile, DEFAULTS, KINDS, PAIRWISE, PROFILES,
+    build, build_bars, build_paired, build_profile, is_bar_type, is_profile, BAR_TYPES, DEFAULTS,
+    KINDS, PAIRWISE, PROFILES,
 };
 use wickra_terminal_core::{CandleBuilder, TickInput, Timeframe};
 
@@ -1047,6 +1048,97 @@ fn profiles_and_indicators_are_disjoint() {
         assert!(
             !is_profile(kind),
             "{kind} is a registered indicator and a profile"
+        );
+    }
+}
+
+/// Every alternative bar type builds and completes bars.
+///
+/// These charts advance on price movement rather than on time, so a stream
+/// that completes nothing over four hundred varied bars is not a slow chart --
+/// it is a dead wiring, and nothing else drives them.
+#[test]
+fn every_bar_type_builds_and_completes_bars() {
+    for (kind, params) in BAR_TYPES {
+        let mut stream = build_bars(kind, params)
+            .unwrap_or_else(|err| panic!("{kind} did not build from its defaults: {err}"));
+        let mut builder = CandleBuilder::new(Timeframe::parse(BAR_SPACING).unwrap());
+        let mut completed = Vec::new();
+        for bar in 0..400 {
+            for trade in 0..TRADES_PER_BAR {
+                let step = bar * TRADES_PER_BAR + trade;
+                let price = price_at(step) + intrabar_offset(trade);
+                let ts = bar * BAR_MS + trade * (BAR_MS / TRADES_PER_BAR);
+                let size = VOLUME_SCALE * (1.0 + (step % 7) as f64);
+                let closed = builder.update(price, size, ts);
+                let mut input = TickInput::price(price);
+                input.candle = closed;
+                completed.extend(stream.update(&input));
+            }
+        }
+        assert!(
+            !completed.is_empty(),
+            "{kind} completed no bars over 400 candles"
+        );
+        for alt in &completed {
+            assert!(
+                alt.open.is_finite()
+                    && alt.high.is_finite()
+                    && alt.low.is_finite()
+                    && alt.close.is_finite(),
+                "{kind} completed a bar with a non-finite price"
+            );
+            assert!(
+                alt.low <= alt.high,
+                "{kind} completed a bar whose low is above its high"
+            );
+            assert!(
+                alt.low <= alt.open && alt.open <= alt.high,
+                "{kind} opened outside its own range"
+            );
+            assert!(
+                alt.low <= alt.close && alt.close <= alt.high,
+                "{kind} closed outside its own range"
+            );
+            assert!(
+                alt.direction == 1 || alt.direction == -1,
+                "{kind} reported direction {}, which is neither up nor down",
+                alt.direction
+            );
+            assert!(
+                alt.volume.is_none_or(|v| v.is_finite() && v >= 0.0),
+                "{kind} reported a negative or non-finite volume"
+            );
+        }
+        assert!(
+            is_bar_type(kind),
+            "{kind} is in BAR_TYPES but is_bar_type says no"
+        );
+    }
+}
+
+/// A bar type is neither an indicator nor a profile.
+#[test]
+fn bar_types_are_disjoint_from_indicators_and_profiles() {
+    for (kind, _) in BAR_TYPES {
+        assert!(
+            !KINDS.contains(&kind),
+            "{kind} is both a bar type and an indicator"
+        );
+        assert!(!is_profile(kind), "{kind} is both a bar type and a profile");
+        assert!(
+            build(kind, &[]).is_err(),
+            "{kind} must not build as an indicator"
+        );
+        assert!(
+            build_profile(kind, &[]).is_err(),
+            "{kind} must not build as a profile"
+        );
+    }
+    for (kind, _) in PROFILES {
+        assert!(
+            !is_bar_type(kind),
+            "{kind} is both a profile and a bar type"
         );
     }
 }
