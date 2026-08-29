@@ -11,7 +11,7 @@ resolver = "2"
 members = [
     "crates/wickra-terminal-core",
     "crates/ui-tui",
-    "crates/terminal-bench",
+    "crates/wickra-terminal-bench",
     "bindings/c",
     "bindings/python",
     "bindings/node",

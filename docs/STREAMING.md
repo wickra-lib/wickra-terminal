@@ -71,7 +71,7 @@ WICKRA_REGEN=1 cargo test -p wickra-terminal-core --test golden
 
 ## Performance
 
-Measured with `cargo bench -p terminal-bench` (see [../BENCHMARKS.md](../BENCHMARKS.md)):
+Measured with `cargo bench -p wickra-terminal-bench` (see [../BENCHMARKS.md](../BENCHMARKS.md)):
 folding one trade ~142 ns, applying an L2 depth diff ~107 ns, a full tick (poll +
 fold + build every panel) ~9.7 µs.
 

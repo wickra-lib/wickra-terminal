@@ -1,5 +1,5 @@
 [package]
-name = "terminal-bench"
+name = "wickra-terminal-bench"
 description = "Criterion benchmarks for the Wickra terminal core (fold, tick, view-model build, command round-trip)."
 version.workspace = true
 edition.workspace = true

@@ -8,7 +8,7 @@ bottleneck under a fast feed.
 
 ## What is measured
 
-The `terminal-bench` crate (criterion) covers five paths, one benchmark each:
+The `wickra-terminal-bench` crate (criterion) covers five paths, one benchmark each:
 
 - **`fold_trade`** — folding one trade into `AppState`: the tape, the footprint,
   the price history, the candle builder and every configured indicator.
@@ -31,7 +31,7 @@ Run on a single core against fixed, in-process inputs, so the numbers are
 reproducible and contain no feed variance:
 
 ```bash
-cargo bench -p terminal-bench
+cargo bench -p wickra-terminal-bench
 ```
 
 ## Results

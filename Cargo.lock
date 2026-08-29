@@ -3062,16 +3062,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "terminal-bench"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "rust_decimal",
- "wickra-exchange-core",
- "wickra-terminal-core",
-]
-
-[[package]]
 name = "terminfo"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3791,6 +3781,16 @@ dependencies = [
  "clap",
  "crossterm",
  "ratatui",
+ "wickra-terminal-core",
+]
+
+[[package]]
+name = "wickra-terminal-bench"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "rust_decimal",
+ "wickra-exchange-core",
  "wickra-terminal-core",
 ]
 

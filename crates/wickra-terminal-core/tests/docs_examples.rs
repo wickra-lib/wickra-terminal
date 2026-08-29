@@ -434,7 +434,7 @@ fn benchmarks_md_lists_the_benchmarks_that_exist() {
     // table rows below. Nobody reads a document against its own source, so this
     // does.
     let root = repo_root();
-    let bench = fs::read_to_string(root.join("crates/terminal-bench/benches/terminal.rs"))
+    let bench = fs::read_to_string(root.join("crates/wickra-terminal-bench/benches/terminal.rs"))
         .expect("the bench source");
     let doc = read(&root, "BENCHMARKS.md");
 

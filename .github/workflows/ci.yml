@@ -641,7 +641,7 @@ jobs:
       - name: Generate coverage (lcov)
         # Both product crates, not just the core: ui-tui is a thousand lines of
         # renderer with its own tests, and measuring only wickra-terminal-core reported a
-        # number for a third of the code while the rest went unseen. terminal-bench
+        # number for a third of the code while the rest went unseen. wickra-terminal-bench
         # stays out — benches are not product code, and neither sibling repo
         # measures its bench crate.
         #

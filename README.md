@@ -205,7 +205,7 @@ indicators, and the registry offers <!--indicator-count-->455<!--/indicator-coun
 ```
 crates/wickra-terminal-core   the data-driven core (DataSource, AppState, panels → view-models)
 crates/ui-tui          the native TUI renderer (bin: wickra-terminal)
-crates/terminal-bench  criterion benchmarks
+crates/wickra-terminal-bench  criterion benchmarks
 bindings/{python,node,wasm,c,go,csharp,java,r}   the ten-language surface
 web/                   the Vue/Vite Web renderer over the WASM binding
 golden/                recorded feeds + byte-exact expected frames (cross-language parity)
