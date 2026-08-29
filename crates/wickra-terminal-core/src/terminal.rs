@@ -1204,6 +1204,82 @@ mod tests {
         assert!(term.command_json(typo).is_err());
     }
 
+    /// Every profile and every alternative bar type, configured by name, reaches
+    /// the frame.
+    ///
+    /// The two tests above prove one of each. That is enough to show the panels
+    /// exist and nothing more: a profile whose name the config layer rejects, or
+    /// whose panel row never gets built, would be invisible here while the
+    /// registry-level suite -- which calls `build_profile` directly and skips
+    /// `Terminal::new` entirely -- stayed green.
+    ///
+    /// What is asserted is reachability, not warmth. Four of the six profiles are
+    /// distributions over the CLOCK -- day of week, minute of session -- and
+    /// clearing their warmup would need days of synthetic bars. That they produce
+    /// a histogram at all is `every_profile_builds_and_produces_a_histogram`'s
+    /// job; that they are reachable by name from a config is this one's.
+    #[test]
+    fn every_profile_and_bar_type_reaches_the_frame() {
+        let mut cfg = synth_config();
+        cfg.timeframe = Timeframe::parse("1s").expect("1s is a timeframe");
+        cfg.layout.panels = vec![
+            PanelSpec {
+                kind: PanelKind::Profile,
+                rect: RectSpec {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 50,
+                },
+            },
+            PanelSpec {
+                kind: PanelKind::Bars,
+                rect: RectSpec {
+                    x: 0,
+                    y: 50,
+                    w: 100,
+                    h: 50,
+                },
+            },
+        ];
+        cfg.profiles = registry::PROFILES
+            .iter()
+            .map(|(kind, params)| IndicatorSpec {
+                kind: (*kind).to_string(),
+                params: params.to_vec(),
+                reference: None,
+            })
+            .collect();
+        cfg.bars = registry::BAR_TYPES
+            .iter()
+            .map(|(kind, params)| IndicatorSpec {
+                kind: (*kind).to_string(),
+                params: params.to_vec(),
+                reference: None,
+            })
+            .collect();
+
+        let mut term = Terminal::new(&cfg).expect("a terminal carrying every profile and bar type");
+        term.subscribe(0, &Symbol::new("BTC", "USDT"))
+            .expect("subscribe");
+        let mut frame = String::new();
+        for _ in 0..400 {
+            frame = term.command_json(TICK).expect("tick");
+        }
+
+        let missing: Vec<&str> = registry::PROFILES
+            .iter()
+            .chain(registry::BAR_TYPES.iter())
+            .map(|(kind, _)| *kind)
+            .filter(|kind| !frame.contains(kind))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "{} of the configured surfaces never reached the frame: {missing:?}",
+            missing.len()
+        );
+    }
+
     #[test]
     fn a_configured_profile_reaches_the_frame() {
         let mut cfg = synth_config();
