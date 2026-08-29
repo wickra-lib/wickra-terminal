@@ -1524,6 +1524,51 @@ where
     }
 }
 
+impl<I> TickIndicator for CandleInFields<I, wc::IchimokuOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::IchimokuOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.tenkan.is_none_or(f64::is_finite)
+                    && last.kijun.is_none_or(f64::is_finite)
+                    && last.senkou_a.is_none_or(f64::is_finite)
+                    && last.senkou_b.is_none_or(f64::is_finite)
+                    && last.chikou.is_none_or(f64::is_finite)
+            });
+        self.last = out;
+        self.last.as_ref().and_then(|last| last.tenkan)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        let Some(last) = self.last.as_ref() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        if let Some(value) = last.tenkan {
+            out.push(("tenkan", value));
+        }
+        if let Some(value) = last.kijun {
+            out.push(("kijun", value));
+        }
+        if let Some(value) = last.senkou_a {
+            out.push(("senkou_a", value));
+        }
+        if let Some(value) = last.senkou_b {
+            out.push(("senkou_b", value));
+        }
+        if let Some(value) = last.chikou {
+            out.push(("chikou", value));
+        }
+        out
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
 impl<I> TickIndicator for CandleInFields<I, wc::InitialBalanceOutput>
 where
     I: Indicator<Input = Candle, Output = wc::InitialBalanceOutput> + Send,
@@ -2322,6 +2367,38 @@ where
     }
 }
 
+impl<I> TickIndicator for CandleInFields<I, wc::WilliamsFractalsOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::WilliamsFractalsOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.up.is_none_or(f64::is_finite) && last.down.is_none_or(f64::is_finite)
+            });
+        self.last = out;
+        self.last.as_ref().and_then(|last| last.up)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        let Some(last) = self.last.as_ref() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        if let Some(value) = last.up {
+            out.push(("up", value));
+        }
+        if let Some(value) = last.down {
+            out.push(("down", value));
+        }
+        out
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
 impl<I> TickIndicator for CandleInFields<I, wc::WoodiePivotsOutput>
 where
     I: Indicator<Input = Candle, Output = wc::WoodiePivotsOutput> + Send,
@@ -2820,7 +2897,7 @@ fn map_new<T>(kind: &str, made: core::result::Result<T, wc::Error>) -> Result<T>
 }
 
 /// Every registered indicator name, sorted.
-pub const KINDS: [&str; 457] = [
+pub const KINDS: [&str; 460] = [
     "AbandonedBaby",
     "Abcd",
     "AccelerationBands",
@@ -2995,6 +3072,7 @@ pub const KINDS: [&str; 457] = [
     "HtTrendMode",
     "HurstChannel",
     "HurstExponent",
+    "Ichimoku",
     "IdenticalThreeCrows",
     "InNeck",
     "Inertia",
@@ -3035,6 +3113,7 @@ pub const KINDS: [&str; 457] = [
     "M2Measure",
     "MaEnvelope",
     "Macd",
+    "MacdExt",
     "MacdFix",
     "MacdHistogram",
     "MacdIndicator",
@@ -3268,6 +3347,7 @@ pub const KINDS: [&str; 457] = [
     "Wedge",
     "WeightedClose",
     "WickRatio",
+    "WilliamsFractals",
     "WilliamsR",
     "WinRate",
     "Wma",
@@ -3284,7 +3364,7 @@ pub const KINDS: [&str; 457] = [
 /// same values the library pins its own reference outputs with. Used by the
 /// build-all test so every registered indicator is constructed the way wickra
 /// constructs it, rather than with a guessed parameter count.
-pub const DEFAULTS: [(&str, &[f64]); 455] = [
+pub const DEFAULTS: [(&str, &[f64]); 458] = [
     ("AbandonedBaby", &[]),
     ("Abcd", &[]),
     ("AccelerationBands", &[14.0, 2.0]),
@@ -3458,6 +3538,7 @@ pub const DEFAULTS: [(&str, &[f64]); 455] = [
     ("HtTrendMode", &[]),
     ("HurstChannel", &[14.0, 2.0]),
     ("HurstExponent", &[100.0, 4.0]),
+    ("Ichimoku", &[9.0, 26.0, 52.0, 26.0]),
     ("IdenticalThreeCrows", &[]),
     ("InNeck", &[]),
     ("Inertia", &[3.0, 7.0]),
@@ -3497,6 +3578,7 @@ pub const DEFAULTS: [(&str, &[f64]); 455] = [
     ("LongLine", &[]),
     ("M2Measure", &[14.0, 2.0, 0.5]),
     ("MaEnvelope", &[14.0, 2.0]),
+    ("MacdExt", &[12.0, 0.0, 26.0, 0.0, 9.0, 0.0]),
     ("MacdFix", &[9.0]),
     ("MacdHistogram", &[3.0, 7.0, 14.0]),
     ("MacdIndicator", &[12.0, 26.0, 9.0]),
@@ -3730,6 +3812,7 @@ pub const DEFAULTS: [(&str, &[f64]); 455] = [
     ("Wedge", &[]),
     ("WeightedClose", &[]),
     ("WickRatio", &[]),
+    ("WilliamsFractals", &[]),
     ("WilliamsR", &[14.0]),
     ("WinRate", &[14.0]),
     ("Wma", &[14.0]),
@@ -4720,6 +4803,18 @@ fn build_inner(
                 ),
             )?,
         })),
+        "Ichimoku" => Ok(Box::new(CandleInFields {
+            inner: map_new(
+                kind,
+                wc::Ichimoku::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                    usize_param(params, 2, kind)?,
+                    usize_param(params, 3, kind)?,
+                ),
+            )?,
+            last: None,
+        })),
         "IdenticalThreeCrows" => Ok(Box::new(CandleIn {
             inner: wc::IdenticalThreeCrows::new(),
         })),
@@ -4948,6 +5043,20 @@ fn build_inner(
             inner: map_new(
                 kind,
                 wc::MaEnvelope::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
+            )?,
+            last: None,
+        })),
+        "MacdExt" => Ok(Box::new(ScalarPriceFields {
+            inner: map_new(
+                kind,
+                wc::MacdExt::new(
+                    usize_param(params, 0, kind)?,
+                    map_new(kind, wc::MaType::from_code(u32_param(params, 1, kind)?))?,
+                    usize_param(params, 2, kind)?,
+                    map_new(kind, wc::MaType::from_code(u32_param(params, 3, kind)?))?,
+                    usize_param(params, 4, kind)?,
+                    map_new(kind, wc::MaType::from_code(u32_param(params, 5, kind)?))?,
+                ),
             )?,
             last: None,
         })),
@@ -6112,6 +6221,10 @@ fn build_inner(
         })),
         "WickRatio" => Ok(Box::new(CandleIn {
             inner: wc::WickRatio::new(),
+        })),
+        "WilliamsFractals" => Ok(Box::new(CandleInFields {
+            inner: wc::WilliamsFractals::new(),
+            last: None,
         })),
         "WilliamsR" => Ok(Box::new(CandleIn {
             inner: map_new(kind, wc::WilliamsR::new(usize_param(params, 0, kind)?))?,

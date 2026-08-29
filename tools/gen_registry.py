@@ -55,6 +55,11 @@ ARG_READER = {
     "f64": "float_param(params, {i}, kind)?",
     "u32": "u32_param(params, {i}, kind)?",
     "i32": "i32_param(params, {i}, kind)?",
+    # A moving-average selector, carried as its TA-Lib code the way the core
+    # already accepts it, so a JSON config stays a list of numbers rather than
+    # growing a second parameter type. `from_code` rejects anything outside
+    # 0..=5, so a bad code is an error from the constructor like any other.
+    "MaType": "map_new(kind, wc::MaType::from_code(u32_param(params, {i}, kind)?))?",
 }
 
 # The input families this terminal can feed today, mapped to the wrapper that
@@ -167,10 +172,22 @@ def find_new(text: str, ty: str) -> tuple[list[str], bool] | None:
 FIELD_READERS = {
     "f64": "last.{name}",
     "i64": "last.{name} as f64",
+    # A line that has not formed yet. Ichimoku publishes five of these and
+    # only reports some of them for the first `kijun` bars; the terminal
+    # already carries a reading as optional, so the honest rendering is to
+    # omit the field on the ticks where the core has no value, not to invent
+    # one. Kept out of the vector rather than reported as NaN.
+    "Option<f64>": "last.{name}",
 }
 
+# The field types whose value is absent on some ticks.
+OPTIONAL_FIELDS = {"Option<f64>"}
 
-def out_fields(text: str, out: str) -> list[tuple[str, str, bool]] | None:
+# The field types that can carry a non-finite value and so need checking.
+FLOAT_FIELDS = {"f64", "Option<f64>"}
+
+
+def out_fields(text: str, out: str) -> list[tuple[str, str, str]] | None:
     """An Output struct's fields as `(name, expression, needs a finite check)`.
 
     `None` when the terminal cannot carry the struct -- when ANY field has a type
@@ -199,7 +216,7 @@ def out_fields(text: str, out: str) -> list[tuple[str, str, bool]] | None:
     if not declared or any(ty not in FIELD_READERS for _, ty in declared):
         return None
     return [
-        (name, FIELD_READERS[ty].format(name=name), ty == "f64")
+        (name, FIELD_READERS[ty].format(name=name), ty)
         for name, ty in declared
     ]
 
@@ -485,8 +502,13 @@ struct {wrapper}<I, O> {{
     return "".join(out)
 
 
+def nl_join(parts) -> str:
+    """Join generated lines with a real newline, kept out of the f-strings."""
+    return chr(10).join(parts)
+
+
 def emit_field_impls(
-    structs: dict[tuple[str, str], list[tuple[str, str, bool]]],
+    structs: dict[tuple[str, str], list[tuple[str, str, str]]],
 ) -> str:
     """One `TickIndicator` impl per (input family, Output struct) pair in use.
 
@@ -499,12 +521,65 @@ def emit_field_impls(
     out = []
     for (family, struct), fields in sorted(structs.items()):
         wrapper = WRAPPERS[family][1]
-        pairs = ", ".join(f'("{name}", {expr})' for name, expr, _ in fields)
-        primary = fields[0][1]
-        # Only a float can be non-finite; an integer field is finite by its type.
+        optional = any(ty in OPTIONAL_FIELDS for _, _, ty in fields)
+        # Only a float can be non-finite; an integer field is finite by its
+        # type, and an absent optional has nothing to check.
         finite_check = " && ".join(
-            f"{expr}.is_finite()" for _, expr, is_float in fields if is_float
+            (
+                f"{expr}.is_none_or(f64::is_finite)"
+                if ty in OPTIONAL_FIELDS
+                else f"{expr}.is_finite()"
+            )
+            for _, expr, ty in fields
+            if ty in FLOAT_FIELDS
         )
+        # The first field is the scalar reading. When it is optional the
+        # reading is simply absent on the ticks where the core has no value.
+        first_name, first_expr, first_ty = fields[0]
+        primary = (
+            f"self.last.as_ref().and_then(|last| {first_expr})"
+            if first_ty in OPTIONAL_FIELDS
+            else f"self.last.as_ref().map(|last| {first_expr})"
+        )
+        if optional:
+            # Built by pushing, because an absent field is left out entirely
+            # rather than reported as some stand-in number.
+            pushes = nl_join(
+                (
+                    f"        if let Some(value) = {expr} {{"
+                    + chr(10)
+                    + f'            out.push(("{name}", value));'
+                    + chr(10)
+                    + "        }"
+                )
+                if ty in OPTIONAL_FIELDS
+                else f'        out.push(("{name}", {expr}));'
+                for name, expr, ty in fields
+            )
+            fields_body = (
+                "        let Some(last) = self.last.as_ref() else {"
+                + chr(10)
+                + "            return Vec::new();"
+                + chr(10)
+                + "        };"
+                + chr(10)
+                + "        let mut out = Vec::new();"
+                + chr(10)
+                + pushes
+                + chr(10)
+                + "        out"
+            )
+        else:
+            pairs = ", ".join(f'("{name}", {expr})' for name, expr, _ in fields)
+            fields_body = (
+                "        self.last"
+                + chr(10)
+                + "            .as_ref()"
+                + chr(10)
+                + f"            .map(|last| vec![{pairs}])"
+                + chr(10)
+                + "            .unwrap_or_default()"
+            )
         out.append(
             f"""
 impl<I> TickIndicator for {wrapper}<I, wc::{struct}>
@@ -515,13 +590,10 @@ where
         let out = {UPDATE_EXPR[family]}
             .filter(|last| {finite_check});
         self.last = out;
-        self.last.as_ref().map(|last| {primary})
+        {primary}
     }}
     fn fields(&self) -> Vec<(&'static str, f64)> {{
-        self.last
-            .as_ref()
-            .map(|last| vec![{pairs}])
-            .unwrap_or_default()
+{fields_body}
     }}
     fn warmup(&self) -> usize {{
         self.inner.warmup_period()
@@ -630,7 +702,7 @@ def main() -> None:
                 skipped["unreadable constructor argument"] += 1
                 skipped_names.setdefault("unreadable constructor argument", []).append(ty)
                 continue
-            fields: list[tuple[str, str, bool]] = []
+            fields: list[tuple[str, str, str]] = []
             if out != "f64":
                 got = out_fields(bigtext, out)
                 if not got:
@@ -643,7 +715,7 @@ def main() -> None:
     entries.sort(key=lambda e: e[0])
 
     # (input family, Output struct) pairs that need a generated impl.
-    structs: dict[tuple[str, str], list[tuple[str, str, bool]]] = {}
+    structs: dict[tuple[str, str], list[tuple[str, str, str]]] = {}
     for _, inp, out, _, _, fields in entries:
         if fields:
             structs[(inp, out)] = fields

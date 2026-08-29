@@ -31,7 +31,7 @@ requests.
    Best Practices, link check, release and web deploy. ✅
 10. **README, badges, docs** — the banner and badge treatment, and the docs
     guides. ✅
-11. **Indicators** — tick-to-OHLCV aggregation and a generated registry of <!--indicator-count-->455<!--/indicator-count-->
+11. **Indicators** — tick-to-OHLCV aggregation and a generated registry of <!--indicator-count-->458<!--/indicator-count-->
     `wickra-core` indicators, configurable and changeable at run time from every
     binding. ✅
 
@@ -40,13 +40,14 @@ requests.
 Nothing here is scheduled. These are the openings the current shape leaves, in
 roughly the order they would pay off.
 
-- **The remaining indicator families.** 49 of the 504 in `wickra-core` are not
+- **The remaining indicator families.** 46 of the 504 in `wickra-core` are not
   reachable, and the reason is now the same for nearly all of them:
   [`docs/INDICATORS.md`](docs/INDICATORS.md) lists them. Derivatives-tick (17),
   cross-section (15) and trade-quote (3) need feeds this repository has no source
   for, so they are blocked on a data source rather than on wiring. Three more read
-  a per-period return where the terminal has only a price. The remaining eleven
-  are output shapes the registry's fixed named-field model does not carry.
+  a per-period return where the terminal has only a price. The remaining eight
+  are output shapes the registry's fixed named-field model does not carry -- the
+  profile and level outputs, whose bin lists change length bar to bar.
 - **First release.** Blocked, and not on a decision — on a dependency. The chain,
   in full, because it has one link and no way round it:
 
