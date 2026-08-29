@@ -37,6 +37,7 @@ use std::fs;
 
 use rust_decimal::Decimal;
 use wickra_exchange_core::{BookDelta, BookLevel, Event, OrderBookSnapshot, OrderSide, TradePrint};
+use wickra_terminal_core::config::Keybinds;
 use wickra_terminal_core::{Config, IndicatorSpec, SourceSpec, Symbol, Terminal, Timeframe};
 
 fn golden_dir() -> String {
@@ -394,16 +395,23 @@ fn run(scenario: &Scenario) -> String {
     frame
 }
 
-/// The config as a binding reads it: sources, layout, indicators and timeframe.
-/// Keybinds are omitted — they carry a non-deterministic map order and never
-/// affect a frame, and `Terminal::new` fills the defaults.
+/// The config as a binding reads it: everything but the keybinds.
+///
+/// Serialised from the `Config` itself and then stripped, rather than built
+/// key by key. The hand-built version listed four fields, and a config field
+/// added after it was written simply never reached the committed file: the
+/// profile and bar scenarios recorded a Rust frame full of data while every
+/// binding, reading the same file, built a terminal with neither configured and
+/// answered with empty lists. Serialising the whole thing cannot forget a field.
+///
+/// Keybinds are the one omission, and stay one: they carry a non-deterministic
+/// map order, never affect a frame, and `Terminal::new` fills the defaults.
 fn config_json(config: &Config) -> serde_json::Value {
-    serde_json::json!({
-        "sources": config.sources,
-        "layout": { "panels": config.layout.panels },
-        "indicators": config.indicators,
-        "timeframe": config.timeframe,
-    })
+    let mut value = serde_json::to_value(config).expect("a config serialises");
+    if let Some(layout) = value.get_mut("layout").and_then(|l| l.as_object_mut()) {
+        layout.remove("keybinds");
+    }
+    value
 }
 
 fn write_or_compare(path: &str, content: &str, regen: bool) {
@@ -437,6 +445,24 @@ fn golden_corpus_is_byte_exact() {
         // would lose the field order the wire form has.
         let frame: wickra_terminal_core::Frame = serde_json::from_str(&frame_min)
             .unwrap_or_else(|err| panic!("{}: frame does not round-trip: {err}", scenario.name));
+
+        // The file a binding reads must rebuild the config this scenario ran,
+        // and that is checked here rather than trusted. It was not trusted
+        // idly: `config_json` used to list its fields by hand, so a config
+        // field added afterwards never reached the file. Every binding then
+        // built a terminal missing that field and answered with empty lists,
+        // while Rust -- which never reads the file -- stayed green. Only the
+        // scenarios that happened to use the new field caught it, and only in
+        // the foreign suites. This catches any dropped field, in Rust, at once.
+        let written: Config = serde_json::from_value(config_json(&scenario.config))
+            .unwrap_or_else(|err| panic!("{}: config does not round-trip: {err}", scenario.name));
+        let mut expected_config = scenario.config.clone();
+        expected_config.layout.keybinds = Keybinds::default();
+        assert_eq!(
+            written, expected_config,
+            "{}: the config a binding reads differs from the config Rust ran",
+            scenario.name
+        );
 
         let config_rel = format!("configs/{}.json", scenario.name);
         let expected_rel = format!("expected/{}.min.json", scenario.name);
