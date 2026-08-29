@@ -1,0 +1,11 @@
+# Python 3.9 tooling for the binding test job in ci.yml.
+#
+# 3.9 is the abi3 floor the wheel is built against, and it is the one row that
+# cannot take pytest 9: PYSEC-2026-1845 (CVE-2025-71176) is fixed in 9.0.3, and
+# pytest 9 requires Python >= 3.10. The 8.x line ends at 8.4.2 with no backport,
+# so this row gets the newest pytest that runs here and the others get the fix.
+# Collapse this file into ci-dev-py3.in once the matrix floor moves off 3.9.
+#
+# Locked output: ci-dev-py39.txt. Refresh via scripts/update-lockfiles.sh.
+maturin
+pytest<9

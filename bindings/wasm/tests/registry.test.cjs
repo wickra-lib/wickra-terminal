@@ -54,7 +54,7 @@ test("the catalogue lists the whole registry", () => {
   const { indicators } = JSON.parse(
     term.command(JSON.stringify({ type: "ListIndicators" })),
   );
-  assert.ok(indicators.length >= 455, `only ${indicators.length} entries`);
+  assert.ok(indicators.length >= 461, `only ${indicators.length} entries`);
   const byKind = Object.fromEntries(indicators.map((r) => [r.kind, r.params]));
   assert.strictEqual(byKind.Sma.length, 1);
   assert.strictEqual(byKind.MacdIndicator.length, 3);

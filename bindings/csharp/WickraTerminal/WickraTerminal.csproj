@@ -18,7 +18,19 @@
     <RepositoryType>git</RepositoryType>
     <PackageTags>trading;terminal;tui;streaming;charts;ffi;native</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <NoWarn>$(NoWarn);NU5128;CS1591</NoWarn>
+    <PackageIcon>icon.png</PackageIcon>
+
+    <!-- A symbol package, so a consumer stepping into this assembly reaches
+         source rather than decompiled IL. -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+
+    <!-- The XML docs IDEs read for IntelliSense. CS1591 is deliberately NOT
+         suppressed: Terminal is the only public type, it is documented, and a
+         new public member without a doc comment should fail the build rather
+         than ship an empty tooltip. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
   </PropertyGroup>
 
   <!--
@@ -29,6 +41,7 @@
   -->
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="\" />
+    <None Include="../icon.png" Pack="true" PackagePath="\" />
     <None Include="runtimes/**/native/*" Pack="true" PackagePath="runtimes/" Condition="Exists('runtimes')" />
   </ItemGroup>
 

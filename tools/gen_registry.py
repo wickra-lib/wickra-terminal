@@ -11,16 +11,25 @@ Single source of truth: the wickra-core indicator sources themselves
 
 What gets registered, and why only this much:
 
-  Input = f64      fed the last traded price, tick by tick.
-  Input = Candle   fed each bar as it closes, from the CandleBuilder. Only closed
-                   bars: feeding the bar in progress would make every reading
-                   repaint as the bar fills.
+  Input = f64        fed the last traded price, tick by tick.
+  Input = Candle     fed each bar as it closes, from the CandleBuilder. Only
+                     closed bars: feeding the bar in progress would make every
+                     reading repaint as the bar fills.
+  Input = Trade      fed the print with its size and aggressor side, from the
+                     terminal's own tape.
+  Input = OrderBook  fed the book, from the terminal's own book.
+  Input = (f64,f64)  fed this market's price against a reference market's, named
+                     in the spec.
 
-Everything else is skipped and reported. `(f64, f64)` needs a reference symbol,
-`OrderBook` and `Trade` need the terminal's book and tape converted to the core's
-types, and `DerivativesTick`, `CrossSection` and `TradeQuote` need feeds this
-repository does not have at all. Those are separate steps, not silent omissions:
-the run prints what it skipped and why.
+One more family is reached by name rather than by declared input: a handful of
+indicators take an `Input = f64` that wickra-core documents as a per-period
+RETURN. They are routed to the `returns` family, which differences closed bars
+and feeds the close-to-close return. See RETURN_INPUT_ONLY.
+
+What is left is skipped and reported, never dropped in silence: `DerivativesTick`,
+`CrossSection` and `TradeQuote` need feeds this repository has no source for, and
+a handful of Output structs carry variable-length bin lists that the fixed
+named-field shape here cannot represent. The run prints what it skipped and why.
 
 The backtester has a script of the same name doing the same job for a different
 shape. Its `BarInput` carries every feed a strategy may consult on one bar; a
@@ -55,6 +64,11 @@ ARG_READER = {
     "f64": "float_param(params, {i}, kind)?",
     "u32": "u32_param(params, {i}, kind)?",
     "i32": "i32_param(params, {i}, kind)?",
+    # A moving-average selector, carried as its TA-Lib code the way the core
+    # already accepts it, so a JSON config stays a list of numbers rather than
+    # growing a second parameter type. `from_code` rejects anything outside
+    # 0..=5, so a bad code is an error from the constructor like any other.
+    "MaType": "map_new(kind, wc::MaType::from_code(u32_param(params, {i}, kind)?))?",
 }
 
 # The input families this terminal can feed today, mapped to the wrapper that
@@ -68,8 +82,14 @@ WRAPPERS = {
     "Trade": ("TradeIn", "TradeInFields"),
     "OrderBook": ("BookIn", "BookInFields"),
     "(f64,f64)": ("PairIn", "PairInFields"),
+    # Not an `Input` any indicator declares -- a routing target. See
+    # RETURN_INPUT_ONLY below.
+    "returns": ("ReturnsIn", "ReturnsInFields"),
 }
 
+# The families this terminal can feed. `returns` is in here because the routing
+# above assigns it before this check, and no indicator declares it as an
+# `Input`, so it cannot be reached by accident.
 SUPPORTED_INPUTS = set(WRAPPERS)
 
 # Indicators whose `Input = f64` is a per-period RETURN, not a price.
@@ -80,10 +100,11 @@ SUPPORTED_INPUTS = set(WRAPPERS)
 # denominator is zero and they return `inf` for every reading: measured across
 # 400 varied prices, finite=0 and non-finite=1161.
 #
-# So they are skipped rather than registered, the same call P4.3d made for
-# `Footprint`: an indicator that cannot produce a meaningful value from what this
-# terminal can feed it does not belong in the catalogue. Reaching them properly
-# needs a returns input family, which is a feature rather than a fix.
+# They used to be skipped for that reason. They are now routed to the `returns`
+# family instead, which is the feature that comment asked for: the terminal has
+# no return to feed directly, but it builds candles, and the close-to-close
+# return of a closed bar is exactly the per-period return these ratios are
+# defined over. The set below is therefore a ROUTING list, not an exclusion.
 #
 # Only these three are excluded because only these three are provably broken --
 # driving every indicator the terminal can feed, exactly these produce no finite
@@ -103,6 +124,7 @@ INPUT_TY = {
     "Trade": "wc::Trade",
     "OrderBook": "wc::OrderBook",
     "(f64,f64)": "(f64, f64)",
+    "returns": "f64",
 }
 
 # Extra state a wrapper carries beyond the indicator itself. Only the pairwise
@@ -110,6 +132,7 @@ INPUT_TY = {
 # because that is a property of the spec rather than of the tick.
 EXTRA_FIELDS = {
     "(f64,f64)": (("reference", "String"),),
+    "returns": (("previous_close", "Option<f64>"),),
 }
 
 # How each family reaches its value out of a `&TickInput` and feeds it. A tick
@@ -121,6 +144,21 @@ UPDATE_EXPR = {
     "Candle": "input.candle.and_then(|c| self.inner.update(c))",
     "Trade": "input.trade.and_then(|t| self.inner.update(t))",
     "OrderBook": "input.book.clone().and_then(|b| self.inner.update(b))",
+    "returns": (
+        "input.candle.and_then(|candle| {"
+        + chr(10)
+        + "                let close = candle.close;"
+        + chr(10)
+        + "                self.previous_close"
+        + chr(10)
+        + "                    .replace(close)"
+        + chr(10)
+        + "                    .filter(|previous| previous.is_normal())"
+        + chr(10)
+        + "                    .and_then(|previous| self.inner.update(close / previous - 1.0))"
+        + chr(10)
+        + "            })"
+    ),
     "(f64,f64)": (
         "input"
         + chr(10)
@@ -167,10 +205,22 @@ def find_new(text: str, ty: str) -> tuple[list[str], bool] | None:
 FIELD_READERS = {
     "f64": "last.{name}",
     "i64": "last.{name} as f64",
+    # A line that has not formed yet. Ichimoku publishes five of these and
+    # only reports some of them for the first `kijun` bars; the terminal
+    # already carries a reading as optional, so the honest rendering is to
+    # omit the field on the ticks where the core has no value, not to invent
+    # one. Kept out of the vector rather than reported as NaN.
+    "Option<f64>": "last.{name}",
 }
 
+# The field types whose value is absent on some ticks.
+OPTIONAL_FIELDS = {"Option<f64>"}
 
-def out_fields(text: str, out: str) -> list[tuple[str, str, bool]] | None:
+# The field types that can carry a non-finite value and so need checking.
+FLOAT_FIELDS = {"f64", "Option<f64>"}
+
+
+def out_fields(text: str, out: str) -> list[tuple[str, str, str]] | None:
     """An Output struct's fields as `(name, expression, needs a finite check)`.
 
     `None` when the terminal cannot carry the struct -- when ANY field has a type
@@ -199,7 +249,7 @@ def out_fields(text: str, out: str) -> list[tuple[str, str, bool]] | None:
     if not declared or any(ty not in FIELD_READERS for _, ty in declared):
         return None
     return [
-        (name, FIELD_READERS[ty].format(name=name), ty == "f64")
+        (name, FIELD_READERS[ty].format(name=name), ty)
         for name, ty in declared
     ]
 
@@ -371,6 +421,12 @@ WRAPPER_DOC = {
         "Wraps a book (`Input = OrderBook`) single-output indicator. Ticks whose",
         "book is one-sided yield `None` without advancing it.",
     ),
+    "returns": (
+        "Wraps an indicator whose `Input = f64` is a per-period RETURN rather",
+        "than a price, feeding it the close-to-close return of each closed bar.",
+        "The first bar establishes the close to difference against and yields",
+        "`None`; a previous close that is not a normal number is not divided by.",
+    ),
     "(f64,f64)": (
         "Wraps a pairwise (`Input = (f64, f64)`) single-output indicator: this",
         "market's price against a reference market's. Ticks on which the reference",
@@ -410,6 +466,18 @@ def wants_book(family: str) -> str:
         + chr(10)
         + "    }"
     )
+
+
+# How each family reports its warmup. The returns family spends one bar
+# establishing the close it differences against, so it needs one more than the
+# indicator itself asks for.
+WARMUP_EXPR = {
+    "returns": "self.inner.warmup_period() + 1",
+}
+
+
+def warmup_expr(family: str) -> str:
+    return WARMUP_EXPR.get(family, "self.inner.warmup_period()")
 
 
 def extra_decls(family: str) -> str:
@@ -455,7 +523,7 @@ where
         Vec::new()
     }}
     fn warmup(&self) -> usize {{
-        self.inner.warmup_period()
+        {warmup_expr(family)}
     }}{wants_book(family)}{wants_reference(family)}
 }}
 """
@@ -485,8 +553,13 @@ struct {wrapper}<I, O> {{
     return "".join(out)
 
 
+def nl_join(parts) -> str:
+    """Join generated lines with a real newline, kept out of the f-strings."""
+    return chr(10).join(parts)
+
+
 def emit_field_impls(
-    structs: dict[tuple[str, str], list[tuple[str, str, bool]]],
+    structs: dict[tuple[str, str], list[tuple[str, str, str]]],
 ) -> str:
     """One `TickIndicator` impl per (input family, Output struct) pair in use.
 
@@ -499,12 +572,65 @@ def emit_field_impls(
     out = []
     for (family, struct), fields in sorted(structs.items()):
         wrapper = WRAPPERS[family][1]
-        pairs = ", ".join(f'("{name}", {expr})' for name, expr, _ in fields)
-        primary = fields[0][1]
-        # Only a float can be non-finite; an integer field is finite by its type.
+        optional = any(ty in OPTIONAL_FIELDS for _, _, ty in fields)
+        # Only a float can be non-finite; an integer field is finite by its
+        # type, and an absent optional has nothing to check.
         finite_check = " && ".join(
-            f"{expr}.is_finite()" for _, expr, is_float in fields if is_float
+            (
+                f"{expr}.is_none_or(f64::is_finite)"
+                if ty in OPTIONAL_FIELDS
+                else f"{expr}.is_finite()"
+            )
+            for _, expr, ty in fields
+            if ty in FLOAT_FIELDS
         )
+        # The first field is the scalar reading. When it is optional the
+        # reading is simply absent on the ticks where the core has no value.
+        first_name, first_expr, first_ty = fields[0]
+        primary = (
+            f"self.last.as_ref().and_then(|last| {first_expr})"
+            if first_ty in OPTIONAL_FIELDS
+            else f"self.last.as_ref().map(|last| {first_expr})"
+        )
+        if optional:
+            # Built by pushing, because an absent field is left out entirely
+            # rather than reported as some stand-in number.
+            pushes = nl_join(
+                (
+                    f"        if let Some(value) = {expr} {{"
+                    + chr(10)
+                    + f'            out.push(("{name}", value));'
+                    + chr(10)
+                    + "        }"
+                )
+                if ty in OPTIONAL_FIELDS
+                else f'        out.push(("{name}", {expr}));'
+                for name, expr, ty in fields
+            )
+            fields_body = (
+                "        let Some(last) = self.last.as_ref() else {"
+                + chr(10)
+                + "            return Vec::new();"
+                + chr(10)
+                + "        };"
+                + chr(10)
+                + "        let mut out = Vec::new();"
+                + chr(10)
+                + pushes
+                + chr(10)
+                + "        out"
+            )
+        else:
+            pairs = ", ".join(f'("{name}", {expr})' for name, expr, _ in fields)
+            fields_body = (
+                "        self.last"
+                + chr(10)
+                + "            .as_ref()"
+                + chr(10)
+                + f"            .map(|last| vec![{pairs}])"
+                + chr(10)
+                + "            .unwrap_or_default()"
+            )
         out.append(
             f"""
 impl<I> TickIndicator for {wrapper}<I, wc::{struct}>
@@ -515,16 +641,13 @@ where
         let out = {UPDATE_EXPR[family]}
             .filter(|last| {finite_check});
         self.last = out;
-        self.last.as_ref().map(|last| {primary})
+        {primary}
     }}
     fn fields(&self) -> Vec<(&'static str, f64)> {{
-        self.last
-            .as_ref()
-            .map(|last| vec![{pairs}])
-            .unwrap_or_default()
+{fields_body}
     }}
     fn warmup(&self) -> usize {{
-        self.inner.warmup_period()
+        {warmup_expr(family)}
     }}{wants_book(family)}{wants_reference(family)}
 }}
 """
@@ -613,9 +736,11 @@ def main() -> None:
                 skipped_names.setdefault("no associated types", []).append(ty)
                 continue
             if ty in RETURN_INPUT_ONLY:
-                skipped["input is a return, not a price"] += 1
-                skipped_names.setdefault("input is a return, not a price", []).append(ty)
-                continue
+                # Routed to the returns family rather than skipped: the terminal
+                # has no return to feed directly, but it builds candles, and a
+                # close-to-close return is exactly the per-period return these
+                # ratios are defined over.
+                inp = "returns"
             if inp not in SUPPORTED_INPUTS:
                 skipped[f"input {inp}"] += 1
                 skipped_names.setdefault(f"input {inp}", []).append(ty)
@@ -630,7 +755,7 @@ def main() -> None:
                 skipped["unreadable constructor argument"] += 1
                 skipped_names.setdefault("unreadable constructor argument", []).append(ty)
                 continue
-            fields: list[tuple[str, str, bool]] = []
+            fields: list[tuple[str, str, str]] = []
             if out != "f64":
                 got = out_fields(bigtext, out)
                 if not got:
@@ -643,7 +768,7 @@ def main() -> None:
     entries.sort(key=lambda e: e[0])
 
     # (input family, Output struct) pairs that need a generated impl.
-    structs: dict[tuple[str, str], list[tuple[str, str, bool]]] = {}
+    structs: dict[tuple[str, str], list[tuple[str, str, str]]] = {}
     for _, inp, out, _, _, fields in entries:
         if fields:
             structs[(inp, out)] = fields
@@ -656,7 +781,7 @@ def main() -> None:
         extra = "".join(
             f", {name}: pair_reference(kind, reference)?.to_string()"
             if name == "reference"
-            else ""
+            else f", {name}: None"
             for name, _ in EXTRA_FIELDS.get(inp, ())
         )
         if fields:

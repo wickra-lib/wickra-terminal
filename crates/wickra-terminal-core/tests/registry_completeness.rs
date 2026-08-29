@@ -290,7 +290,7 @@ fn no_indicator_ever_reports_a_non_finite_value() {
 /// shipped for four phases reporting `price_low` -- a price -- under a profile's
 /// name, because the only multi-output assertion in this suite drove MACD and
 /// asked whether the field list was non-empty.
-const STRUCT_OUTPUT_FIELDS: [(&str, &[&str]); 88] = [
+const STRUCT_OUTPUT_FIELDS: [(&str, &[&str]); 91] = [
     ("AccelerationBands", &["upper", "middle", "lower"]),
     ("Adx", &["plus_di", "minus_di", "adx"]),
     ("Alligator", &["jaw", "teeth", "lips"]),
@@ -384,6 +384,10 @@ const STRUCT_OUTPUT_FIELDS: [(&str, &[&str]); 88] = [
     ("HighLowVolumeNodes", &["hvn", "lvn"]),
     ("HtPhasor", &["inphase", "quadrature"]),
     ("HurstChannel", &["upper", "middle", "lower"]),
+    (
+        "Ichimoku",
+        &["tenkan", "kijun", "senkou_a", "senkou_b", "chikou"],
+    ),
     ("InitialBalance", &["high", "low"]),
     ("KalmanHedgeRatio", &["hedge_ratio", "intercept", "spread"]),
     ("KaseDevStop", &["value", "direction"]),
@@ -393,6 +397,7 @@ const STRUCT_OUTPUT_FIELDS: [(&str, &[&str]); 88] = [
     ("LeadLagCrossCorrelation", &["lag", "correlation"]),
     ("LinRegChannel", &["upper", "middle", "lower"]),
     ("MaEnvelope", &["upper", "middle", "lower"]),
+    ("MacdExt", &["macd", "signal", "histogram"]),
     ("MacdFix", &["macd", "signal", "histogram"]),
     ("MacdIndicator", &["macd", "signal", "histogram"]),
     ("Mama", &["mama", "fama"]),
@@ -439,17 +444,31 @@ const STRUCT_OUTPUT_FIELDS: [(&str, &[&str]); 88] = [
     ("Vortex", &["plus", "minus"]),
     ("VwapStdDevBands", &["upper", "middle", "lower", "stddev"]),
     ("WaveTrend", &["wt1", "wt2"]),
+    ("WilliamsFractals", &["up", "down"]),
     ("WoodiePivots", &["pp", "r1", "r2", "s1", "s2"]),
     ("ZeroLagMacd", &["macd", "signal", "histogram"]),
     ("ZigZag", &["swing", "direction"]),
 ];
 
-/// The last reading and field list an indicator produces over `bars` bars.
-fn last_reading(kind: &str, params: &[f64], bars: i64) -> (Option<f64>, Vec<&'static str>) {
+/// The last reading, the field list from that tick, and every field name the
+/// indicator exposed at any point in the run.
+///
+/// The two lists differ once an output field is optional. `Ichimoku` publishes
+/// five lines and `WilliamsFractals` two, and neither shows all of them on every
+/// bar -- a bar carries an up fractal or a down one, rarely both. A field with no
+/// value is left out rather than reported as some stand-in number, so the set on
+/// the final bar is a subset of what the struct declares, while the union over
+/// the run is the whole of it.
+fn last_reading(
+    kind: &str,
+    params: &[f64],
+    bars: i64,
+) -> (Option<f64>, Vec<&'static str>, BTreeSet<&'static str>) {
     let mut indicator = build_any(kind, params);
     let mut builder = CandleBuilder::new(Timeframe::parse(BAR_SPACING).unwrap());
     let mut value = None;
     let mut names = Vec::new();
+    let mut seen = BTreeSet::new();
 
     for bar in 0..bars {
         for trade in 0..TRADES_PER_BAR {
@@ -465,13 +484,29 @@ fn last_reading(kind: &str, params: &[f64], bars: i64) -> (Option<f64>, Vec<&'st
             input
                 .references
                 .insert(REFERENCE.to_string(), reference_at(step));
+            // Fields are read on every tick, not only on the ticks that produce a
+            // reading. The reading is the FIRST field, so when that one field is
+            // optional and absent the indicator returns None while still holding
+            // the others -- `WilliamsFractals` on a bar carrying a down fractal
+            // and no up one. Gating the read on the reading hid exactly the case
+            // an optional field exists for.
             if let Some(latest) = indicator.update(&input) {
                 value = Some(latest);
-                names = indicator.fields().iter().map(|(name, _)| *name).collect();
+            }
+            let current: Vec<&'static str> =
+                indicator.fields().iter().map(|(name, _)| *name).collect();
+            if !current.is_empty() {
+                seen.extend(current.iter().copied());
+                // The richest tick, not the last one. Order can only be checked
+                // where more than one field is present, and the final bar of an
+                // indicator with optional fields often carries just one.
+                if current.len() > names.len() {
+                    names = current;
+                }
             }
         }
     }
-    (value, names)
+    (value, names, seen)
 }
 
 #[test]
@@ -481,11 +516,29 @@ fn every_multi_output_indicator_exposes_every_field_its_output_declares() {
         let Some((_, params)) = DEFAULTS.iter().find(|(k, _)| *k == kind) else {
             panic!("{kind} has a struct output but is not registered");
         };
-        let (value, names) = last_reading(kind, params, 400);
+        let (value, names, seen) = last_reading(kind, params, 400);
         assert!(value.is_some(), "{kind} produced no reading in 400 bars");
+        let declared: BTreeSet<&str> = expected.iter().copied().collect();
         assert_eq!(
-            names, expected,
-            "{kind} exposes a different field set than its Output struct declares"
+            seen, declared,
+            "{kind} never exposed some field its Output struct declares"
+        );
+        // And in the declared order: the richest tick's field list must be a
+        // subsequence of it, which is what a reordering generator would break.
+        // A one-field list is a subsequence of any order, so this only bites
+        // where a tick carried several -- which is every indicator here whose
+        // fields are not mutually exclusive.
+        let positions: Vec<Option<usize>> = names
+            .iter()
+            .map(|name| expected.iter().position(|e| e == name))
+            .collect();
+        assert!(
+            positions.iter().all(Option::is_some),
+            "{kind} exposes {names:?}, which is not all declared in {expected:?}"
+        );
+        assert!(
+            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            "{kind} exposes {names:?}, which is not in the declared order {expected:?}"
         );
         checked += 1;
     }
@@ -500,7 +553,7 @@ fn every_multi_output_indicator_exposes_every_field_its_output_declares() {
     // through the check above by simply not being in it.
     let listed: BTreeSet<&str> = STRUCT_OUTPUT_FIELDS.iter().map(|(kind, _)| *kind).collect();
     for (kind, params) in DEFAULTS {
-        let (_, names) = last_reading(kind, params, 400);
+        let (_, names, _) = last_reading(kind, params, 400);
         assert!(
             names.is_empty() || listed.contains(kind),
             "{kind} exposes fields but is not in STRUCT_OUTPUT_FIELDS; add it with the           field names its wickra-core Output struct declares"
@@ -660,12 +713,16 @@ fn a_candle_indicator_reads_the_bar_not_the_price() {
 /// does not fail the build; only losing them does. Raise it when a regeneration
 /// legitimately grows the set.
 ///
-/// Lowered from 457 to 455 on purpose: `VolumeProfile` and `TpoProfile` were
-/// registered with only the two prices from an output whose third field is the
-/// variable-length bin list the profile exists for, so each reported `price_low`
-/// under a profile's name. They are now skipped like `Footprint`, whose output is
-/// the same shape. See `docs/INDICATORS.md`.
-const REGISTERED_FLOOR: usize = 455;
+/// Raised from 455 to 458: the generator learned three shapes it could not read
+/// before -- `Option<f64>` output fields (`Ichimoku`, `WilliamsFractals`) and a
+/// `MaType` constructor argument (`MacdExt`).
+///
+/// It was lowered from 457 to 455 before that, on purpose: `VolumeProfile` and
+/// `TpoProfile` were registered with only the two prices from an output whose
+/// third field is the variable-length bin list the profile exists for, so each
+/// reported `price_low` under a profile's name. They stay skipped like
+/// `Footprint`, whose output is the same shape. See `docs/INDICATORS.md`.
+const REGISTERED_FLOOR: usize = 461;
 
 #[test]
 fn the_registry_has_not_silently_shrunk() {

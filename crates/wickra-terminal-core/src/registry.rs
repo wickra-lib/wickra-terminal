@@ -269,6 +269,39 @@ where
     }
 }
 
+/// Wraps an indicator whose `Input = f64` is a per-period RETURN rather
+/// than a price, feeding it the close-to-close return of each closed bar.
+/// The first bar establishes the close to difference against and yields
+/// `None`; a previous close that is not a normal number is not divided by.
+struct ReturnsIn<I> {
+    inner: I,
+    previous_close: Option<f64>,
+}
+
+impl<I> TickIndicator for ReturnsIn<I>
+where
+    I: Indicator<Input = f64, Output = f64> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        input
+            .candle
+            .and_then(|candle| {
+                let close = candle.close;
+                self.previous_close
+                    .replace(close)
+                    .filter(|previous| previous.is_normal())
+                    .and_then(|previous| self.inner.update(close / previous - 1.0))
+            })
+            .filter(|value| value.is_finite())
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        Vec::new()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period() + 1
+    }
+}
+
 /// Wraps a price indicator whose output is a struct of `f64` fields. The
 /// primary value is the first field; every field is reachable by name.
 struct ScalarPriceFields<I, O> {
@@ -1524,6 +1557,51 @@ where
     }
 }
 
+impl<I> TickIndicator for CandleInFields<I, wc::IchimokuOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::IchimokuOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.tenkan.is_none_or(f64::is_finite)
+                    && last.kijun.is_none_or(f64::is_finite)
+                    && last.senkou_a.is_none_or(f64::is_finite)
+                    && last.senkou_b.is_none_or(f64::is_finite)
+                    && last.chikou.is_none_or(f64::is_finite)
+            });
+        self.last = out;
+        self.last.as_ref().and_then(|last| last.tenkan)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        let Some(last) = self.last.as_ref() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        if let Some(value) = last.tenkan {
+            out.push(("tenkan", value));
+        }
+        if let Some(value) = last.kijun {
+            out.push(("kijun", value));
+        }
+        if let Some(value) = last.senkou_a {
+            out.push(("senkou_a", value));
+        }
+        if let Some(value) = last.senkou_b {
+            out.push(("senkou_b", value));
+        }
+        if let Some(value) = last.chikou {
+            out.push(("chikou", value));
+        }
+        out
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
 impl<I> TickIndicator for CandleInFields<I, wc::InitialBalanceOutput>
 where
     I: Indicator<Input = Candle, Output = wc::InitialBalanceOutput> + Send,
@@ -2322,6 +2400,38 @@ where
     }
 }
 
+impl<I> TickIndicator for CandleInFields<I, wc::WilliamsFractalsOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::WilliamsFractalsOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input
+            .candle
+            .and_then(|c| self.inner.update(c))
+            .filter(|last| {
+                last.up.is_none_or(f64::is_finite) && last.down.is_none_or(f64::is_finite)
+            });
+        self.last = out;
+        self.last.as_ref().and_then(|last| last.up)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        let Some(last) = self.last.as_ref() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        if let Some(value) = last.up {
+            out.push(("up", value));
+        }
+        if let Some(value) = last.down {
+            out.push(("down", value));
+        }
+        out
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
 impl<I> TickIndicator for CandleInFields<I, wc::WoodiePivotsOutput>
 where
     I: Indicator<Input = Candle, Output = wc::WoodiePivotsOutput> + Send,
@@ -2820,7 +2930,7 @@ fn map_new<T>(kind: &str, made: core::result::Result<T, wc::Error>) -> Result<T>
 }
 
 /// Every registered indicator name, sorted.
-pub const KINDS: [&str; 457] = [
+pub const KINDS: [&str; 463] = [
     "AbandonedBaby",
     "Abcd",
     "AccelerationBands",
@@ -2959,6 +3069,7 @@ pub const KINDS: [&str; 457] = [
     "FractalChaosBands",
     "Frama",
     "FryPanBottom",
+    "GainLossRatio",
     "GainToPainRatio",
     "GapSideBySideWhite",
     "Garch11",
@@ -2995,6 +3106,7 @@ pub const KINDS: [&str; 457] = [
     "HtTrendMode",
     "HurstChannel",
     "HurstExponent",
+    "Ichimoku",
     "IdenticalThreeCrows",
     "InNeck",
     "Inertia",
@@ -3035,6 +3147,7 @@ pub const KINDS: [&str; 457] = [
     "M2Measure",
     "MaEnvelope",
     "Macd",
+    "MacdExt",
     "MacdFix",
     "MacdHistogram",
     "MacdIndicator",
@@ -3068,6 +3181,7 @@ pub const KINDS: [&str; 457] = [
     "Nrtr",
     "Nvi",
     "Obv",
+    "OmegaRatio",
     "OnNeck",
     "OpeningMarubozu",
     "OpeningRange",
@@ -3096,6 +3210,7 @@ pub const KINDS: [&str; 457] = [
     "Ppo",
     "PpoHistogram",
     "ProfileShape",
+    "ProfitFactor",
     "ProjectionBands",
     "ProjectionOscillator",
     "Psar",
@@ -3268,6 +3383,7 @@ pub const KINDS: [&str; 457] = [
     "Wedge",
     "WeightedClose",
     "WickRatio",
+    "WilliamsFractals",
     "WilliamsR",
     "WinRate",
     "Wma",
@@ -3284,7 +3400,7 @@ pub const KINDS: [&str; 457] = [
 /// same values the library pins its own reference outputs with. Used by the
 /// build-all test so every registered indicator is constructed the way wickra
 /// constructs it, rather than with a guessed parameter count.
-pub const DEFAULTS: [(&str, &[f64]); 455] = [
+pub const DEFAULTS: [(&str, &[f64]); 461] = [
     ("AbandonedBaby", &[]),
     ("Abcd", &[]),
     ("AccelerationBands", &[14.0, 2.0]),
@@ -3422,6 +3538,7 @@ pub const DEFAULTS: [(&str, &[f64]); 455] = [
     ("FractalChaosBands", &[14.0]),
     ("Frama", &[14.0]),
     ("FryPanBottom", &[14.0]),
+    ("GainLossRatio", &[14.0]),
     ("GainToPainRatio", &[14.0]),
     ("GapSideBySideWhite", &[]),
     ("Garch11", &[2e-06, 0.1, 0.88]),
@@ -3458,6 +3575,7 @@ pub const DEFAULTS: [(&str, &[f64]); 455] = [
     ("HtTrendMode", &[]),
     ("HurstChannel", &[14.0, 2.0]),
     ("HurstExponent", &[100.0, 4.0]),
+    ("Ichimoku", &[9.0, 26.0, 52.0, 26.0]),
     ("IdenticalThreeCrows", &[]),
     ("InNeck", &[]),
     ("Inertia", &[3.0, 7.0]),
@@ -3497,6 +3615,7 @@ pub const DEFAULTS: [(&str, &[f64]); 455] = [
     ("LongLine", &[]),
     ("M2Measure", &[14.0, 2.0, 0.5]),
     ("MaEnvelope", &[14.0, 2.0]),
+    ("MacdExt", &[12.0, 0.0, 26.0, 0.0, 9.0, 0.0]),
     ("MacdFix", &[9.0]),
     ("MacdHistogram", &[3.0, 7.0, 14.0]),
     ("MacdIndicator", &[12.0, 26.0, 9.0]),
@@ -3530,6 +3649,7 @@ pub const DEFAULTS: [(&str, &[f64]); 455] = [
     ("Nrtr", &[2.0]),
     ("Nvi", &[]),
     ("Obv", &[]),
+    ("OmegaRatio", &[14.0, 2.0]),
     ("OnNeck", &[]),
     ("OpeningMarubozu", &[]),
     ("OpeningRange", &[14.0]),
@@ -3558,6 +3678,7 @@ pub const DEFAULTS: [(&str, &[f64]); 455] = [
     ("Ppo", &[3.0, 7.0]),
     ("PpoHistogram", &[3.0, 7.0, 14.0]),
     ("ProfileShape", &[3.0, 7.0]),
+    ("ProfitFactor", &[14.0]),
     ("ProjectionBands", &[14.0]),
     ("ProjectionOscillator", &[14.0]),
     ("Psar", &[0.02, 0.02, 0.2]),
@@ -3730,6 +3851,7 @@ pub const DEFAULTS: [(&str, &[f64]); 455] = [
     ("Wedge", &[]),
     ("WeightedClose", &[]),
     ("WickRatio", &[]),
+    ("WilliamsFractals", &[]),
     ("WilliamsR", &[14.0]),
     ("WinRate", &[14.0]),
     ("Wma", &[14.0]),
@@ -4539,6 +4661,10 @@ fn build_inner(
         "FryPanBottom" => Ok(Box::new(CandleIn {
             inner: map_new(kind, wc::FryPanBottom::new(usize_param(params, 0, kind)?))?,
         })),
+        "GainLossRatio" => Ok(Box::new(ReturnsIn {
+            inner: map_new(kind, wc::GainLossRatio::new(usize_param(params, 0, kind)?))?,
+            previous_close: None,
+        })),
         "GainToPainRatio" => Ok(Box::new(ScalarPrice {
             inner: map_new(
                 kind,
@@ -4719,6 +4845,18 @@ fn build_inner(
                     usize_param(params, 1, kind)?,
                 ),
             )?,
+        })),
+        "Ichimoku" => Ok(Box::new(CandleInFields {
+            inner: map_new(
+                kind,
+                wc::Ichimoku::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                    usize_param(params, 2, kind)?,
+                    usize_param(params, 3, kind)?,
+                ),
+            )?,
+            last: None,
         })),
         "IdenticalThreeCrows" => Ok(Box::new(CandleIn {
             inner: wc::IdenticalThreeCrows::new(),
@@ -4951,6 +5089,20 @@ fn build_inner(
             )?,
             last: None,
         })),
+        "MacdExt" => Ok(Box::new(ScalarPriceFields {
+            inner: map_new(
+                kind,
+                wc::MacdExt::new(
+                    usize_param(params, 0, kind)?,
+                    map_new(kind, wc::MaType::from_code(u32_param(params, 1, kind)?))?,
+                    usize_param(params, 2, kind)?,
+                    map_new(kind, wc::MaType::from_code(u32_param(params, 3, kind)?))?,
+                    usize_param(params, 4, kind)?,
+                    map_new(kind, wc::MaType::from_code(u32_param(params, 5, kind)?))?,
+                ),
+            )?,
+            last: None,
+        })),
         "MacdFix" => Ok(Box::new(ScalarPriceFields {
             inner: map_new(kind, wc::MacdFix::new(usize_param(params, 0, kind)?))?,
             last: None,
@@ -5094,6 +5246,13 @@ fn build_inner(
         })),
         "Obv" => Ok(Box::new(CandleIn {
             inner: wc::Obv::new(),
+        })),
+        "OmegaRatio" => Ok(Box::new(ReturnsIn {
+            inner: map_new(
+                kind,
+                wc::OmegaRatio::new(usize_param(params, 0, kind)?, float_param(params, 1, kind)?),
+            )?,
+            previous_close: None,
         })),
         "OnNeck" => Ok(Box::new(CandleIn {
             inner: wc::OnNeck::new(),
@@ -5239,6 +5398,10 @@ fn build_inner(
                 kind,
                 wc::ProfileShape::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
             )?,
+        })),
+        "ProfitFactor" => Ok(Box::new(ReturnsIn {
+            inner: map_new(kind, wc::ProfitFactor::new(usize_param(params, 0, kind)?))?,
+            previous_close: None,
         })),
         "ProjectionBands" => Ok(Box::new(CandleInFields {
             inner: map_new(
@@ -6112,6 +6275,10 @@ fn build_inner(
         })),
         "WickRatio" => Ok(Box::new(CandleIn {
             inner: wc::WickRatio::new(),
+        })),
+        "WilliamsFractals" => Ok(Box::new(CandleInFields {
+            inner: wc::WilliamsFractals::new(),
+            last: None,
         })),
         "WilliamsR" => Ok(Box::new(CandleIn {
             inner: map_new(kind, wc::WilliamsR::new(usize_param(params, 0, kind)?))?,
