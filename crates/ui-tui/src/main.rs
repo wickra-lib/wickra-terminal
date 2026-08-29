@@ -126,6 +126,98 @@ mod tests {
     use super::*;
     use wickra_terminal_core::SourceSpec;
 
+    /// A config file in the temp directory, removed when the guard drops.
+    ///
+    /// Named per test rather than shared: the suite runs in parallel, and two
+    /// tests writing one path would each read the other's config.
+    struct TempConfig(PathBuf);
+
+    impl TempConfig {
+        fn new(name: &str, body: &str) -> Self {
+            let path = std::env::temp_dir().join(format!("wickra-terminal-{name}.toml"));
+            std::fs::write(&path, body).expect("a writable temp directory");
+            Self(path)
+        }
+    }
+
+    impl Drop for TempConfig {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    fn cli(source: Option<&str>, config: Option<PathBuf>) -> Cli {
+        Cli {
+            source: source.map(ToOwned::to_owned),
+            config,
+        }
+    }
+
+    #[test]
+    fn a_config_file_wins_over_a_source_shorthand() {
+        // Documented precedence. A user who passes both and silently gets the
+        // shorthand is debugging a file that was never read.
+        let file = TempConfig::new("precedence", "[[sources]]\nSynth = { seed = 42 }\n");
+        let cfg = build_config(&cli(Some("synth:1"), Some(file.0.clone()))).unwrap();
+        assert_eq!(cfg.sources, vec![SourceSpec::Synth { seed: 42 }]);
+    }
+
+    #[test]
+    fn a_config_file_that_is_not_there_is_reported() {
+        let missing = std::env::temp_dir().join("wickra-terminal-no-such-config.toml");
+        let _ = std::fs::remove_file(&missing);
+        assert!(build_config(&cli(None, Some(missing))).is_err());
+    }
+
+    #[test]
+    fn a_config_file_that_is_not_a_config_is_reported() {
+        // The read succeeds and the parse does not, which is a different arm
+        // from a missing file and returns a different error type.
+        let file = TempConfig::new("malformed", "not = = valid\n");
+        let err = build_config(&cli(None, Some(file.0.clone()))).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid config"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn a_source_shorthand_that_does_not_parse_is_reported() {
+        let err = build_config(&cli(Some("teleport:1"), None)).unwrap_err();
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn neither_flag_is_the_bare_default_layout() {
+        // The terminal starts with no source and the renderer draws its hint;
+        // defaulting to a synth feed here would show a market nobody asked for.
+        let cfg = build_config(&cli(None, None)).unwrap();
+        assert!(cfg.sources.is_empty());
+        assert_eq!(cfg.layout.panels, Config::default_layout().layout.panels);
+    }
+
+    #[test]
+    fn a_source_with_no_market_of_its_own_gets_one_to_focus() {
+        // Synth and replay carry no symbol, so nothing would be focused and
+        // every panel would render its empty state on a feed that is running.
+        let mut config = Config::default_layout();
+        config.sources = vec![SourceSpec::Synth { seed: 1 }];
+        let mut terminal = Terminal::new(&config).unwrap();
+        assert!(terminal.state().focus.is_none());
+        ensure_subscription(&mut terminal, &config).unwrap();
+        assert!(terminal.state().focus.is_some());
+    }
+
+    #[test]
+    fn a_terminal_with_no_source_at_all_subscribes_to_nothing() {
+        // Subscribing against source 0 when there is no source 0 is an error,
+        // so the guard is what keeps a bare launch from failing outright.
+        let config = Config::default_layout();
+        let mut terminal = Terminal::new(&config).unwrap();
+        ensure_subscription(&mut terminal, &config).unwrap();
+        assert!(terminal.state().focus.is_none());
+    }
+
     #[test]
     fn build_config_from_source_adds_the_source() {
         let cli = Cli {
