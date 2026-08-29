@@ -96,7 +96,7 @@ jobs:
       - name: Node
         run: |
           cd bindings/node
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npm run build
           node benchmarks/throughput.js --ticks "$TICKS"
 

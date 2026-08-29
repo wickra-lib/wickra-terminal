@@ -301,7 +301,7 @@ jobs:
           cache: npm
           cache-dependency-path: bindings/node/package-lock.json
       - name: Install Node dependencies
-        run: cd bindings/node && npm install --no-audit --no-fund
+        run: cd bindings/node && npm ci --no-audit --no-fund
       # --platform puts the target triple into the filename so the loader finds
       # the freshly built binary instead of a per-platform npm subpackage.
       - name: Build native module
