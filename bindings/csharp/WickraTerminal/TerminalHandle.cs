@@ -8,10 +8,11 @@ namespace WickraTerminal;
 /// </summary>
 /// <remarks>
 /// <para>
-/// A <see cref="SafeHandle"/> rather than a raw <c>IntPtr</c> with a finalizer,
-/// which is exactly the pattern SafeHandle exists to replace. The raw form had
-/// two holes. The collector may finalize a <c>Terminal</c> once nothing refers to
-/// it, and reading <c>_handle</c> into an argument register is the last reference
+/// A <see cref="System.Runtime.InteropServices.SafeHandle"/> rather than a raw
+/// <c>IntPtr</c> with a finalizer, which is exactly the pattern SafeHandle
+/// exists to replace. The raw form had two holes. The collector may finalize a
+/// <c>Terminal</c> once nothing refers to it, and reading <c>_handle</c> into an
+/// argument register is the last reference
 /// — so the finalizer could free the terminal while the call using it was still
 /// running. And <c>Dispose</c> was a read, a call and a write with no
 /// synchronisation, so two threads disposing at once could both see a live
