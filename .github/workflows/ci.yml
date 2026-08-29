@@ -333,7 +333,7 @@ jobs:
         with:
           tool: wasm-pack
       # Two targets, two consumers: `web` is what the Vue renderer imports and
-      # what web-deploy.yml ships; `nodejs` is the only form `require()` can
+      # what web.yml builds; `nodejs` is the only form `require()` can
       # load, so the test suite needs it. Building both also proves a change
       # has not broken either output shape.
       - name: Build the wasm binding (web target)
