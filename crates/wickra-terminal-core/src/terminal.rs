@@ -121,6 +121,35 @@ enum Command {
 pub struct Catalogue {
     /// Every indicator this build accepts.
     pub indicators: Vec<CatalogueEntry>,
+    /// Every profile this build accepts, for `config.profiles`.
+    ///
+    /// A separate list rather than more indicator rows: a profile answers with a
+    /// histogram and an indicator with a number, and one list holding both would
+    /// make every consumer filter before it could use either. Listed at all
+    /// because this is the discovery surface every binding reads -- omitted, a
+    /// caller outside Rust has no way to learn these exist or what they take.
+    pub profiles: Vec<SurfaceEntry>,
+    /// Every alternative bar type this build accepts, for `config.bars`.
+    ///
+    /// Apart from the profiles for the same reason they are apart from the
+    /// indicators: these complete zero or more bars per candle rather than
+    /// answering with anything.
+    pub bar_types: Vec<SurfaceEntry>,
+}
+
+/// One row of a catalogue surface that is not an indicator.
+///
+/// A profile and a bar type are constructible by name with parameters, and
+/// nothing else about a `CatalogueEntry` applies to them: neither reads a second
+/// market, and neither has an alias. Reporting them through that row would mean
+/// two fields that are always false and always absent, which reads as "we did
+/// not think about it" rather than "these do not apply".
+#[derive(Debug, Serialize)]
+pub struct SurfaceEntry {
+    /// The name, as `IndicatorSpec::kind` in `config.profiles` or `config.bars`.
+    pub kind: String,
+    /// The parameters the wickra golden manifest pins it at.
+    pub params: Vec<f64>,
 }
 
 /// One catalogue row.
@@ -178,6 +207,20 @@ impl Catalogue {
                         needs_reference: registry::PAIRWISE.contains(&lookup),
                         alias_of: canonical.map(ToString::to_string),
                     }
+                })
+                .collect(),
+            profiles: registry::PROFILES
+                .iter()
+                .map(|(kind, params)| SurfaceEntry {
+                    kind: (*kind).to_string(),
+                    params: params.to_vec(),
+                })
+                .collect(),
+            bar_types: registry::BAR_TYPES
+                .iter()
+                .map(|(kind, params)| SurfaceEntry {
+                    kind: (*kind).to_string(),
+                    params: params.to_vec(),
                 })
                 .collect(),
         }
@@ -896,6 +939,50 @@ mod tests {
             .find(|r| r["kind"] == "Sma")
             .expect("Sma in the catalogue");
         assert_eq!(sma["params"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn the_catalogue_lists_every_profile_and_bar_type() {
+        // `ListIndicators` is how a caller outside Rust finds out what this
+        // build can do. It carried the indicators only, so the six profiles and
+        // ten bar types were configurable by name and undiscoverable: a Python
+        // or Go user had no way to learn that `VolumeProfile` exists, let alone
+        // what it takes, short of reading the Rust source.
+        let catalogue = Catalogue::current();
+        for (kind, params) in registry::PROFILES {
+            let row = catalogue
+                .profiles
+                .iter()
+                .find(|row| row.kind == kind)
+                .unwrap_or_else(|| panic!("the catalogue does not list the profile {kind}"));
+            assert_eq!(row.params, params, "{kind} is listed with other parameters");
+        }
+        for (kind, params) in registry::BAR_TYPES {
+            let row = catalogue
+                .bar_types
+                .iter()
+                .find(|row| row.kind == kind)
+                .unwrap_or_else(|| panic!("the catalogue does not list the bar type {kind}"));
+            assert_eq!(row.params, params, "{kind} is listed with other parameters");
+        }
+        assert_eq!(catalogue.profiles.len(), registry::PROFILES.len());
+        assert_eq!(catalogue.bar_types.len(), registry::BAR_TYPES.len());
+    }
+
+    #[test]
+    fn a_catalogue_row_is_constructible_as_it_stands() {
+        // The reason the parameters are carried at all: a caller should be able
+        // to take a row and build it without a second lookup. That was true of
+        // the indicators and is now claimed for the other two surfaces.
+        let catalogue = Catalogue::current();
+        for row in &catalogue.profiles {
+            registry::build_profile(&row.kind, &row.params)
+                .unwrap_or_else(|err| panic!("{}: {err}", row.kind));
+        }
+        for row in &catalogue.bar_types {
+            registry::build_bars(&row.kind, &row.params)
+                .unwrap_or_else(|err| panic!("{}: {err}", row.kind));
+        }
     }
 
     #[test]

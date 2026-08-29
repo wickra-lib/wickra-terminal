@@ -59,6 +59,47 @@ def test_the_catalogue_lists_the_whole_registry():
     assert by_kind["AdaptiveCycle"] == [], "a parameterless indicator carries an empty list"
 
 
+def test_the_catalogue_lists_the_other_two_surfaces():
+    # Profiles and alternative bar types are configurable by name, so a caller
+    # outside Rust has to be able to find them. Until this landed the catalogue
+    # carried the indicators only: `VolumeProfile` was constructible and
+    # invisible, and the only way to learn it existed was to read the Rust.
+    #
+    # They are separate lists rather than more indicator rows because they
+    # answer with different things -- a histogram and a stream of bars, against
+    # an indicator's single number -- and merging them would make every consumer
+    # filter before it could use any of them.
+    term = wt.Terminal(CONFIG)
+    catalogue = json.loads(term.command(json.dumps({"type": "ListIndicators"})))
+
+    profiles = {row["kind"]: row["params"] for row in catalogue["profiles"]}
+    assert "VolumeProfile" in profiles, sorted(profiles)
+    assert len(profiles) >= 6, sorted(profiles)
+    assert len(profiles["VolumeProfile"]) == 2, profiles["VolumeProfile"]
+
+    bar_types = {row["kind"]: row["params"] for row in catalogue["bar_types"]}
+    assert "RenkoBars" in bar_types, sorted(bar_types)
+    assert len(bar_types) >= 10, sorted(bar_types)
+
+    # A row is constructible as it stands: feeding one straight back as a config
+    # is what discovery is for.
+    spec = {"kind": "RenkoBars", "params": bar_types["RenkoBars"]}
+    config = json.loads(CONFIG)
+    config["bars"] = [spec]
+    config["layout"] = {
+        "panels": [{"kind": "Bars", "rect": {"x": 0, "y": 0, "w": 100, "h": 100}}]
+    }
+    built = wt.Terminal(json.dumps(config))
+    built.command(json.dumps({"type": "Subscribe", "source": 0, "symbol": "BTC/USDT"}))
+    frame = json.loads(built.command(json.dumps({"type": "Tick"})))
+    panel = frame["panels"][0]
+    assert panel["panel"] == "bars", frame
+    # The label comes from the parameters the catalogue handed out, so it is not
+    # spelled here: pinning "RenkoBars(3)" would assert the golden corpus's own
+    # choice of box size rather than what discovery actually returned.
+    assert panel["streams"][0]["label"].startswith("RenkoBars("), frame
+
+
 def test_an_unknown_indicator_is_rejected_with_its_name():
     term = wt.Terminal(CONFIG)
     try:

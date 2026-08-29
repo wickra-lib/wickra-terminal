@@ -138,7 +138,7 @@ the same JSON in all of them:
 | `FeedDerivatives` | Fold a derivatives update -- funding, open interest, positioning, mark/index/futures -- into a market |
 | `AddIndicator` / `RemoveIndicator` | Track or drop an indicator on every market |
 | `SetTimeframe` | Set the bar size the candle-input indicators are fed at |
-| `ListIndicators` | The catalogue: every registry name with its default parameters |
+| `ListIndicators` | The catalogue: every indicator, profile and bar type this build accepts, each with its default parameters |
 
 `ListIndicators` is the one command that answers rather than renders, and each
 row carries `needs_reference`, which marks the pairwise indicators that compare
