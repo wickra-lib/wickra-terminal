@@ -5,7 +5,7 @@ use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
-use terminal_core::view::FootprintView;
+use wickra_terminal_core::view::FootprintView;
 
 /// Render the footprint panel.
 pub(crate) fn render(frame: &mut Frame, area: Rect, view: &FootprintView, focused: bool) {

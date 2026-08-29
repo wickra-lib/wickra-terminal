@@ -12,7 +12,7 @@ on:
     paths:
       - "web/**"
       - "bindings/wasm/**"
-      - "crates/terminal-core/**"
+      - "crates/wickra-terminal-core/**"
       - ".github/workflows/web-deploy.yml"
   workflow_dispatch:
 

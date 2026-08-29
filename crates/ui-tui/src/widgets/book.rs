@@ -5,7 +5,7 @@ use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
-use terminal_core::view::{BookView, Level};
+use wickra_terminal_core::view::{BookView, Level};
 
 fn level_line(level: &Level) -> String {
     format!("{:>12.2} {:>12.4}", level.price, level.quantity)

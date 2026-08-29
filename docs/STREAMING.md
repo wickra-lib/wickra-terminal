@@ -7,7 +7,7 @@ second regardless of how long a session has run.
 
 ## The fold
 
-[`AppState::fold`](../crates/terminal-core/src/state.rs) applies a single event
+[`AppState::fold`](../crates/wickra-terminal-core/src/state.rs) applies a single event
 to one `(SourceId, Symbol)`'s state incrementally:
 
 - **Trade** → update `last`, push into the bounded `TapeRing`, add to the
@@ -35,7 +35,7 @@ market instead of accumulating every price a session has touched.
 
 More than half the Wickra indicator set reads a `Candle`, and a terminal has
 ticks. The same trade that advances the price indicators is folded into a
-[`CandleBuilder`](../crates/terminal-core/src/candle.rs), which returns a closed
+[`CandleBuilder`](../crates/wickra-terminal-core/src/candle.rs), which returns a closed
 bar on the tick that crosses a bar boundary and nothing on every other tick. So a
 price indicator advances once per trade and a bar indicator once per bar, from
 one code path and one pass.
@@ -57,7 +57,7 @@ binding replaying the feed must reproduce the same frame.
 Regenerate the fixtures after an intentional schema change:
 
 ```bash
-WICKRA_REGEN=1 cargo test -p terminal-core --test golden
+WICKRA_REGEN=1 cargo test -p wickra-terminal-core --test golden
 ```
 
 ## Property and fuzz coverage

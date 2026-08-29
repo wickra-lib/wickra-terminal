@@ -48,4 +48,4 @@ jobs:
         # The skip still prints a job warning, so a blocked runner stays visible.
         env:
           WICKRA_LIVE_ALLOW_SKIP: "1"
-        run: cargo test -p terminal-core --all-features -- --ignored --nocapture
+        run: cargo test -p wickra-terminal-core --all-features -- --ignored --nocapture

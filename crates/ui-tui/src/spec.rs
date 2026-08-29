@@ -1,8 +1,8 @@
 //! Parse a source shorthand (`--source` flag or the runtime source menu) into a
 //! [`SourceSpec`]. Shared by the CLI and the interactive source menu.
 
-use terminal_core::source::live::parse_live_shorthand;
-use terminal_core::SourceSpec;
+use wickra_terminal_core::source::live::parse_live_shorthand;
+use wickra_terminal_core::SourceSpec;
 
 /// Parse `synth:<seed>`, `live:<venue>:<BASE/QUOTE>` or `replay:<json>`.
 ///

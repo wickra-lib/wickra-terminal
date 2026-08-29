@@ -20,7 +20,7 @@ entry names a scenario:
 A binding reads the manifest, and for each scenario builds a terminal from the
 config, replays the commands in order, and asserts the final frame equals the
 expected file. Adding a scenario is one entry in `SCENARIOS` in
-`crates/terminal-core/tests/golden.rs` plus a regeneration — no binding test
+`crates/wickra-terminal-core/tests/golden.rs` plus a regeneration — no binding test
 changes, in any language.
 
 ## The files
@@ -74,7 +74,7 @@ parser, which is the whole reason every manifest value is a plain path.
 After an intentional change to the state fold or the view-model schema:
 
 ```bash
-WICKRA_REGEN=1 cargo test -p terminal-core --test golden
+WICKRA_REGEN=1 cargo test -p wickra-terminal-core --test golden
 ```
 
 Review the diff, then commit the updated fixtures. A frame that changed without

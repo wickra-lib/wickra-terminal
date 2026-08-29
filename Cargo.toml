@@ -1,5 +1,5 @@
 # Wickra Terminal — workspace.
-# A streaming trading terminal built as one data-driven core (`terminal-core`)
+# A streaming trading terminal built as one data-driven core (`wickra-terminal-core`)
 # with two reference renderers: a native TUI (ratatui) and a Web front-end
 # (WASM + Vue). The core is exposed as a JSON-over-C-ABI data API in ten
 # languages, mirroring the Wickra tiering: Rust core -> native Python/Node/WASM
@@ -9,7 +9,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/terminal-core",
+    "crates/wickra-terminal-core",
     "crates/ui-tui",
     "crates/terminal-bench",
     "bindings/c",
@@ -49,7 +49,7 @@ wickra-core = "1"
 # native connectivity (tokio/reqwest) used only by the `live` feature.
 wickra-exchange-core = { git = "https://github.com/wickra-lib/wickra-exchange", rev = "330df9127829e0caaab4d097d8ce6e659586aa71", version = "0.1" }
 wickra-exchange = { git = "https://github.com/wickra-lib/wickra-exchange", rev = "330df9127829e0caaab4d097d8ce6e659586aa71", version = "0.1" }
-terminal-core = { version = "0.1.0", path = "crates/terminal-core" }
+wickra-terminal-core = { version = "0.1.0", path = "crates/wickra-terminal-core" }
 # Serialization — the data-driven boundary (config/command/view-models as JSON).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

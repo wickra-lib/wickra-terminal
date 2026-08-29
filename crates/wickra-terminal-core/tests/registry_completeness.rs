@@ -12,9 +12,9 @@
 
 use std::collections::BTreeSet;
 
-use terminal_core::registry::{build, build_paired, DEFAULTS, KINDS, PAIRWISE};
-use terminal_core::{CandleBuilder, TickInput, Timeframe};
 use wickra_core::{Candle, Level, OrderBook, Side, Trade};
+use wickra_terminal_core::registry::{build, build_paired, DEFAULTS, KINDS, PAIRWISE};
+use wickra_terminal_core::{CandleBuilder, TickInput, Timeframe};
 
 /// The market a pairwise indicator is compared against in this suite.
 const REFERENCE: &str = "ETH/USDT";
@@ -23,7 +23,7 @@ const REFERENCE: &str = "ETH/USDT";
 ///
 /// `build` deliberately refuses a pairwise kind rather than defaulting its
 /// reference, so a suite that drives every arm has to say which market it means.
-fn build_any(kind: &str, params: &[f64]) -> Box<dyn terminal_core::TickIndicator> {
+fn build_any(kind: &str, params: &[f64]) -> Box<dyn wickra_terminal_core::TickIndicator> {
     let built = if PAIRWISE.contains(&kind) {
         build_paired(kind, params, REFERENCE)
     } else {
@@ -630,7 +630,7 @@ fn the_registry_is_object_safe_in_a_heterogeneous_collection() {
         })
         .collect();
     assert_eq!(mixed.len(), 5);
-    let _: &dyn terminal_core::TickIndicator = mixed[0].as_ref();
+    let _: &dyn wickra_terminal_core::TickIndicator = mixed[0].as_ref();
 }
 
 #[test]

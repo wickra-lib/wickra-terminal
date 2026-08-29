@@ -1,7 +1,7 @@
 # Panels
 
-A panel is a pure function from [`AppState`](../crates/terminal-core/src/state.rs)
-and the focused market to a [`PanelView`](../crates/terminal-core/src/view.rs) —
+A panel is a pure function from [`AppState`](../crates/wickra-terminal-core/src/state.rs)
+and the focused market to a [`PanelView`](../crates/wickra-terminal-core/src/view.rs) —
 a plain data description of what to draw (values, series, sides), never a
 renderer command. Adding a panel makes it appear in **every** renderer at once,
 because each renderer is only a mapping from `PanelView` to its own widget.
@@ -97,13 +97,13 @@ renders exactly as fast as one that just started:
 ## Adding a panel
 
 1. Add a `PanelView` variant and its `*View` struct in
-   `crates/terminal-core/src/view.rs` (derive `Serialize`/`Deserialize`).
+   `crates/wickra-terminal-core/src/view.rs` (derive `Serialize`/`Deserialize`).
 2. Add a `PanelKind` and a `Panel` implementation in
-   `crates/terminal-core/src/panels/`, and wire it into `build_panel`.
+   `crates/wickra-terminal-core/src/panels/`, and wire it into `build_panel`.
 3. Map the new variant to a widget in `crates/ui-tui/src/widgets/` (TUI) and a
    canvas or DOM view in `web/src/` (Web).
 4. Regenerate the golden corpus if the default layout changed:
-   `WICKRA_REGEN=1 cargo test -p terminal-core --test golden`.
+   `WICKRA_REGEN=1 cargo test -p wickra-terminal-core --test golden`.
 
 Steps 1 and 2 are the feature. Step 3 is twice, once per renderer, and that is
 the whole cost of a second front-end — the core stays the single source of truth,

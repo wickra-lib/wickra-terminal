@@ -4,7 +4,7 @@
 //! crossed books) — may panic.
 
 use libfuzzer_sys::fuzz_target;
-use terminal_core::{AppState, Event, Symbol};
+use wickra_terminal_core::{AppState, Event, Symbol};
 
 fuzz_target!(|data: &[u8]| {
     let Ok(text) = std::str::from_utf8(data) else {

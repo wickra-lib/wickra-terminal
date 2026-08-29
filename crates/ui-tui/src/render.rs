@@ -4,7 +4,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use ratatui::Frame as TuiFrame;
-use terminal_core::{Config, Frame, RectSpec};
+use wickra_terminal_core::{Config, Frame, RectSpec};
 
 use crate::widgets;
 

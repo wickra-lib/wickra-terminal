@@ -7,7 +7,7 @@ open an issue first so we can agree on the approach.
 ## Orientation
 
 - The core — the `DataSource` trait, `AppState`, panels and the view-model
-  machinery — lives in `crates/terminal-core`. It is renderer-agnostic: panels
+  machinery — lives in `crates/wickra-terminal-core`. It is renderer-agnostic: panels
   emit view-models, never renderer commands.
 - The two reference renderers consume those view-models: the native TUI in
   `crates/ui-tui` (ratatui) and the Web front-end in `web/` (Vue over the WASM
@@ -50,11 +50,11 @@ add a test that uses mainnet or real keys.
 
 ## Adding a panel or a source
 
-A new **panel** implements the `Panel` trait in `crates/terminal-core/src/panels/`,
+A new **panel** implements the `Panel` trait in `crates/wickra-terminal-core/src/panels/`,
 adds a `PanelView` variant in `src/view.rs`, and gets a widget in the TUI and a
 canvas renderer in the Web front-end — the core stays the single source of truth.
 A new **data source** implements the `DataSource` trait in
-`crates/terminal-core/src/source/`, registers in `build_source`, and ships a
+`crates/wickra-terminal-core/src/source/`, registers in `build_source`, and ships a
 golden replay fixture. See `docs/INDICATORS.md`, `docs/PANELS.md` and `docs/SOURCES.md`.
 
 ## Developer Certificate of Origin

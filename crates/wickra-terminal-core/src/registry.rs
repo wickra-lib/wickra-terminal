@@ -5,7 +5,7 @@
 //! GENERATED FILE — do not edit by hand. Regenerate with:
 //!
 //! ```text
-//! python tools/gen_registry.py --wickra ../wickra --out crates/terminal-core/src/registry.rs
+//! python tools/gen_registry.py --wickra ../wickra --out crates/wickra-terminal-core/src/registry.rs
 //! cargo fmt --all
 //! ```
 //!

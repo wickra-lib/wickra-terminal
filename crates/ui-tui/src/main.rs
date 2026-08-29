@@ -1,6 +1,6 @@
 //! `wickra-terminal` — the native TUI renderer.
 //!
-//! One of two reference renderers over [`terminal_core`]; the other is the Web
+//! One of two reference renderers over [`wickra_terminal_core`]; the other is the Web
 //! app in `web/`. Both consume the same view-models, and both are driven by the
 //! same config.
 //!
@@ -26,7 +26,7 @@ use clap::Parser;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal as TuiTerminal;
-use terminal_core::{Config, Symbol, Terminal};
+use wickra_terminal_core::{Config, Symbol, Terminal};
 
 use app::App;
 use term::TermGuard;
@@ -124,7 +124,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use terminal_core::SourceSpec;
+    use wickra_terminal_core::SourceSpec;
 
     #[test]
     fn build_config_from_source_adds_the_source() {

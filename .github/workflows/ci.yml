@@ -94,7 +94,7 @@ jobs:
       # The Node binding (napi 3) and the ui-tui app (ratatui pulls instability,
       # which needs 1.88) require Rust 1.88 and are checked separately below; the
       # Python binding needs maturin's platform link flags and is built by the
-      # `python` job. The library (terminal-core) and the C ABI stay 1.86.
+      # `python` job. The library (wickra-terminal-core) and the C ABI stay 1.86.
       - run: >
           cargo build --workspace
           --exclude wickra-terminal-python
@@ -640,19 +640,19 @@ jobs:
           tool: cargo-llvm-cov
       - name: Generate coverage (lcov)
         # Both product crates, not just the core: ui-tui is a thousand lines of
-        # renderer with its own tests, and measuring only terminal-core reported a
+        # renderer with its own tests, and measuring only wickra-terminal-core reported a
         # number for a third of the code while the rest went unseen. terminal-bench
         # stays out — benches are not product code, and neither sibling repo
         # measures its bench crate.
         #
         # This used to pass `--no-default-features`, with a comment claiming it
         # dropped the `live` feature. It did not. `wickra-terminal` depends on
-        # `terminal-core` with default features, and feature unification turns
+        # `wickra-terminal-core` with default features, and feature unification turns
         # `live` straight back on:
         #
-        #   cargo tree --no-default-features -e features -i terminal-core
-        #     terminal-core feature "default" <- wickra-terminal
-        #     terminal-core feature "live"    <- terminal-core feature "default"
+        #   cargo tree --no-default-features -e features -i wickra-terminal-core
+        #     wickra-terminal-core feature "default" <- wickra-terminal
+        #     wickra-terminal-core feature "live"    <- wickra-terminal-core feature "default"
         #
         # So the flag did nothing except describe a state that never held, and it
         # could not be made to work without dropping ui-tui from the measurement,
@@ -665,7 +665,7 @@ jobs:
         # feature in coverage; that is the way to close this one too.
         run: >
           cargo llvm-cov
-          -p terminal-core -p wickra-terminal
+          -p wickra-terminal-core -p wickra-terminal
           --lcov --output-path lcov.info
       - name: Upload to Codecov
         if: env.CODECOV_TOKEN != ''

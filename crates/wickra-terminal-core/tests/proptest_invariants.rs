@@ -10,10 +10,10 @@
 
 use proptest::prelude::*;
 use rust_decimal::Decimal;
-use terminal_core::{
+use wickra_exchange_core::{BookLevel, OrderBookSnapshot, OrderSide, TradePrint};
+use wickra_terminal_core::{
     AppState, CandleBuilder, Config, Event, IndicatorSpec, SourceSpec, Symbol, Terminal, Timeframe,
 };
-use wickra_exchange_core::{BookLevel, OrderBookSnapshot, OrderSide, TradePrint};
 
 /// The default tape-ring cap in `SymbolState` (mirrored from the core).
 const TAPE_CAP: usize = 256;

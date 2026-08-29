@@ -1,7 +1,7 @@
 # Wickra Terminal — Web renderer
 
 The browser renderer of the Wickra trading terminal: a Vue 3 + Vite front-end
-over the WASM binding (`bindings/wasm`). It runs the exact same `terminal-core`
+over the WASM binding (`bindings/wasm`). It runs the exact same `wickra-terminal-core`
 as the native TUI, compiled to WebAssembly, and renders the identical frame
 view-models — the chart to a canvas, the book/tape/watchlist to the DOM.
 

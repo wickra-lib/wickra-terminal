@@ -11,7 +11,7 @@
 use napi::Result;
 use napi_derive::napi;
 
-use terminal_core::Terminal as CoreTerminal;
+use wickra_terminal_core::Terminal as CoreTerminal;
 
 /// Build a napi error from a message.
 fn err(message: impl Into<String>) -> napi::Error {

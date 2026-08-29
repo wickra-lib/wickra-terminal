@@ -1,4 +1,4 @@
-//! # terminal-core
+//! # wickra-terminal-core
 //!
 //! The data-driven core of the Wickra trading terminal. It folds market events
 //! into an O(1) [`AppState`] and turns [`panels`] into [`view`]-models — plain
@@ -18,7 +18,7 @@
 //!   data-driven FFI boundary the bindings drive.
 //!
 //! ```
-//! use terminal_core::{Config, SourceSpec, Terminal, Symbol};
+//! use wickra_terminal_core::{Config, SourceSpec, Terminal, Symbol};
 //!
 //! let mut cfg = Config::default_layout();
 //! cfg.sources = vec![SourceSpec::Synth { seed: 1 }];

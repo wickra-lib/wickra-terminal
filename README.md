@@ -34,7 +34,7 @@ as a *second renderer* of the same logic, driven by the same config.
 
 > **Part of the [Wickra ecosystem](https://github.com/wickra-lib):** the same data-driven core and ten-language binding surface also power [wickra-exchange](https://github.com/wickra-lib/wickra-exchange), [wickra-backtest](https://github.com/wickra-lib/wickra-backtest), [wickra-screener](https://github.com/wickra-lib/wickra-screener) and 20 more — see [the full list](https://github.com/wickra-lib).
 
-The heart is a single data-driven core, [`terminal-core`](crates/terminal-core):
+The heart is a single data-driven core, [`wickra-terminal-core`](crates/wickra-terminal-core):
 it folds market events into an O(1) `AppState` and turns panels into
 **view-models** (values, series, colours) — never renderer commands. The TUI maps
 a view-model to a ratatui widget; the Web app maps the *same* view-model to a
@@ -130,7 +130,7 @@ a filename. See [docs/SOURCES.md](docs/SOURCES.md) for what each one does and
 | **TUI** | native terminal | `crates/ui-tui` (ratatui), `cargo run -p wickra-terminal` |
 | **Web** | browser | `web/` (Vue) over `bindings/wasm`, `cd web && npm run dev` |
 
-Both consume the identical `Frame` of view-models from `terminal-core`.
+Both consume the identical `Frame` of view-models from `wickra-terminal-core`.
 
 The Web row has a prerequisite the TUI row does not: `web/` depends on
 `file:../bindings/wasm/pkg`, which `wasm-pack` produces and no clone contains, so
@@ -203,7 +203,7 @@ indicators, and the registry offers <!--indicator-count-->455<!--/indicator-coun
 ## Project layout
 
 ```
-crates/terminal-core   the data-driven core (DataSource, AppState, panels → view-models)
+crates/wickra-terminal-core   the data-driven core (DataSource, AppState, panels → view-models)
 crates/ui-tui          the native TUI renderer (bin: wickra-terminal)
 crates/terminal-bench  criterion benchmarks
 bindings/{python,node,wasm,c,go,csharp,java,r}   the ten-language surface
@@ -277,7 +277,7 @@ python scripts/check_binding_surface.py     # every binding matches the C ABI he
 
 - **Rust** ≥ 1.88 to build the `wickra-terminal` TUI (ratatui pulls
   `instability`/`darling`), and to build the Node binding. The library crate
-  `terminal-core` keeps the workspace MSRV of ≥ 1.86.
+  `wickra-terminal-core` keeps the workspace MSRV of ≥ 1.86.
 - Renderer/binding toolchains as needed: Node ≥ 22, Python ≥ 3.9, a C toolchain,
   .NET 8, JDK 22+, Go 1.23, R — see each `bindings/<lang>/README.md`.
 

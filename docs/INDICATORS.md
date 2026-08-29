@@ -184,13 +184,13 @@ whole one is worse than an honest absence, so they are skipped like `Footprint`.
 
 ## Regenerating the registry
 
-`crates/terminal-core/src/registry.rs` is generated. It reads the wickra-core
+`crates/wickra-terminal-core/src/registry.rs` is generated. It reads the wickra-core
 sources — the `Indicator` impls, their `new` signatures and their Output structs
 — so it cannot drift from the library: a renamed constructor argument becomes a
 compile error on the next regeneration rather than a wrong value at run time.
 
 ```bash
-python tools/gen_registry.py --wickra ../wickra --out crates/terminal-core/src/registry.rs
+python tools/gen_registry.py --wickra ../wickra --out crates/wickra-terminal-core/src/registry.rs
 cargo fmt --all
 ```
 
@@ -199,7 +199,7 @@ Do not edit it by hand.
 The default parameters it emits come from wickra's `testdata/golden/golden_manifest.json`,
 which is what the library pins its own reference outputs with.
 
-`crates/terminal-core/tests/registry_completeness.rs` drives every registered
+`crates/wickra-terminal-core/tests/registry_completeness.rs` drives every registered
 indicator, and guards against the set shrinking: the generator run against an
 older or partial wickra checkout would emit a smaller file that still compiles
 and whose every remaining entry still passes.

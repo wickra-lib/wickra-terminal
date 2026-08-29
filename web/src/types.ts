@@ -1,4 +1,4 @@
-// The frame view-models, matching terminal-core's serde output. The PanelView
+// The frame view-models, matching wickra-terminal-core's serde output. The PanelView
 // enum is internally tagged by `panel`, with the variant's struct fields
 // flattened alongside the tag.
 
@@ -86,7 +86,7 @@ export interface Frame {
   panels: PanelView[]
 }
 
-// The config side of the boundary. These mirror terminal-core's `RectSpec` and
+// The config side of the boundary. These mirror wickra-terminal-core's `RectSpec` and
 // `PanelSpec`: the layout is data, and this renderer reads it rather than
 // hard-coding a shape the config cannot change.
 
