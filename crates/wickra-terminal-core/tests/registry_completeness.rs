@@ -12,7 +12,7 @@
 
 use std::collections::BTreeSet;
 
-use wickra_core::{Candle, Level, OrderBook, Side, Trade};
+use wickra_core::{Candle, CrossSection, Level, Member, OrderBook, Side, Trade};
 use wickra_terminal_core::registry::{build, build_paired, DEFAULTS, KINDS, PAIRWISE};
 use wickra_terminal_core::{CandleBuilder, TickInput, Timeframe};
 
@@ -43,6 +43,41 @@ fn build_any(kind: &str, params: &[f64]) -> Box<dyn wickra_terminal_core::TickIn
 fn reference_at(step: i64) -> f64 {
     let t = step as f64;
     1500.0 + 200.0 * (t * 0.05 + 0.9).sin() + 25.0 * (t * 0.55).sin()
+}
+
+/// A synthetic universe for the breadth family.
+///
+/// Five markets whose direction and flags both turn over as the step
+/// advances. Every property here was chosen because a simpler universe makes
+/// some member of the family degenerate rather than wrong, which is the
+/// harder failure to notice:
+///
+/// A universe where every market advances leaves `Trin` dividing declining
+/// volume that is always zero, and `AdvanceDecline` monotone. Both directions
+/// have to occur.
+///
+/// Flags that never turn off leave `HighLowIndex` and `PercentAboveMa`
+/// reporting a constant, which a mis-wired reading is indistinguishable from.
+///
+/// Volume varies with the step so the volume-weighted members of the family
+/// (`AdVolumeLine`, `UpDownVolumeRatio`, `CumulativeVolumeIndex`) measure
+/// something rather than counting markets a second time.
+fn cross_section_at(step: i64) -> CrossSection {
+    let members = (0..5)
+        .map(|market| {
+            let phase = (step + market) % 4;
+            let magnitude = 1.0 + market as f64;
+            Member::with_signals(
+                if phase < 2 { magnitude } else { -magnitude },
+                100.0 + (step % 7) as f64 * 13.0 + market as f64,
+                phase == 0,
+                phase == 2,
+                phase < 3,
+                phase == 1,
+            )
+        })
+        .collect();
+    CrossSection::new(members, step).expect("five members, all finite and non-negative")
 }
 
 /// A price path with genuine variation, on two timescales.
@@ -114,6 +149,7 @@ fn drive(kind: &str, params: &[f64], bars: i64) -> (usize, usize) {
             input
                 .references
                 .insert(REFERENCE.to_string(), reference_at(step));
+            input.cross_section = Some(cross_section_at(step));
             if indicator.update(&input).is_some() {
                 values += 1;
             }
@@ -484,6 +520,7 @@ fn last_reading(
             input
                 .references
                 .insert(REFERENCE.to_string(), reference_at(step));
+            input.cross_section = Some(cross_section_at(step));
             // Fields are read on every tick, not only on the ticks that produce a
             // reading. The reading is the FIRST field, so when that one field is
             // optional and absent the indicator returns None while still holding
@@ -722,7 +759,7 @@ fn a_candle_indicator_reads_the_bar_not_the_price() {
 /// third field is the variable-length bin list the profile exists for, so each
 /// reported `price_low` under a profile's name. They stay skipped like
 /// `Footprint`, whose output is the same shape. See `docs/INDICATORS.md`.
-const REGISTERED_FLOOR: usize = 461;
+const REGISTERED_FLOOR: usize = 475;
 
 #[test]
 fn the_registry_has_not_silently_shrunk() {

@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
-use wickra_core as wc;
+use wickra_core::{self as wc, Indicator};
 use wickra_exchange_core::{BookDelta, BookLevel, Event, OrderBookSnapshot, OrderSide, TradePrint};
 
 use crate::candle::{CandleBuilder, Timeframe};
@@ -19,6 +19,122 @@ use crate::config::IndicatorSpec;
 use crate::error::{Error, Result};
 use crate::registry::{self, TickIndicator, TickInput};
 use crate::source::{DataSource, SourceId, Symbol};
+
+/// The reference moving average the `% Above Moving Average` breadth reading is
+/// taken against.
+///
+/// Fifty bars, because that is the conventional reference for that indicator and
+/// the flag it consumes is a boolean the caller supplies rather than a parameter
+/// the indicator carries — something has to choose, and choosing silently would
+/// be worse than choosing here in the open. A configurable period is a
+/// reasonable follow-up; it is not needed for the reading to be correct against
+/// the convention.
+const BREADTH_MA_PERIOD: usize = 50;
+
+/// What one market contributes to a market-wide cross-section.
+///
+/// The breadth family does not read a price; it reads a *universe* — how many
+/// symbols advanced, how many printed a new high, what share trade above their
+/// moving average. So the terminal keeps, per symbol, the handful of per-bar
+/// facts a member is assembled from, and folds them once per closed bar rather
+/// than recomputing them across the universe on every tick.
+///
+/// Everything here is per **bar**, not per tick. A breadth reading compares
+/// closes, and a tick-to-tick change would make `AdvanceDecline` count the same
+/// symbol as advancing and declining several times within one bar.
+#[derive(Debug)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "three per-bar breadth signals plus a readiness flag, each independent; \
+              `wc::Member` carries the same set for the same reason"
+)]
+struct BreadthState {
+    /// The close of the previous bar, which `change` is measured against.
+    previous_close: Option<f64>,
+    /// Close-to-close change on the last closed bar.
+    change: f64,
+    /// Volume of the last closed bar.
+    volume: f64,
+    /// The session extremes, and whether the last bar set one.
+    high: f64,
+    low: f64,
+    new_high: bool,
+    new_low: bool,
+    /// The reference moving average, and whether the last close sat above it.
+    average: wc::Sma,
+    above_ma: bool,
+    /// False until a bar has closed. A symbol that has not produced one is left
+    /// out of the universe rather than entered as an unchanged member, which
+    /// would drag every ratio toward the middle.
+    ready: bool,
+}
+
+impl BreadthState {
+    fn new() -> Self {
+        Self {
+            previous_close: None,
+            change: 0.0,
+            volume: 0.0,
+            high: f64::NEG_INFINITY,
+            low: f64::INFINITY,
+            new_high: false,
+            new_low: false,
+            average: wc::Sma::new(BREADTH_MA_PERIOD)
+                .expect("BREADTH_MA_PERIOD is a non-zero constant"),
+            above_ma: false,
+            ready: false,
+        }
+    }
+
+    /// Fold one closed bar.
+    fn update(&mut self, candle: &wc::Candle) {
+        let close = candle.close;
+        if !close.is_finite() {
+            return;
+        }
+        self.change = self.previous_close.map_or(0.0, |previous| close - previous);
+        self.previous_close = Some(close);
+        self.volume = if candle.volume.is_finite() && candle.volume >= 0.0 {
+            candle.volume
+        } else {
+            0.0
+        };
+
+        // A new extreme is set by the bar's own high and low, not by its close:
+        // a symbol that printed above its previous high and closed back inside
+        // it did make a new high, and that is what the breadth family counts.
+        self.new_high = candle.high > self.high;
+        self.new_low = candle.low < self.low;
+        self.high = self.high.max(candle.high);
+        self.low = self.low.min(candle.low);
+
+        self.above_ma = self
+            .average
+            .update(close)
+            .is_some_and(|average| close > average);
+        self.ready = true;
+    }
+
+    /// This market as a cross-section member, or `None` before its first bar.
+    fn member(&self) -> Option<wc::Member> {
+        if !self.ready {
+            return None;
+        }
+        Some(wc::Member::with_signals(
+            self.change,
+            self.volume,
+            self.new_high,
+            self.new_low,
+            self.above_ma,
+            // Left false, and the one indicator that reads it is not registered
+            // because of that. A point-and-figure buy signal needs P&F column
+            // state per symbol, which this terminal does not keep; reporting
+            // `false` for every member would make BullishPercentIndex read a
+            // constant zero under a name that promises a breadth reading.
+            false,
+        ))
+    }
+}
 
 /// A locally maintained L2 order book: price → resting quantity per side.
 #[derive(Debug, Default, Clone)]
@@ -527,6 +643,8 @@ pub struct SymbolState {
     pub history: VecDeque<Decimal>,
     /// Aggregates the trade stream into the bars the candle indicators read.
     pub candles: CandleBuilder,
+    /// What this market contributes to a market-wide cross-section.
+    breadth: BreadthState,
 }
 
 impl SymbolState {
@@ -545,6 +663,7 @@ impl SymbolState {
             last: Decimal::ZERO,
             history: VecDeque::with_capacity(512),
             candles: CandleBuilder::new(timeframe),
+            breadth: BreadthState::new(),
         })
     }
 }
@@ -559,6 +678,7 @@ impl Default for SymbolState {
             last: Decimal::ZERO,
             history: VecDeque::with_capacity(512),
             candles: CandleBuilder::new(Timeframe::default()),
+            breadth: BreadthState::new(),
         }
     }
 }
@@ -645,6 +765,28 @@ impl AppState {
         } else {
             BTreeMap::new()
         };
+
+        // The universe, gathered the same way and for the same reason. The
+        // breadth family reads every market at once, so this cannot be asked
+        // of one market's indicator set while that market is borrowed.
+        //
+        // Asked of the kind rather than of a config field, because unlike a
+        // pairwise reference there is nothing in a spec that says "this one
+        // reads the universe" -- the registry knows, and says so.
+        let cross_section = if self
+            .indicators
+            .iter()
+            .any(|s| registry::is_cross_section(&s.kind))
+        {
+            match event {
+                Event::Trade(print) => self.cross_section(print.timestamp),
+                // Only a print advances a bar, and only a closed bar changes a
+                // member, so no other event can produce a reading.
+                _ => None,
+            }
+        } else {
+            None
+        };
         // `expect` rather than a fallback: every spec in `self.indicators` was
         // accepted by the registry when it was set, so construction here cannot
         // fail. A silent `unwrap_or_default` would hide a market quietly losing
@@ -685,8 +827,15 @@ impl AppState {
                 } else {
                     None
                 };
+                // A closed bar is what a breadth reading compares: fed per
+                // tick, the same symbol would count as advancing and
+                // declining several times inside one bar.
+                if let Some(bar) = closed.as_ref() {
+                    state.breadth.update(bar);
+                }
                 let mut tick = TickInput::price(price);
                 tick.candle = closed;
+                tick.cross_section = cross_section;
                 tick.trade = core_trade(print);
                 tick.book = book;
                 tick.references = references;
@@ -743,6 +892,37 @@ impl AppState {
             })
             .filter(|(_, price)| *price > 0.0)
             .collect()
+    }
+
+    /// Every tracked market as one cross-section, for the breadth family.
+    ///
+    /// The universe is every market this terminal holds state for, across
+    /// every source: breadth is a property of what is being watched, and a
+    /// terminal watching two feeds is watching one market list.
+    ///
+    /// A market that has not closed a bar yet is left out rather than entered
+    /// as an unchanged member. Entering it would count it as neither advancing
+    /// nor declining and drag every ratio toward the middle while the terminal
+    /// warms up -- the same call `reference_prices` makes for a market that has
+    /// not printed.
+    ///
+    /// `None` when nothing is ready, because `CrossSection::new` rejects an
+    /// empty universe, and an empty one is not a reading of anything.
+    ///
+    /// The timestamp is the one on the event being folded, not a counter of
+    /// this method's own: the breadth indicators order their history by it,
+    /// and the feed already carries the real answer.
+    #[must_use]
+    fn cross_section(&self, timestamp: i64) -> Option<wc::CrossSection> {
+        let members: Vec<wc::Member> = self
+            .symbols
+            .values()
+            .filter_map(|state| state.breadth.member())
+            .collect();
+        if members.is_empty() {
+            return None;
+        }
+        wc::CrossSection::new(members, timestamp).ok()
     }
 
     /// Fresh state for a market, carrying the indicator set and bar size this
@@ -1209,5 +1389,127 @@ mod tests {
         state.fold(0, &sym, &Event::BalanceUpdate(vec![]));
         let after = state.get(&(0, sym.clone())).unwrap().last;
         assert_eq!(before, after);
+    }
+
+    /// Two markets, several bars each, folded through the real path.
+    ///
+    /// Everything the breadth family reads is assembled by `AppState` rather
+    /// than handed in, so this drives the wiring the registry tests cannot:
+    /// the per-symbol fold on each closed bar, the universe gathered across
+    /// markets before one is borrowed, and the reading that comes back out.
+    fn breadth_terminal(kind: &str) -> (AppState, Symbol, Symbol) {
+        let state = AppState {
+            indicators: vec![IndicatorSpec {
+                kind: kind.to_string(),
+                params: Vec::new(),
+                reference: None,
+            }],
+            ..Default::default()
+        };
+        (
+            state,
+            Symbol::new("BTC", "USDT"),
+            Symbol::new("ETH", "USDT"),
+        )
+    }
+
+    /// A print that lands in the bar starting at `bar`, at `price`.
+    fn print_in_bar(sym: &Symbol, price: Decimal, bar: i64) -> Event {
+        Event::Trade(TradePrint {
+            symbol: sym.clone(),
+            price,
+            quantity: dec!(3),
+            aggressor: OrderSide::Buy,
+            timestamp: bar * 60_000 + 1,
+        })
+    }
+
+    #[test]
+    fn a_breadth_indicator_reads_the_whole_universe() {
+        let (mut state, btc, eth) = breadth_terminal("AdvanceDecline");
+        // Two markets moving in opposite directions, so an advance/decline
+        // reading has both sides to count. Enough bars to clear the warmup.
+        for bar in 0..40 {
+            let up = Decimal::from(100 + bar);
+            let down = Decimal::from(100 - bar);
+            state.fold(0, &btc, &print_in_bar(&btc, up, bar));
+            state.fold(0, &eth, &print_in_bar(&eth, down, bar));
+        }
+        let reading = state
+            .get(&(0, btc.clone()))
+            .expect("BTC is tracked")
+            .indicators
+            .values()
+            .first()
+            .and_then(|(_, reading)| *reading);
+        assert!(
+            reading.is_some(),
+            "AdvanceDecline produced no reading after 40 bars across two markets"
+        );
+    }
+
+    #[test]
+    fn the_universe_is_absent_until_a_bar_closes() {
+        let (mut state, btc, _eth) = breadth_terminal("AdvanceDecline");
+        // One print does not close a bar, so no market is ready and the
+        // universe cannot be assembled. `CrossSection::new` rejects an empty
+        // one, which is why this has to be None rather than an empty reading.
+        state.fold(0, &btc, &print_in_bar(&btc, dec!(100), 0));
+        assert!(state.cross_section(0).is_none());
+    }
+
+    #[test]
+    fn the_universe_is_not_assembled_when_nothing_reads_it() {
+        // The default overlay has no breadth indicator, so the gather is
+        // skipped entirely -- the same economy `references` makes. Asserted
+        // through the state rather than by timing: a market that never folded a
+        // bar into its breadth state stays unready.
+        let mut state = AppState::default();
+        let btc = Symbol::new("BTC", "USDT");
+        for bar in 0..5 {
+            state.fold(0, &btc, &print_in_bar(&btc, Decimal::from(100 + bar), bar));
+        }
+        assert!(
+            !state
+                .indicators
+                .iter()
+                .any(|s| registry::is_cross_section(&s.kind)),
+            "the default overlay should carry no breadth indicator"
+        );
+    }
+
+    #[test]
+    fn a_market_that_has_not_closed_a_bar_is_left_out_of_the_universe() {
+        let (mut state, btc, eth) = breadth_terminal("AdvanceDecline");
+        // BTC closes bars; ETH prints once and never closes one. The universe
+        // must hold one member, not two -- entering ETH as unchanged would
+        // count it as neither advancing nor declining and pull every ratio
+        // toward the middle.
+        for bar in 0..4 {
+            state.fold(0, &btc, &print_in_bar(&btc, Decimal::from(100 + bar), bar));
+        }
+        state.fold(0, &eth, &print_in_bar(&eth, dec!(50), 0));
+        let universe = state.cross_section(1).expect("BTC has closed bars");
+        assert_eq!(universe.members.len(), 1);
+    }
+
+    #[test]
+    fn breadth_is_folded_per_bar_not_per_tick() {
+        let (mut state, btc, _eth) = breadth_terminal("AdvanceDecline");
+        // Four prints inside one bar, then one that closes it. A per-tick fold
+        // would move `change` four times and count the market as advancing
+        // repeatedly within a single bar.
+        for step in 0..4 {
+            state.fold(0, &btc, &print_in_bar(&btc, Decimal::from(100 + step), 0));
+        }
+        assert!(
+            state.cross_section(0).is_none(),
+            "no bar has closed yet, so there is nothing to read"
+        );
+        state.fold(0, &btc, &print_in_bar(&btc, dec!(110), 1));
+        assert!(
+            state.cross_section(1).is_some(),
+            "the first bar closed, so the market is now a member"
+        );
     }
 }
