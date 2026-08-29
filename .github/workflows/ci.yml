@@ -190,7 +190,13 @@ jobs:
       - run: pip install -r bindings/python/requirements-ci.txt
       - run: maturin build --out dist
         working-directory: bindings/python
-      - run: pip install --no-index --find-links bindings/python/dist wickra-terminal
+      # --no-index keeps pip off PyPI so the freshly built wheel is the one
+      # under test, --force-reinstall makes it win over anything already
+      # installed, and --no-deps stops pip reaching the network to resolve
+      # dependencies the package does not have (dependencies = [] in
+      # pyproject.toml). Without the last two, pip may still contact an index,
+      # which is what Scorecard reads as an unpinned dependency.
+      - run: pip install --no-index --find-links bindings/python/dist --force-reinstall --no-deps wickra-terminal
       - run: pytest bindings/python/tests -q
 
   # The Linux wheels are built in manylinux/musllinux containers at release time
@@ -250,7 +256,7 @@ jobs:
         # A manylinux wheel is meant to install on any glibc distribution, and
         # the runner is one, so installing it here is the real check.
         run: |
-          python -m pip install --no-index --find-links bindings/python/dist wickra-terminal
+          python -m pip install --no-index --find-links bindings/python/dist --force-reinstall --no-deps wickra-terminal
           python wheel-smoke.py
 
       - name: Import the musllinux wheel in an Alpine container
@@ -259,7 +265,7 @@ jobs:
         # musl, so it cannot install on the glibc runner. Alpine is the platform
         # this wheel exists for, and nothing else in CI ever loads it.
         run: |
-          docker run --rm -v "$PWD:/io" -w /io python:3.12-alpine             sh -c "pip install --no-index --find-links bindings/python/dist wickra-terminal && python wheel-smoke.py"
+          docker run --rm -v "$PWD:/io" -w /io python:3.12-alpine             sh -c "pip install --no-index --find-links bindings/python/dist --force-reinstall --no-deps wickra-terminal && python wheel-smoke.py"
 
   node:
     name: Node ${{ matrix.node-version }} on ${{ matrix.os }}
