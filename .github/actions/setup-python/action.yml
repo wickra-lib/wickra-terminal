@@ -1,0 +1,32 @@
+name: Setup Python (with retry)
+description: >
+  Install Python via actions/setup-python, retrying once after a short pause on
+  the transient CDN failure the runners hit while downloading an interpreter.
+  Same shape as setup-rust and setup-node.
+
+inputs:
+  python-version:
+    description: Python version to install.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - id: first
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      continue-on-error: true
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Wait before retrying the Python install
+      if: steps.first.outcome == 'failure'
+      shell: bash
+      run: |
+        echo "::warning::setup-python failed (likely a CDN flake); retrying in 30s"
+        sleep 30
+
+    - name: Retry the Python install
+      if: steps.first.outcome == 'failure'
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: ${{ inputs.python-version }}

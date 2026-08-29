@@ -12,11 +12,21 @@ description: >
   Belongs after the cache restore, not before it: a warm cache already holds the
   graph, and `cargo fetch` is then a cheap no-op rather than a full download.
 
+inputs:
+  working-directory:
+    description: >
+      Directory to fetch in. Defaults to the repository root; the fuzz crate
+      is a detached workspace, so fetching at the root would warm the wrong
+      dependency graph for it.
+    required: false
+    default: "."
+
 runs:
   using: composite
   steps:
     - name: Warm cargo registry (retry transient DNS/registry flakes)
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       run: |
         for attempt in 1 2 3 4 5; do
           if cargo fetch; then exit 0; fi

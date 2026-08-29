@@ -168,23 +168,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Set up Python
-        id: setup_python
-        continue-on-error: true
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Wait before Python retry
-        if: steps.setup_python.outcome == 'failure'
-        shell: bash
-        run: |
-          echo "::warning::setup-python failed (likely CDN flake), waiting 30s before retry..."
-          sleep 30
-
-      - name: Set up Python (retry)
-        if: steps.setup_python.outcome == 'failure'
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: ./.github/actions/setup-python
         with:
           python-version: ${{ matrix.python-version }}
       - uses: ./.github/actions/setup-rust
@@ -290,32 +274,11 @@ jobs:
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
       - uses: ./.github/actions/warm-cargo
-      - name: Set up Node
-        id: setup_node
-        continue-on-error: true
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: ./.github/actions/setup-node
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
           cache-dependency-path: bindings/node/package-lock.json
-
-      - name: Wait before Node retry
-        if: steps.setup_node.outcome == 'failure'
-        shell: bash
-        run: |
-          echo "::warning::setup-node failed (likely CDN flake), waiting 30s before retry..."
-          sleep 30
-
-      - name: Set up Node (retry)
-        if: steps.setup_node.outcome == 'failure'
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: npm
-          cache-dependency-path: bindings/node/package-lock.json
-      # npm install (not npm ci): the per-platform optionalDependencies point at
-      # native packages that are not published until the first release, so they
-      # are absent from the lock file and `npm ci` would reject the tree.
       - name: Install Node dependencies
         run: cd bindings/node && npm install --no-audit --no-fund
       # --platform puts the target triple into the filename so the loader finds
@@ -389,23 +352,7 @@ jobs:
       - name: Build the wasm binding (web target)
         run: wasm-pack build --target web
         working-directory: bindings/wasm
-      - name: Set up Node
-        id: setup_node_2
-        continue-on-error: true
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22"
-
-      - name: Wait before Node retry
-        if: steps.setup_node_2.outcome == 'failure'
-        shell: bash
-        run: |
-          echo "::warning::setup-node failed (likely CDN flake), waiting 30s before retry..."
-          sleep 30
-
-      - name: Set up Node (retry)
-        if: steps.setup_node_2.outcome == 'failure'
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: ./.github/actions/setup-node
         with:
           node-version: "22"
       - name: Install web dependencies
@@ -722,9 +669,11 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
-      - uses: ./.github/actions/warm-cargo
         with:
           workspaces: fuzz
+      - uses: ./.github/actions/warm-cargo
+        with:
+          working-directory: fuzz
       - name: Install cargo-fuzz
         uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
@@ -793,46 +742,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        id: setup_node_examples
-        continue-on-error: true
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: ./.github/actions/setup-node
         with:
           node-version: "22"
-
-      - name: Wait before Node retry
-        if: steps.setup_node_examples.outcome == 'failure'
-        shell: bash
-        run: |
-          echo "::warning::setup-node failed (likely CDN flake), waiting 30s before retry..."
-          sleep 30
-
-      - name: Set up Node (retry)
-        if: steps.setup_node_examples.outcome == 'failure'
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22"
-
-      - name: Set up Python
-        id: setup_python_examples
-        continue-on-error: true
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: ./.github/actions/setup-python
         with:
           python-version: "3.12"
-
-      - name: Wait before Python retry
-        if: steps.setup_python_examples.outcome == 'failure'
-        shell: bash
-        run: |
-          echo "::warning::setup-python failed (likely CDN flake), waiting 30s before retry..."
-          sleep 30
-
-      - name: Set up Python (retry)
-        if: steps.setup_python_examples.outcome == 'failure'
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-
       - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
         with:
           distribution: temurin
