@@ -9,6 +9,12 @@ homepage     = "https://terminal.wickra.org"
 issues_url   = "https://github.com/wickra-lib/wickra-terminal/issues"
 security_url = "https://github.com/wickra-lib/wickra-terminal/security/advisories/new"
 
+# Declared so the audit can check them; every value below is verified to
+# appear where it belongs by `sync-metadata.py --check`.
+discussions  = "https://github.com/wickra-lib/wickra-terminal/discussions"
+docs_url     = "https://terminal.wickra.org"
+docs_git     = "https://github.com/wickra-lib/wickra-terminal-site"
+
 [maintainer]
 # `handle` is the natural-person credit shown in package manifests; it does not
 # move with a GitHub org transfer, and it is what CODEOWNERS names — GitHub
@@ -20,6 +26,7 @@ email  = "support@wickra.org"
 github = "wickra-lib"
 
 [badges]
+codecov_repo = "wickra-lib/wickra-terminal"
 ci_workflow = "ci.yml"
 
 [audit]
