@@ -218,6 +218,14 @@ pub struct Config {
     /// The bar size the candle-input indicators are fed at.
     #[serde(default)]
     pub timeframe: Timeframe,
+    /// Profiles tracked for every market, for the `Profile` panel.
+    ///
+    /// Separate from `indicators` because a profile answers with a histogram
+    /// rather than a reading, and the two are consumed by different panels.
+    /// Empty by default: a profile walks a distribution on every closed bar,
+    /// and a configuration with no profile panel should not pay for one.
+    #[serde(default)]
+    pub profiles: Vec<IndicatorSpec>,
 }
 
 impl Config {
@@ -256,6 +264,7 @@ impl Default for Config {
             layout: Layout::default(),
             indicators: default_indicators(),
             timeframe: Timeframe::default(),
+            profiles: Vec::new(),
         }
     }
 }

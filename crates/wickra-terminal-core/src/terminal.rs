@@ -18,7 +18,7 @@ use crate::panels::{build_panel, Panel};
 use crate::registry;
 use crate::source::manual::MAX_PENDING_EVENTS;
 use crate::source::{build_source, event_symbol, Event, Fed, SourceId, Symbol};
-use crate::state::{AppState, DerivativesUpdate, IndicatorSet, SymbolState};
+use crate::state::{AppState, DerivativesUpdate, IndicatorSet, ProfileSet, SymbolState};
 use crate::view::Frame;
 
 /// A command applied through the data-driven boundary.
@@ -217,8 +217,12 @@ impl Terminal {
         // parameter must fail here, naming itself, rather than when the first
         // trade arrives.
         IndicatorSet::from_specs(&config.indicators)?;
+        // Same for the profiles, and for the same reason: a config naming a
+        // profile that is not one should say so here, not on the first bar.
+        ProfileSet::from_specs(&config.profiles)?;
         let state = AppState {
             indicators: config.indicators.clone(),
+            profiles: config.profiles.clone(),
             timeframe: config.timeframe,
             ..AppState::default()
         };
@@ -294,10 +298,11 @@ impl Terminal {
         // The specs are cloned out first because `fresh_market` borrows the state
         // that the loop below is already borrowing mutably.
         let specs = self.state.indicators.clone();
+        let profiles = self.state.profiles.clone();
         let timeframe = self.state.timeframe;
         for (key, symbol_state) in &mut self.state.symbols {
             if key.0 == id {
-                *symbol_state = SymbolState::new(&specs, timeframe)
+                *symbol_state = SymbolState::new(&specs, &profiles, timeframe)
                     .expect("indicator specs are validated before they reach the state");
             }
         }
@@ -524,6 +529,8 @@ fn parse_symbol(s: &str) -> Result<Symbol> {
 mod tests {
     const TICK: &str = r#"{"type":"Tick"}"#;
     use super::*;
+    use crate::config::{PanelSpec, RectSpec};
+    use crate::panels::PanelKind;
     use crate::view::PanelView;
     use rust_decimal::Decimal;
     use rust_decimal_macros::dec;
@@ -1192,5 +1199,70 @@ mod tests {
         let typo = r#"{"type":"FeedDerivatives","source":0,"symbol":"BTC/USDT",
             "update":{"funding_rat":0.0002,"timestamp":7}}"#;
         assert!(term.command_json(typo).is_err());
+    }
+
+    #[test]
+    fn a_configured_profile_reaches_the_frame() {
+        let mut cfg = synth_config();
+        cfg.layout.panels = vec![PanelSpec {
+            kind: PanelKind::Profile,
+            rect: RectSpec {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 100,
+            },
+        }];
+        // One-second bars, so a tick closes a bar. The synth source advances
+        // its clock a second per poll, and VolumeProfile needs twenty closed
+        // bars -- at the default minute that is 1200 ticks to prove a wiring.
+        cfg.timeframe = Timeframe::parse("1s").expect("1s is a timeframe");
+        cfg.profiles = vec![IndicatorSpec {
+            kind: "VolumeProfile".to_string(),
+            params: vec![20.0, 50.0],
+            reference: None,
+        }];
+        let mut term = Terminal::new(&cfg).expect("a terminal with a profile panel");
+        term.subscribe(0, &Symbol::new("BTC", "USDT"))
+            .expect("subscribe");
+        let mut frame = String::new();
+        for _ in 0..400 {
+            frame = term.command_json(TICK).expect("tick");
+        }
+        assert!(
+            frame.contains(r#""panel":"profile""#),
+            "the frame carries no profile panel: {frame}"
+        );
+        assert!(
+            frame.contains("VolumeProfile"),
+            "the profile panel does not name the configured profile: {frame}"
+        );
+        // The histogram itself, not just the row: a panel that reports an
+        // empty `bins` for four hundred bars is a panel that is not wired.
+        let bins = frame
+            .split(r#""bins":["#)
+            .nth(1)
+            .expect("the row carries a bins array");
+        assert!(
+            !bins.starts_with(']'),
+            "the profile produced an empty histogram after 400 bars"
+        );
+    }
+
+    #[test]
+    fn a_config_naming_an_indicator_as_a_profile_is_refused() {
+        // `Sma` is a perfectly good indicator and not a profile at all. The
+        // config should say so when it is built, not when the first bar closes.
+        let mut cfg = synth_config();
+        cfg.profiles = vec![IndicatorSpec {
+            kind: "Sma".to_string(),
+            params: vec![14.0],
+            reference: None,
+        }];
+        let err = Terminal::new(&cfg).expect_err("Sma is not a profile");
+        assert!(
+            err.to_string().contains("Sma"),
+            "the error should name it: {err}"
+        );
     }
 }

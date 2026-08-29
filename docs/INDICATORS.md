@@ -158,26 +158,50 @@ it saw before.
 
 ## What is not registered, and why
 
-7 of the 504 indicators in `wickra-core` are not reachable from the terminal
-yet. They are listed with a reason every time the registry is regenerated, rather
-than quietly dropped:
+1 of the 504 indicators in `wickra-core` is not reachable from the terminal.
+The generator lists what it skipped, with a reason, every time it runs:
 
 | Missing | Count | Why |
 |---------|------:|-----|
-| profile and level outputs | 7 | a variable-length histogram is not a reading: `VolumeProfile`, `TpoProfile`, `Footprint`, and the four time-of-day profiles |
+| level output | 1 | `Footprint` answers with a list of price LEVELS, each with its own bid and ask volume |
 
-`Footprint` is the one that looks like an omission and is not: its output is a
-list of price levels whose length changes bar to bar, which does not fit the
-fixed named-field shape the registry exposes. The terminal renders a footprint
-from its own panel instead, which is what the `footprint` panel is.
+`Footprint` is the one that looks like an omission and is not. The terminal
+already renders a footprint -- from its own per-price state, as the `footprint`
+panel -- so the indicator would be a second implementation of a view that
+exists, in a shape the registry cannot carry.
 
-`VolumeProfile` and `TpoProfile` are unreachable for exactly that reason and used
-to be registered anyway. Their outputs pair two prices with a variable-length bin
-list, and the generator kept the prices and dropped the list -- so the reading
-under a profile's name was `price_low`, a price, while the bins that ARE the
-profile were not carried at all. A partial answer under a name that promises a
-whole one is worse than an honest absence, so they are skipped like `Footprint`.
+## Profiles: a histogram is not a reading
 
+Six indicators answer with a **distribution** rather than a number:
+`VolumeProfile` and `TpoProfile` over price, and `DayOfWeekProfile`,
+`IntradayVolatilityProfile`, `TimeOfDayReturnProfile` and `VolumeByTimeProfile`
+over the clock.
+
+They are reachable, and they are not in the registry. A registry entry promises
+one name, one number and a fixed set of named fields; a distribution is none of
+those, and its length changes as the session runs. Squeezing one in means
+reporting a single bin under the whole indicator's name -- which is exactly what
+`VolumeProfile` did before it was removed: it reported `price_low`, a price,
+under a profile's name.
+
+So they have a surface of their own, alongside the registry rather than inside
+it. Configure them under `profiles` and show them with a `Profile` panel:
+
+```json
+{
+  "profiles": [{ "kind": "VolumeProfile", "params": [20, 50] }],
+  "layout": { "panels": [{ "kind": "Profile", "rect": { "x": 0, "y": 0, "w": 100, "h": 100 } }] }
+}
+```
+
+The panel answers with one row per configured profile: its label, its bins in
+order, and -- for the two that are distributions over price -- the range those
+bins cover. A profile over time reports no range rather than zeros, so a
+consumer can tell "spans no price" from "spans zero to zero".
+
+`ListProfiles` is not a command; the six are a fixed set and the
+`registry::PROFILES` constant carries them with the parameters the wickra golden
+manifest pins them at.
 ## Regenerating the registry
 
 `crates/wickra-terminal-core/src/registry.rs` is generated. It reads the wickra-core

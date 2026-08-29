@@ -24,6 +24,9 @@
 //! Multi-output indicators expose their fields by name.
 
 use std::collections::BTreeMap;
+use std::marker::PhantomData;
+
+use serde::{Deserialize, Serialize};
 
 use wickra_core::{self as wc, Candle, Indicator};
 
@@ -138,6 +141,49 @@ impl TickInput {
 }
 
 /// A uniform, object-safe indicator the terminal drives one tick at a time.
+/// One reading of a profile: a histogram, and the price range it spans when it
+/// has one.
+///
+/// Two of the six are distributions over PRICE and carry the range their bins
+/// cover; the other four are over TIME -- day of week, minute of session -- and
+/// have no price range to report. The bounds are optional rather than zeroed, so
+/// a consumer can tell "spans no price" from "spans zero to zero".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProfileReading {
+    /// The histogram, in bin order.
+    pub bins: Vec<f64>,
+    /// The lowest price the bins cover, for a price profile.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price_low: Option<f64>,
+    /// The highest price the bins cover, for a price profile.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price_high: Option<f64>,
+}
+
+/// An indicator whose output is a histogram rather than a reading.
+///
+/// Deliberately not [`TickIndicator`]: that trait promises one `f64` and a fixed
+/// set of named fields, and a distribution is neither. Kept apart rather than
+/// widening the other, so nothing that consumes a reading has to learn what an
+/// absent histogram means.
+pub trait ProfileIndicator: Send {
+    /// Feed one tick; returns the histogram, or `None` while warming up or when
+    /// this tick carries nothing this profile consumes.
+    fn update(&mut self, input: &TickInput) -> Option<ProfileReading>;
+    /// Number of inputs required before the first histogram.
+    fn warmup(&self) -> usize;
+}
+
+/// Wraps a bar-input indicator whose output is a histogram.
+///
+/// Parameterised by the output struct as well as the indicator, which is what
+/// keeps one impl per output from overlapping another.
+struct CandleProfile<I, O> {
+    inner: I,
+    /// Only to make the output type part of this wrapper's identity.
+    output: PhantomData<O>,
+}
+
 pub trait TickIndicator: Send {
     /// Feed one tick; returns the primary value, or `None` while warming up or
     /// when this tick carries nothing this indicator consumes.
@@ -3044,6 +3090,220 @@ where
     }
     fn warmup(&self) -> usize {
         self.inner.warmup_period()
+    }
+}
+
+impl<I> ProfileIndicator for CandleProfile<I, wc::DayOfWeekProfileOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::DayOfWeekProfileOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<ProfileReading> {
+        input
+            .candle
+            .and_then(|candle| self.inner.update(candle))
+            .map(|reading| ProfileReading {
+                bins: reading.bins,
+                price_low: None,
+                price_high: None,
+            })
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> ProfileIndicator for CandleProfile<I, wc::IntradayVolatilityProfileOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::IntradayVolatilityProfileOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<ProfileReading> {
+        input
+            .candle
+            .and_then(|candle| self.inner.update(candle))
+            .map(|reading| ProfileReading {
+                bins: reading.bins,
+                price_low: None,
+                price_high: None,
+            })
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> ProfileIndicator for CandleProfile<I, wc::TimeOfDayReturnProfileOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::TimeOfDayReturnProfileOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<ProfileReading> {
+        input
+            .candle
+            .and_then(|candle| self.inner.update(candle))
+            .map(|reading| ProfileReading {
+                bins: reading.bins,
+                price_low: None,
+                price_high: None,
+            })
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> ProfileIndicator for CandleProfile<I, wc::TpoProfileOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::TpoProfileOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<ProfileReading> {
+        input
+            .candle
+            .and_then(|candle| self.inner.update(candle))
+            .map(|reading| ProfileReading {
+                bins: reading.counts,
+                price_low: Some(reading.price_low),
+                price_high: Some(reading.price_high),
+            })
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> ProfileIndicator for CandleProfile<I, wc::VolumeByTimeProfileOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::VolumeByTimeProfileOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<ProfileReading> {
+        input
+            .candle
+            .and_then(|candle| self.inner.update(candle))
+            .map(|reading| ProfileReading {
+                bins: reading.bins,
+                price_low: None,
+                price_high: None,
+            })
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+impl<I> ProfileIndicator for CandleProfile<I, wc::VolumeProfileOutput>
+where
+    I: Indicator<Input = Candle, Output = wc::VolumeProfileOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<ProfileReading> {
+        input
+            .candle
+            .and_then(|candle| self.inner.update(candle))
+            .map(|reading| ProfileReading {
+                bins: reading.bins,
+                price_low: Some(reading.price_low),
+                price_high: Some(reading.price_high),
+            })
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+/// Every profile this terminal can build, with the parameters the wickra golden
+/// manifest pins them at.
+///
+/// Kept apart from [`DEFAULTS`] rather than merged into it: a caller asking the
+/// catalogue what it can *read* wants indicators, and a caller laying out a
+/// panel wants profiles. One list holding both would make every consumer filter.
+pub const PROFILES: [(&str, &[f64]); 6] = [
+    ("DayOfWeekProfile", &[0.0]),
+    ("IntradayVolatilityProfile", &[24.0, 0.0]),
+    ("TimeOfDayReturnProfile", &[24.0, 0.0]),
+    ("TpoProfile", &[30.0, 50.0]),
+    ("VolumeByTimeProfile", &[24.0, 0.0]),
+    ("VolumeProfile", &[20.0, 50.0]),
+];
+
+/// Whether `kind` names a profile rather than an indicator.
+#[must_use]
+pub fn is_profile(kind: &str) -> bool {
+    matches!(
+        kind,
+        "DayOfWeekProfile"
+            | "IntradayVolatilityProfile"
+            | "TimeOfDayReturnProfile"
+            | "TpoProfile"
+            | "VolumeByTimeProfile"
+            | "VolumeProfile"
+    )
+}
+
+/// Build a profile by name.
+///
+/// # Errors
+///
+/// Returns [`Error::Config`] if `kind` is not a profile, or if its parameters
+/// are missing or rejected by the constructor.
+pub fn build_profile(kind: &str, params: &[f64]) -> Result<Box<dyn ProfileIndicator>> {
+    match kind {
+        "DayOfWeekProfile" => Ok(Box::new(CandleProfile::<_, wc::DayOfWeekProfileOutput> {
+            inner: wc::DayOfWeekProfile::new(i32_param(params, 0, kind)?),
+            output: PhantomData,
+        })),
+        "IntradayVolatilityProfile" => Ok(Box::new(CandleProfile::<
+            _,
+            wc::IntradayVolatilityProfileOutput,
+        > {
+            inner: map_new(
+                kind,
+                wc::IntradayVolatilityProfile::new(
+                    usize_param(params, 0, kind)?,
+                    i32_param(params, 1, kind)?,
+                ),
+            )?,
+            output: PhantomData,
+        })),
+        "TimeOfDayReturnProfile" => Ok(Box::new(CandleProfile::<
+            _,
+            wc::TimeOfDayReturnProfileOutput,
+        > {
+            inner: map_new(
+                kind,
+                wc::TimeOfDayReturnProfile::new(
+                    usize_param(params, 0, kind)?,
+                    i32_param(params, 1, kind)?,
+                ),
+            )?,
+            output: PhantomData,
+        })),
+        "TpoProfile" => Ok(Box::new(CandleProfile::<_, wc::TpoProfileOutput> {
+            inner: map_new(
+                kind,
+                wc::TpoProfile::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
+            )?,
+            output: PhantomData,
+        })),
+        "VolumeByTimeProfile" => Ok(Box::new(
+            CandleProfile::<_, wc::VolumeByTimeProfileOutput> {
+                inner: map_new(
+                    kind,
+                    wc::VolumeByTimeProfile::new(
+                        usize_param(params, 0, kind)?,
+                        i32_param(params, 1, kind)?,
+                    ),
+                )?,
+                output: PhantomData,
+            },
+        )),
+        "VolumeProfile" => Ok(Box::new(CandleProfile::<_, wc::VolumeProfileOutput> {
+            inner: map_new(
+                kind,
+                wc::VolumeProfile::new(
+                    usize_param(params, 0, kind)?,
+                    usize_param(params, 1, kind)?,
+                ),
+            )?,
+            output: PhantomData,
+        })),
+        _ => Err(Error::Config(format!("unknown profile: {kind}"))),
     }
 }
 

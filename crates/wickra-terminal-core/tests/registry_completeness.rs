@@ -15,7 +15,9 @@ use std::collections::BTreeSet;
 use wickra_core::{
     Candle, CrossSection, DerivativesTick, Level, Member, OrderBook, Side, Trade, TradeQuote,
 };
-use wickra_terminal_core::registry::{build, build_paired, DEFAULTS, KINDS, PAIRWISE};
+use wickra_terminal_core::registry::{
+    build, build_paired, build_profile, is_profile, DEFAULTS, KINDS, PAIRWISE, PROFILES,
+};
 use wickra_terminal_core::{CandleBuilder, TickInput, Timeframe};
 
 /// The market a pairwise indicator is compared against in this suite.
@@ -974,4 +976,77 @@ fn multi_output_indicators_survived_the_generation() {
         with_fields >= 60,
         "only {with_fields} indicators reported named fields; the multi-output          wrappers look lost"
     );
+}
+
+/// Every profile builds and produces a histogram.
+///
+/// The profile surface is generated the same way the registry is, so it
+/// carries the same risk: an arm that constructs the wrong thing, or one no
+/// input can satisfy, compiles perfectly well. Nothing else drives them.
+#[test]
+fn every_profile_builds_and_produces_a_histogram() {
+    for (kind, params) in PROFILES {
+        let mut profile = build_profile(kind, params)
+            .unwrap_or_else(|err| panic!("{kind} did not build from its defaults: {err}"));
+        let mut builder = CandleBuilder::new(Timeframe::parse(BAR_SPACING).unwrap());
+        let mut last = None;
+        for bar in 0..400 {
+            for trade in 0..TRADES_PER_BAR {
+                let step = bar * TRADES_PER_BAR + trade;
+                let price = price_at(step) + intrabar_offset(trade);
+                let ts = bar * BAR_MS + trade * (BAR_MS / TRADES_PER_BAR);
+                let size = VOLUME_SCALE * (1.0 + (step % 7) as f64);
+                let closed = builder.update(price, size, ts);
+                let mut input = TickInput::price(price);
+                input.candle = closed;
+                if let Some(reading) = profile.update(&input) {
+                    last = Some(reading);
+                }
+            }
+        }
+        let reading = last.unwrap_or_else(|| panic!("{kind} produced no histogram in 400 bars"));
+        assert!(
+            !reading.bins.is_empty(),
+            "{kind} produced an empty histogram, which is not a distribution"
+        );
+        assert!(
+            reading.bins.iter().all(|bin| bin.is_finite()),
+            "{kind} produced a non-finite bin"
+        );
+        // A price profile reports the range its bins cover; a time profile
+        // has none, and reporting zeros there would be a claim about prices.
+        match (reading.price_low, reading.price_high) {
+            (Some(low), Some(high)) => assert!(
+                low <= high && low.is_finite() && high.is_finite(),
+                "{kind} reported an inverted or non-finite price range"
+            ),
+            (None, None) => {}
+            _ => panic!("{kind} reported half a price range"),
+        }
+        assert!(
+            is_profile(kind),
+            "{kind} is in PROFILES but is_profile says no"
+        );
+    }
+}
+
+/// A profile is not an indicator, and neither list leaks into the other.
+#[test]
+fn profiles_and_indicators_are_disjoint() {
+    for (kind, _) in PROFILES {
+        assert!(
+            !KINDS.contains(&kind),
+            "{kind} is both a profile and a registered indicator"
+        );
+        assert!(
+            build(kind, &[]).is_err(),
+            "{kind} must not build as an indicator"
+        );
+    }
+    for (kind, _) in DEFAULTS {
+        assert!(
+            !is_profile(kind),
+            "{kind} is a registered indicator and a profile"
+        );
+    }
 }

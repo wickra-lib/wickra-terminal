@@ -7,6 +7,7 @@
 pub(crate) mod book;
 pub(crate) mod chart;
 pub(crate) mod footprint;
+mod profile;
 pub(crate) mod tape;
 pub(crate) mod watchlist;
 
@@ -39,5 +40,6 @@ pub(crate) fn render_panel(frame: &mut Frame, area: Rect, panel: &PanelView, foc
         PanelView::Tape(view) => tape::render(frame, area, view, focused),
         PanelView::Watchlist(view) => watchlist::render(frame, area, view, focused),
         PanelView::Footprint(view) => footprint::render(frame, area, view, focused),
+        PanelView::Profile(view) => profile::render(frame, area, view, focused),
     }
 }

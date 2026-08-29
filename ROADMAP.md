@@ -40,7 +40,7 @@ requests.
 Nothing here is scheduled. These are the openings the current shape leaves, in
 roughly the order they would pay off.
 
-- **The remaining indicator families.** 7 of the 504 in `wickra-core` are not
+- **The remaining indicator families.** 1 of the 504 in `wickra-core` are not
   reachable, and the reason is now the same for nearly all of them:
   [`docs/INDICATORS.md`](docs/INDICATORS.md) lists them. Derivatives-tick (17),
   cross-section (15) and trade-quote (3) need feeds this repository has no source

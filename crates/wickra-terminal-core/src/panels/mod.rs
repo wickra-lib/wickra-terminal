@@ -8,6 +8,7 @@
 pub mod book;
 pub mod chart;
 pub mod footprint;
+pub mod profile;
 pub mod tape;
 pub mod watchlist;
 
@@ -21,6 +22,7 @@ use crate::view::PanelView;
 pub use book::BookPanel;
 pub use chart::ChartPanel;
 pub use footprint::FootprintPanel;
+pub use profile::ProfilePanel;
 pub use tape::TapePanel;
 pub use watchlist::WatchlistPanel;
 
@@ -37,6 +39,8 @@ pub enum PanelKind {
     Watchlist,
     /// A footprint / volume profile.
     Footprint,
+    /// The configured distributions: volume by price, TPO, time-of-day shapes.
+    Profile,
 }
 
 /// A panel: a pure mapping from state to a view-model.
@@ -57,6 +61,7 @@ pub fn build_panel(spec: &PanelSpec) -> Box<dyn Panel> {
         PanelKind::Tape => Box::new(TapePanel),
         PanelKind::Watchlist => Box::new(WatchlistPanel),
         PanelKind::Footprint => Box::new(FootprintPanel),
+        PanelKind::Profile => Box::new(ProfilePanel),
     }
 }
 

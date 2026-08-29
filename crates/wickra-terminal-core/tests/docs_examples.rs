@@ -247,7 +247,13 @@ fn the_documented_indicator_count_is_the_real_one() {
 fn the_unreachable_indicator_count_adds_up() {
     const LIBRARY_TOTAL: usize = 504;
     let root = repo_root();
-    let registered = wickra_terminal_core::registry::DEFAULTS.len();
+    // Reachable, not registered. Six of the library's indicators answer with a
+    // histogram rather than a reading, so they are carried by the profile
+    // surface instead of the registry -- reachable from the terminal all the
+    // same, and counting them as unreachable would be a lie in the other
+    // direction.
+    let registered = wickra_terminal_core::registry::DEFAULTS.len()
+        + wickra_terminal_core::registry::PROFILES.len();
     let needle = format!(" of the {LIBRARY_TOTAL}");
     let mut checked = 0;
 
@@ -263,7 +269,7 @@ fn the_unreachable_indicator_count_adds_up() {
             assert_eq!(
                 claimed + registered,
                 LIBRARY_TOTAL,
-                "{rel} says {claimed} unreachable and the registry holds {registered},                  which is not the {LIBRARY_TOTAL} the library ships"
+                "{rel} says {claimed} unreachable and the terminal reaches {registered},                  which is not the {LIBRARY_TOTAL} the library ships"
             );
             checked += 1;
         }

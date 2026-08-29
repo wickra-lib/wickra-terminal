@@ -242,6 +242,32 @@ FIELD_READERS = {
     "Option<f64>": "last.{name}",
 }
 
+# Indicators whose output is a variable-length histogram, mapped to the field
+# that carries it and whether it also carries a price range.
+#
+# These are the ones the registry deliberately does not carry. A registry entry
+# promises one name, one number and a fixed set of named fields; a distribution
+# over price levels or times of day is none of those, and its length changes as
+# the session runs. Squeezing it in means reporting one bin under the whole
+# indicator's name -- which is exactly what `VolumeProfile` did before P12.1
+# removed it: it reported `price_low`, a price, under a profile's name.
+#
+# So they get a surface of their own, alongside the registry rather than inside
+# it: `ProfileIndicator` returns the histogram whole.
+#
+# `Footprint` is not here and does not belong here. Its output is a list of
+# price LEVELS, each with its own bid and ask volume, which is a different shape
+# again -- and the terminal already renders it from its own footprint state, as
+# the `footprint` panel.
+PROFILE_OUTPUTS = {
+    "VolumeProfileOutput": ("bins", True),
+    "TpoProfileOutput": ("counts", True),
+    "DayOfWeekProfileOutput": ("bins", False),
+    "IntradayVolatilityProfileOutput": ("bins", False),
+    "TimeOfDayReturnProfileOutput": ("bins", False),
+    "VolumeByTimeProfileOutput": ("bins", False),
+}
+
 # Scalar outputs that are a whole number rather than a float.
 #
 # `DrawdownDuration` answers "how many bars has this drawdown lasted", which is a
@@ -324,6 +350,9 @@ HEAD = '''//! Indicator registry: constructs `wickra-core` indicators by name an
 //! Multi-output indicators expose their fields by name.
 
 use std::collections::BTreeMap;
+use std::marker::PhantomData;
+
+use serde::{Deserialize, Serialize};
 
 use wickra_core::{self as wc, Candle, Indicator};
 
@@ -438,6 +467,49 @@ impl TickInput {
 }
 
 /// A uniform, object-safe indicator the terminal drives one tick at a time.
+/// One reading of a profile: a histogram, and the price range it spans when it
+/// has one.
+///
+/// Two of the six are distributions over PRICE and carry the range their bins
+/// cover; the other four are over TIME -- day of week, minute of session -- and
+/// have no price range to report. The bounds are optional rather than zeroed, so
+/// a consumer can tell "spans no price" from "spans zero to zero".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProfileReading {
+    /// The histogram, in bin order.
+    pub bins: Vec<f64>,
+    /// The lowest price the bins cover, for a price profile.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price_low: Option<f64>,
+    /// The highest price the bins cover, for a price profile.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price_high: Option<f64>,
+}
+
+/// An indicator whose output is a histogram rather than a reading.
+///
+/// Deliberately not [`TickIndicator`]: that trait promises one `f64` and a fixed
+/// set of named fields, and a distribution is neither. Kept apart rather than
+/// widening the other, so nothing that consumes a reading has to learn what an
+/// absent histogram means.
+pub trait ProfileIndicator: Send {
+    /// Feed one tick; returns the histogram, or `None` while warming up or when
+    /// this tick carries nothing this profile consumes.
+    fn update(&mut self, input: &TickInput) -> Option<ProfileReading>;
+    /// Number of inputs required before the first histogram.
+    fn warmup(&self) -> usize;
+}
+
+/// Wraps a bar-input indicator whose output is a histogram.
+///
+/// Parameterised by the output struct as well as the indicator, which is what
+/// keeps one impl per output from overlapping another.
+struct CandleProfile<I, O> {
+    inner: I,
+    /// Only to make the output type part of this wrapper's identity.
+    output: PhantomData<O>,
+}
+
 pub trait TickIndicator: Send {
     /// Feed one tick; returns the primary value, or `None` while warming up or
     /// when this tick carries nothing this indicator consumes.
@@ -590,6 +662,95 @@ def wants_reference(family: str) -> str:
         + chr(10)
         + "    }"
     )
+
+
+def emit_profiles(profiles: list, defaults: dict) -> str:
+    """The profile surface: the reading, the trait, the wrappers and the builder.
+
+    All six take `Input = Candle`, so there is one wrapper rather than one per
+    family. It is parameterised by the OUTPUT struct as well as the indicator,
+    which is what keeps one impl per output from overlapping another -- the same
+    reason the struct-output wrapper carries its output type.
+    """
+    if not profiles:
+        return ""
+    impls = []
+    for name, out, _, _ in sorted(profiles):
+        field, priced = PROFILE_OUTPUTS[out]
+        low = "Some(reading.price_low)" if priced else "None"
+        high = "Some(reading.price_high)" if priced else "None"
+        impls.append(
+            f"""
+impl<I> ProfileIndicator for CandleProfile<I, wc::{out}>
+where
+    I: Indicator<Input = Candle, Output = wc::{out}> + Send,
+{{
+    fn update(&mut self, input: &TickInput) -> Option<ProfileReading> {{
+        input
+            .candle
+            .and_then(|candle| self.inner.update(candle))
+            .map(|reading| ProfileReading {{
+                bins: reading.{field},
+                price_low: {low},
+                price_high: {high},
+            }})
+    }}
+    fn warmup(&self) -> usize {{
+        self.inner.warmup_period()
+    }}
+}}
+"""
+        )
+
+    arms = []
+    for name, out, argtypes, returns_result in sorted(profiles):
+        ctor = f"wc::{name}::new({readers(argtypes)})" if argtypes else f"wc::{name}::new()"
+        made = f"map_new(kind, {ctor})?" if returns_result else ctor
+        arms.append(
+            f'        "{name}" => Ok(Box::new(CandleProfile::<_, wc::{out}> {{'
+            f" inner: {made}, output: PhantomData }})),"
+        )
+
+    rows = []
+    for name, _, _, _ in sorted(profiles):
+        params = defaults.get(name)
+        if params is None:
+            raise SystemExit(f"error: no manifest defaults for the profile {name}")
+        values = ", ".join(repr(float(v)) for v in params)
+        rows.append(f'    ("{name}", &[{values}]),')
+
+    names = " | ".join(f'"{name}"' for name, _, _, _ in sorted(profiles))
+    return f"""
+{"".join(impls)}
+/// Every profile this terminal can build, with the parameters the wickra golden
+/// manifest pins them at.
+///
+/// Kept apart from [`DEFAULTS`] rather than merged into it: a caller asking the
+/// catalogue what it can *read* wants indicators, and a caller laying out a
+/// panel wants profiles. One list holding both would make every consumer filter.
+pub const PROFILES: [(&str, &[f64]); {len(rows)}] = [
+{chr(10).join(rows)}
+];
+
+/// Whether `kind` names a profile rather than an indicator.
+#[must_use]
+pub fn is_profile(kind: &str) -> bool {{
+    matches!(kind, {names})
+}}
+
+/// Build a profile by name.
+///
+/// # Errors
+///
+/// Returns [`Error::Config`] if `kind` is not a profile, or if its parameters
+/// are missing or rejected by the constructor.
+pub fn build_profile(kind: &str, params: &[f64]) -> Result<Box<dyn ProfileIndicator>> {{
+    match kind {{
+{chr(10).join(arms)}
+        _ => Err(Error::Config(format!("unknown profile: {{kind}}"))),
+    }}
+}}
+"""
 
 
 def emit_int_wrappers(families: set[str]) -> str:
@@ -855,6 +1016,7 @@ def main() -> None:
     bigtext = "\n".join(p.read_text(encoding="utf-8") for p in sorted(src.rglob("*.rs")))
 
     entries = []          # (name, input, output, argtypes, returns_result, fields)
+    profiles = []         # (name, output struct, argtypes, returns_result)
     skipped = Counter()
     skipped_names: dict[str, list[str]] = {}
 
@@ -888,6 +1050,11 @@ def main() -> None:
                 skipped_names.setdefault("unreadable constructor argument", []).append(ty)
                 continue
             fields: list[tuple[str, str, str]] = []
+            if out in PROFILE_OUTPUTS:
+                # Not registered and not skipped: carried by the profile surface
+                # below, which returns the histogram whole.
+                profiles.append((ty, out, argtypes, returns_result))
+                continue
             if out in SCALAR_INT_OUTPUTS:
                 pass
             elif out != "f64":
@@ -1071,6 +1238,7 @@ fn build_inner(
         + emit_int_wrappers(int_families)
         + emit_field_structs(field_families)
         + emit_field_impls(structs)
+        + emit_profiles(profiles, defaults)
         + PARAMS
         + build_fn
     )

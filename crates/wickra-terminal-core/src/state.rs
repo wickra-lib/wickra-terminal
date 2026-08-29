@@ -731,6 +731,84 @@ impl std::fmt::Debug for IndicatorEntry {
     }
 }
 
+/// One profile tracked for a symbol: its label and its latest histogram.
+struct ProfileEntry {
+    label: String,
+    profile: Box<dyn registry::ProfileIndicator>,
+    last: Option<registry::ProfileReading>,
+}
+
+/// A profile is a trait object, so the label and the histogram are what a
+/// reader can be shown -- the same shape `IndicatorEntry` prints.
+impl std::fmt::Debug for ProfileEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProfileEntry")
+            .field("label", &self.label)
+            .field("last", &self.last)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The set of profiles tracked for a symbol.
+///
+/// Separate from [`IndicatorSet`] because a profile answers with a histogram
+/// rather than a reading. Driving them from one set would mean a reading type
+/// that is sometimes a number and sometimes a distribution, and every consumer
+/// learning which.
+#[derive(Debug, Default)]
+pub struct ProfileSet {
+    entries: Vec<ProfileEntry>,
+}
+
+impl ProfileSet {
+    /// Build the set a config asks for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Config`] naming the profile if a spec's kind is not a
+    /// profile or its parameters are rejected.
+    pub fn from_specs(specs: &[IndicatorSpec]) -> Result<Self> {
+        let entries = specs
+            .iter()
+            .map(|spec| {
+                Ok(ProfileEntry {
+                    label: spec.label(),
+                    profile: registry::build_profile(&spec.kind, &spec.params)?,
+                    last: None,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Self { entries })
+    }
+
+    /// Feed one tick to every profile.
+    pub fn update(&mut self, input: &TickInput) {
+        for entry in &mut self.entries {
+            if let Some(reading) = entry.profile.update(input) {
+                entry.last = Some(reading);
+            }
+        }
+    }
+
+    /// Every profile's label and latest histogram, in configured order.
+    ///
+    /// A profile that has not produced one yet is listed with `None` rather
+    /// than left out, so a panel's rows do not reorder as the session warms up.
+    #[must_use]
+    pub fn readings(&self) -> Vec<(&str, Option<&registry::ProfileReading>)> {
+        self.entries
+            .iter()
+            .map(|entry| (entry.label.as_str(), entry.last.as_ref()))
+            .collect()
+    }
+
+    /// Whether any profile is tracked.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
 /// The set of indicators tracked for a symbol.
 #[derive(Debug)]
 pub struct IndicatorSet {
@@ -878,6 +956,8 @@ pub struct SymbolState {
     pub footprint: Footprint,
     /// The chart indicator set.
     pub indicators: IndicatorSet,
+    /// The profile set, for the profile panel.
+    pub profiles: ProfileSet,
     /// The last traded price seen.
     pub last: Decimal,
     /// A bounded recent price history for the chart series.
@@ -897,12 +977,17 @@ impl SymbolState {
     /// # Errors
     ///
     /// Returns [`Error::Config`] if an indicator spec is not constructible.
-    pub fn new(specs: &[IndicatorSpec], timeframe: Timeframe) -> Result<Self> {
+    pub fn new(
+        specs: &[IndicatorSpec],
+        profiles: &[IndicatorSpec],
+        timeframe: Timeframe,
+    ) -> Result<Self> {
         Ok(Self {
             book: BookState::default(),
             tape: TapeRing::default(),
             footprint: Footprint::default(),
             indicators: IndicatorSet::from_specs(specs)?,
+            profiles: ProfileSet::from_specs(profiles)?,
             last: Decimal::ZERO,
             history: VecDeque::with_capacity(512),
             candles: CandleBuilder::new(timeframe),
@@ -926,6 +1011,7 @@ impl Default for SymbolState {
             tape: TapeRing::default(),
             footprint: Footprint::default(),
             indicators: IndicatorSet::default(),
+            profiles: ProfileSet::default(),
             last: Decimal::ZERO,
             history: VecDeque::with_capacity(512),
             candles: CandleBuilder::new(Timeframe::default()),
@@ -966,6 +1052,8 @@ pub struct AppState {
     /// the terminal is built or a spec is added, so building a market's set can
     /// no longer fail.
     pub indicators: Vec<IndicatorSpec>,
+    /// The profile specs every market is tracked with, validated the same way.
+    pub profiles: Vec<IndicatorSpec>,
     /// The bar size the candle-input indicators are fed at.
     pub timeframe: Timeframe,
 }
@@ -980,6 +1068,7 @@ impl std::fmt::Debug for AppState {
             .field("focus", &self.focus)
             .field("watchlist", &self.watchlist)
             .field("indicators", &self.indicators)
+            .field("profiles", &self.profiles)
             .field("timeframe", &self.timeframe)
             .finish()
     }
@@ -1054,7 +1143,7 @@ impl AppState {
             return;
         }
         let state = self.symbols.entry((src, sym.clone())).or_insert_with(|| {
-            SymbolState::new(&self.indicators, self.timeframe)
+            SymbolState::new(&self.indicators, &self.profiles, self.timeframe)
                 .expect("indicator specs are validated before they reach the state")
         });
         match event {
@@ -1112,6 +1201,7 @@ impl AppState {
                 tick.book = book;
                 tick.references = references;
                 state.indicators.update(&tick);
+                state.profiles.update(&tick);
                 if state.history.len() == 512 {
                     state.history.pop_front();
                 }
@@ -1206,7 +1296,7 @@ impl AppState {
     /// the wrong indicators rather than none at all.
     #[must_use]
     pub fn fresh_market(&self) -> SymbolState {
-        SymbolState::new(&self.indicators, self.timeframe)
+        SymbolState::new(&self.indicators, &self.profiles, self.timeframe)
             .expect("indicator specs are validated before they reach the state")
     }
 
