@@ -11,17 +11,26 @@
 //!
 //! Source of truth: the wickra-core indicator sources — the `Indicator` impls,
 //! their `new` signatures and their Output structs. An indicator is registered
-//! when its input is one of the four families this terminal can feed and its
-//! output is a scalar `f64` or a struct of `f64` fields:
+//! when its input is one of the nine families this terminal can feed and its
+//! output is a number or a struct of named numbers:
 //!
-//! | `Input`     | Fed with                                  | Advances     |
-//! |-------------|-------------------------------------------|--------------|
-//! | `f64`       | the last trade price                      | every trade  |
-//! | `Candle`    | the bar the tick just closed              | every bar    |
-//! | `Trade`     | the print, with size and aggressor side   | every trade  |
-//! | `OrderBook` | the locally maintained L2 book            | every trade  |
+//! | `Input`           | Fed with                                     | Advances    |
+//! |-------------------|----------------------------------------------|-------------|
+//! | `f64`             | the last trade price                         | every trade |
+//! | `Candle`          | the bar the tick just closed                 | every bar   |
+//! | `Trade`           | the print, with size and aggressor side      | every trade |
+//! | `OrderBook`       | the locally maintained L2 book               | every trade |
+//! | `(f64, f64)`      | this price against a reference market's      | every trade |
+//! | returns           | the close-to-close return of the closed bar  | every bar   |
+//! | `CrossSection`    | the breadth of a named universe of markets   | every bar   |
+//! | `DerivativesTick` | funding, open interest and taker flow        | every trade |
+//! | `TradeQuote`      | the print, with the mid it arrived against   | every trade |
 //!
 //! Multi-output indicators expose their fields by name.
+//!
+//! Two answers do not fit that contract and have surfaces of their own here:
+//! [`ProfileIndicator`], for the indicators whose output is a histogram, and
+//! [`BarStream`], for the bar builders, which are not `Indicator`s at all.
 
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
@@ -3737,6 +3746,23 @@ fn i32_param(params: &[f64], idx: usize, kind: &str) -> Result<i32> {
 fn map_new<T>(kind: &str, made: core::result::Result<T, wc::Error>) -> Result<T> {
     made.map_err(|err| Error::Config(format!("{kind}: {err}")))
 }
+
+/// Every input family this terminal can feed, sorted.
+///
+/// Named rather than counted: a document that lists the families can be checked
+/// against this, and a family added to the registry without a row in that list
+/// fails the check instead of leaving the list quietly short.
+pub const INPUT_FAMILIES: [&str; 9] = [
+    "(f64,f64)",
+    "Candle",
+    "CrossSection",
+    "DerivativesTick",
+    "OrderBook",
+    "Trade",
+    "TradeQuote",
+    "f64",
+    "returns",
+];
 
 /// Every registered indicator name, sorted.
 pub const KINDS: [&str; 499] = [

@@ -33,13 +33,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - One runnable example per language, a C/C++ CMake harness, and the full CI
   workflow matrix (all ten languages across three operating systems) plus
   CodeQL, Scorecard, zizmor and link checking.
-- Indicators: **455 of the wickra-core set**, constructible by name from a config
-  or at run time, across five input families — price, bar, tape, order book and
-  pairwise. `tools/gen_registry.py` reads the library's sources and emits the
-  registry, so it cannot drift from what wickra actually offers; the 44 it cannot
-  reach are printed with a reason on every regeneration.
+- Indicators: **497 of the wickra-core set**, constructible by name from a config
+  or at run time, across nine input families — price, bar, tape, order book,
+  pairwise, returns, cross-section, derivatives and trade-against-quote.
+  `tools/gen_registry.py` reads the library's sources and emits the registry, so
+  it cannot drift from what wickra actually offers; whatever it cannot reach is
+  printed with a reason on every regeneration rather than dropped in silence.
+- Profiles: the six indicators whose output is a histogram get a surface of their
+  own rather than a registry entry. A registry entry promises one number plus
+  named fields, and a distribution over price levels is neither — squeezing one
+  in meant reporting a single bin under the whole indicator's name.
+- Alternative bars: the ten bar builders — Renko, Kagi, line-break, range,
+  point-and-figure, tick, volume, dollar, imbalance and run — get a third
+  surface. They are not indicators, and one closed candle completes zero, one or
+  several of them; that unevenness is the character of the chart, not a defect.
+- With the `footprint` panel, which renders the one indicator none of the three
+  surfaces fit, that is **514** — every indicator and bar builder wickra ships.
+- Derivatives: the `Feed` command accepts funding and open-interest updates, and
+  the taker flow is folded out of the terminal's own tape rather than taken on
+  faith from a feed that does not carry it.
 - Tick-to-OHLCV aggregation (`CandleBuilder`, `Timeframe`), which is what makes
-  the 262 bar-input indicators reachable at all. Only closed bars reach an
+  the 256 bar-input indicators reachable at all. Only closed bars reach an
   indicator, so a reading never repaints as its bar fills.
 - The tape and book indicator families read the book and print stream the
   terminal already keeps, converted into wickra-core's `Trade` and `OrderBook`

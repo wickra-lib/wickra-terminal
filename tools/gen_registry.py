@@ -11,25 +11,35 @@ Single source of truth: the wickra-core indicator sources themselves
 
 What gets registered, and why only this much:
 
-  Input = f64        fed the last traded price, tick by tick.
-  Input = Candle     fed each bar as it closes, from the CandleBuilder. Only
-                     closed bars: feeding the bar in progress would make every
-                     reading repaint as the bar fills.
-  Input = Trade      fed the print with its size and aggressor side, from the
-                     terminal's own tape.
-  Input = OrderBook  fed the book, from the terminal's own book.
-  Input = (f64,f64)  fed this market's price against a reference market's, named
-                     in the spec.
+  Input = f64              fed the last traded price, tick by tick.
+  Input = Candle           fed each bar as it closes, from the CandleBuilder.
+                           Only closed bars: feeding the bar in progress would
+                           make every reading repaint as the bar fills.
+  Input = Trade            fed the print with its size and aggressor side, from
+                           the terminal's own tape.
+  Input = OrderBook        fed the book, from the terminal's own book.
+  Input = (f64,f64)        fed this market's price against a reference market's,
+                           named in the spec.
+  Input = CrossSection     fed the breadth of a named universe of markets, from
+                           the members the terminal already tracks.
+  Input = DerivativesTick  fed funding, open interest and the taker flow the
+                           terminal folds out of its own tape.
+  Input = TradeQuote       fed the print together with the mid it arrived
+                           against, so a print can be placed against the book.
 
 One more family is reached by name rather than by declared input: a handful of
 indicators take an `Input = f64` that wickra-core documents as a per-period
 RETURN. They are routed to the `returns` family, which differences closed bars
 and feeds the close-to-close return. See RETURN_INPUT_ONLY.
 
-What is left is skipped and reported, never dropped in silence: `DerivativesTick`,
-`CrossSection` and `TradeQuote` need feeds this repository has no source for, and
-a handful of Output structs carry variable-length bin lists that the fixed
-named-field shape here cannot represent. The run prints what it skipped and why.
+Two shapes of answer do not fit a registry entry and get surfaces of their own
+rather than being flattened into one: indicators whose output is a
+variable-length histogram become PROFILES, and the bar builders -- which do not
+implement `Indicator` at all, and complete zero, one or several bars per candle
+-- become BAR_TYPES.
+
+What is left is skipped and reported, never dropped in silence. The run prints
+what it skipped and why.
 
 The backtester has a script of the same name doing the same job for a different
 shape. Its `BarInput` carries every feed a strategy may consult on one bar; a
@@ -458,17 +468,26 @@ HEAD = '''//! Indicator registry: constructs `wickra-core` indicators by name an
 //!
 //! Source of truth: the wickra-core indicator sources — the `Indicator` impls,
 //! their `new` signatures and their Output structs. An indicator is registered
-//! when its input is one of the four families this terminal can feed and its
-//! output is a scalar `f64` or a struct of `f64` fields:
+//! when its input is one of the nine families this terminal can feed and its
+//! output is a number or a struct of named numbers:
 //!
-//! | `Input`     | Fed with                                  | Advances     |
-//! |-------------|-------------------------------------------|--------------|
-//! | `f64`       | the last trade price                      | every trade  |
-//! | `Candle`    | the bar the tick just closed              | every bar    |
-//! | `Trade`     | the print, with size and aggressor side   | every trade  |
-//! | `OrderBook` | the locally maintained L2 book            | every trade  |
+//! | `Input`           | Fed with                                     | Advances    |
+//! |-------------------|----------------------------------------------|-------------|
+//! | `f64`             | the last trade price                         | every trade |
+//! | `Candle`          | the bar the tick just closed                 | every bar   |
+//! | `Trade`           | the print, with size and aggressor side      | every trade |
+//! | `OrderBook`       | the locally maintained L2 book               | every trade |
+//! | `(f64, f64)`      | this price against a reference market's      | every trade |
+//! | returns           | the close-to-close return of the closed bar  | every bar   |
+//! | `CrossSection`    | the breadth of a named universe of markets   | every bar   |
+//! | `DerivativesTick` | funding, open interest and taker flow        | every trade |
+//! | `TradeQuote`      | the print, with the mid it arrived against   | every trade |
 //!
 //! Multi-output indicators expose their fields by name.
+//!
+//! Two answers do not fit that contract and have surfaces of their own here:
+//! [`ProfileIndicator`], for the indicators whose output is a histogram, and
+//! [`BarStream`], for the bar builders, which are not `Indicator`s at all.
 
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
@@ -1401,6 +1420,7 @@ def main() -> None:
     pairwise = sorted(e[0] for e in entries if e[1] == "(f64,f64)")
     breadth = sorted(e[0] for e in entries if e[1] == "CrossSection")
     int_families = {e[1] for e in entries if e[2] in SCALAR_INT_OUTPUTS}
+    families = sorted({e[1] for e in entries})
 
     alias_rows = chr(10).join(
         f'    ("{alias}", "{canonical}"),'
@@ -1410,6 +1430,15 @@ def main() -> None:
     alias_count = alias_rows.count(chr(10)) + 1 if alias_rows else 0
 
     build_fn = f"""
+/// Every input family this terminal can feed, sorted.
+///
+/// Named rather than counted: a document that lists the families can be checked
+/// against this, and a family added to the registry without a row in that list
+/// fails the check instead of leaving the list quietly short.
+pub const INPUT_FAMILIES: [&str; {len(families)}] = [
+{chr(10).join(f'    "{f}",' for f in families)}
+];
+
 /// Every registered indicator name, sorted.
 pub const KINDS: [&str; {len(names)}] = [
 {chr(10).join(f'    "{n}",' for n in names)}
@@ -1510,6 +1539,28 @@ fn build_inner(
 """
 
     field_families = {family for family, _ in structs}
+    # The header carries a table of the families this terminal feeds, and prose
+    # around it that counts them. Both were written when there were four, and
+    # both were still saying four after the fifth, and then the ninth, were
+    # wired -- a generated file describing itself wrongly. The header is prose
+    # and cannot be derived, so it is checked instead: one table row per family,
+    # or the run stops and says which family has none.
+    documented = {
+        row.split("|")[1].strip().strip("`")
+        for row in HEAD.splitlines()
+        if row.startswith("//! | ") and "Fed with" not in row and "---" not in row
+    }
+    undocumented = {f.replace(" ", "") for f in families} - {
+        d.replace(" ", "") for d in documented
+    }
+    if undocumented:
+        raise SystemExit(
+            "error: the registry header's input table does not mention "
+            + ", ".join(sorted(undocumented))
+            + " -- add a row saying what feeds it and when it advances, rather "
+            "than shipping a header that under-describes the file"
+        )
+
     text = (
         HEAD
         + emit_scalar_wrappers()

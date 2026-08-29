@@ -35,7 +35,7 @@ Each indicator is labelled from its spec: `Sma(20)`, `MacdIndicator(12,26,9)`,
 ## What a tick feeds
 
 The terminal folds individual trades, but most of the indicator set reads
-something other than the bare price. All four families are driven from the same
+something other than the bare price. All nine families are driven from the same
 tick, and each advances only on a tick that carries what it consumes:
 
 | Input | Fed with | Advances |
@@ -45,6 +45,10 @@ tick, and each advances only on a tick that carries what it consumes:
 | tape (`Trade`) | the print, with its size and aggressor side | on every trade |
 | book (`OrderBook`) | the locally maintained L2 book | on every trade |
 | pairwise (`(f64, f64)`) | this market's price and a reference market's | on every trade |
+| returns | the close-to-close return of the bar that just closed | once per `timeframe` |
+| cross-section (`CrossSection`) | the breadth of a named universe of markets | once per `timeframe` |
+| derivatives (`DerivativesTick`) | funding and open interest as fed, with the taker flow folded from the tape | on every trade |
+| quoted trade (`TradeQuote`) | the print, with the mid it arrived against | on every trade |
 
 The tape and book families read state the terminal already keeps, converted into
 the core's types once per tick and shared across the whole set rather than
