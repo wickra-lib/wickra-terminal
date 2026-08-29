@@ -1,7 +1,7 @@
 # Indicators
 
 The terminal drives the [Wickra](https://github.com/wickra-lib/wickra) indicator
-set directly: **<!--indicator-count-->496<!--/indicator-count--> of them**, constructible by name from a config or at run
+set directly: **<!--indicator-count-->497<!--/indicator-count--> of them**, constructible by name from a config or at run
 time, in every binding.
 
 ## Naming one
@@ -158,13 +158,13 @@ it saw before.
 
 ## What is not registered, and why
 
-8 of the 504 indicators in `wickra-core` are not reachable from the terminal
+7 of the 504 indicators in `wickra-core` are not reachable from the terminal
 yet. They are listed with a reason every time the registry is regenerated, rather
 than quietly dropped:
 
 | Missing | Count | Why |
 |---------|------:|-----|
-| output or constructor shape | 8 | profile outputs, `u32` outputs, and variable-length level and bin lists |
+| profile and level outputs | 7 | a variable-length histogram is not a reading: `VolumeProfile`, `TpoProfile`, `Footprint`, and the four time-of-day profiles |
 
 `Footprint` is the one that looks like an omission and is not: its output is a
 list of price levels whose length changes bar to bar, which does not fit the

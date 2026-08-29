@@ -402,6 +402,30 @@ where
     }
 }
 
+/// Wraps a price (`Input = f64`) single-output indicator.
+///
+/// This one carries an indicator whose output is a whole number -- a count of
+/// bars, not a price -- converted to the `f64` the boundary speaks.
+struct ScalarPriceInt<I> {
+    inner: I,
+}
+
+impl<I, O> TickIndicator for ScalarPriceInt<I>
+where
+    I: Indicator<Input = f64, Output = O> + Send,
+    O: Into<f64> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        self.inner.update(input.price).map(Into::into)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        Vec::new()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
 /// Wraps a price indicator whose output is a struct of `f64` fields. The
 /// primary value is the first field; every field is reachable by name.
 struct ScalarPriceFields<I, O> {
@@ -3074,7 +3098,7 @@ fn map_new<T>(kind: &str, made: core::result::Result<T, wc::Error>) -> Result<T>
 }
 
 /// Every registered indicator name, sorted.
-pub const KINDS: [&str; 498] = [
+pub const KINDS: [&str; 499] = [
     "AbandonedBaby",
     "Abcd",
     "AbsoluteBreadthIndex",
@@ -3185,6 +3209,7 @@ pub const KINDS: [&str; 498] = [
     "DownsideGapThreeMethods",
     "Dpo",
     "DragonflyDoji",
+    "DrawdownDuration",
     "DumplingTop",
     "Dx",
     "DynamicMomentumIndex",
@@ -3579,7 +3604,7 @@ pub const KINDS: [&str; 498] = [
 /// same values the library pins its own reference outputs with. Used by the
 /// build-all test so every registered indicator is constructed the way wickra
 /// constructs it, rather than with a guessed parameter count.
-pub const DEFAULTS: [(&str, &[f64]); 496] = [
+pub const DEFAULTS: [(&str, &[f64]); 497] = [
     ("AbandonedBaby", &[]),
     ("Abcd", &[]),
     ("AbsoluteBreadthIndex", &[]),
@@ -3689,6 +3714,7 @@ pub const DEFAULTS: [(&str, &[f64]); 496] = [
     ("DownsideGapThreeMethods", &[]),
     ("Dpo", &[14.0]),
     ("DragonflyDoji", &[]),
+    ("DrawdownDuration", &[]),
     ("DumplingTop", &[14.0]),
     ("Dx", &[14.0]),
     ("DynamicMomentumIndex", &[14.0]),
@@ -4767,6 +4793,9 @@ fn build_inner(
         })),
         "DragonflyDoji" => Ok(Box::new(CandleIn {
             inner: wc::DragonflyDoji::new(),
+        })),
+        "DrawdownDuration" => Ok(Box::new(ScalarPriceInt {
+            inner: wc::DrawdownDuration::new(),
         })),
         "DumplingTop" => Ok(Box::new(CandleIn {
             inner: map_new(kind, wc::DumplingTop::new(usize_param(params, 0, kind)?))?,

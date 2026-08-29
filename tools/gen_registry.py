@@ -242,6 +242,17 @@ FIELD_READERS = {
     "Option<f64>": "last.{name}",
 }
 
+# Scalar outputs that are a whole number rather than a float.
+#
+# `DrawdownDuration` answers "how many bars has this drawdown lasted", which is a
+# count and typed as one. It is not a struct, so `out_fields` has nothing to
+# read, and it is not `f64`, so the scalar wrapper's `Output = f64` bound does
+# not admit it -- it fell between the two and was reported as an unreadable
+# output shape. These get a wrapper of their own; the conversion is exact, since
+# a bar count is orders of magnitude below the 2^53 where an integer stops
+# surviving a round trip through `f64`.
+SCALAR_INT_OUTPUTS = {"u32", "u64", "i64", "usize"}
+
 # The field types whose value is absent on some ticks.
 OPTIONAL_FIELDS = {"Option<f64>"}
 
@@ -581,6 +592,47 @@ def wants_reference(family: str) -> str:
     )
 
 
+def emit_int_wrappers(families: set[str]) -> str:
+    """One wrapper per family in use, for whole-number scalar outputs.
+
+    A separate type rather than a second impl on the scalar wrapper: two impls of
+    the same trait on one struct, differing only in the bound on `I::Output`,
+    overlap as far as the compiler is concerned.
+    """
+    out = []
+    for family, (wrapper, _) in WRAPPERS.items():
+        if family not in families:
+            continue
+        out.append(
+            f"""
+/// {doc(WRAPPER_DOC[family])}
+///
+/// This one carries an indicator whose output is a whole number -- a count of
+/// bars, not a price -- converted to the `f64` the boundary speaks.
+struct {wrapper}Int<I> {{
+    inner: I,{extra_decls(family)}
+}}
+
+impl<I, O> TickIndicator for {wrapper}Int<I>
+where
+    I: Indicator<Input = {INPUT_TY[family]}, Output = O> + Send,
+    O: Into<f64> + Send,
+{{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {{
+        {UPDATE_EXPR[family]}.map(Into::into)
+    }}
+    fn fields(&self) -> Vec<(&'static str, f64)> {{
+        Vec::new()
+    }}
+    fn warmup(&self) -> usize {{
+        {warmup_expr(family)}
+    }}{wants_book(family)}{wants_reference(family)}
+}}
+"""
+        )
+    return "".join(out)
+
+
 def emit_scalar_wrappers() -> str:
     """One wrapper per input family, for `Output = f64` indicators."""
     out = []
@@ -836,7 +888,9 @@ def main() -> None:
                 skipped_names.setdefault("unreadable constructor argument", []).append(ty)
                 continue
             fields: list[tuple[str, str, str]] = []
-            if out != "f64":
+            if out in SCALAR_INT_OUTPUTS:
+                pass
+            elif out != "f64":
                 got = out_fields(bigtext, out)
                 if not got:
                     skipped[f"output {out}"] += 1
@@ -866,6 +920,8 @@ def main() -> None:
         )
         if fields:
             body = f"Ok(Box::new({field_wrapper} {{ inner: {made}, last: None{extra} }}))"
+        elif out in SCALAR_INT_OUTPUTS:
+            body = f"Ok(Box::new({scalar_wrapper}Int {{ inner: {made}{extra} }}))"
         else:
             body = f"Ok(Box::new({scalar_wrapper} {{ inner: {made}{extra} }}))"
         arms.append(f'        "{ty}" => {body},')
@@ -899,6 +955,7 @@ def main() -> None:
 
     pairwise = sorted(e[0] for e in entries if e[1] == "(f64,f64)")
     breadth = sorted(e[0] for e in entries if e[1] == "CrossSection")
+    int_families = {e[1] for e in entries if e[2] in SCALAR_INT_OUTPUTS}
 
     alias_rows = chr(10).join(
         f'    ("{alias}", "{canonical}"),'
@@ -1011,6 +1068,7 @@ fn build_inner(
     text = (
         HEAD
         + emit_scalar_wrappers()
+        + emit_int_wrappers(int_families)
         + emit_field_structs(field_families)
         + emit_field_impls(structs)
         + PARAMS
