@@ -187,7 +187,29 @@ const VOLUME_SCALE: f64 = 10.0;
 const BAR_MS: i64 = 86_400_000;
 
 /// Feed `bars` bars, each built from several trades, and count what came back.
+/// What a driven tick carries.
+///
+/// Withholding one feed is how a test finds out whether an indicator actually
+/// reads it, which is the only way to check that its capability flag is honest.
+#[derive(Clone, Copy)]
+struct Feeds {
+    book: bool,
+    reference: bool,
+}
+
+impl Feeds {
+    /// Everything a tick can carry, which is what an ordinary drive feeds.
+    const ALL: Self = Self {
+        book: true,
+        reference: true,
+    };
+}
+
 fn drive(kind: &str, params: &[f64], bars: i64) -> (usize, usize) {
+    drive_with(kind, params, bars, Feeds::ALL)
+}
+
+fn drive_with(kind: &str, params: &[f64], bars: i64, feeds: Feeds) -> (usize, usize) {
     let mut indicator = build_any(kind, params);
     let mut builder = CandleBuilder::new(Timeframe::parse(BAR_SPACING).unwrap());
     let mut values = 0;
@@ -204,10 +226,14 @@ fn drive(kind: &str, params: &[f64], bars: i64) -> (usize, usize) {
             let mut input = TickInput::price(price);
             input.candle = closed;
             input.trade = Some(trade_at(price, size, step, ts));
-            input.book = Some(book_at(price, step));
-            input
-                .references
-                .insert(REFERENCE.to_string(), reference_at(step));
+            if feeds.book {
+                input.book = Some(book_at(price, step));
+            }
+            if feeds.reference {
+                input
+                    .references
+                    .insert(REFERENCE.to_string(), reference_at(step));
+            }
             input.cross_section = Some(cross_section_at(step));
             input.derivatives = Some(derivatives_at(step));
             input.trade_quote = input
@@ -1187,5 +1213,113 @@ fn every_declared_warmup_is_within_the_drive_budget() {
         "{} declare a warmup past the {budget}-input budget the suite drives:\n  {}",
         over.len(),
         over.join(", ")
+    );
+}
+
+/// Every indicator that reads a feed declares that it does.
+///
+/// `wants_book` and `wants_reference` are not hints. `IndicatorSet` asks them
+/// once per set and the terminal skips assembling the feed entirely when the
+/// answer is no, so an indicator that reads the book and reports false is fed
+/// `None` for the whole session. It then produces nothing -- and an indicator
+/// producing nothing is indistinguishable from one still warming up, which is
+/// why this cannot be left to be noticed in use.
+///
+/// Checked by withholding the feed and comparing: if the readings change, the
+/// indicator reads it, and the flag has to say so. The other direction is left
+/// alone on purpose -- a flag that over-claims costs a book conversion that
+/// nothing reads, which is waste rather than silence.
+#[test]
+fn an_indicator_that_reads_a_feed_declares_it() {
+    const WITHOUT_BOOK: Feeds = Feeds {
+        book: false,
+        reference: true,
+    };
+    const WITHOUT_REFERENCE: Feeds = Feeds {
+        book: true,
+        reference: false,
+    };
+
+    let mut silent = Vec::new();
+    for (kind, params) in DEFAULTS {
+        let full = drive(kind, params, DRIVEN_BARS);
+        let built = build_any(kind, params);
+
+        if drive_with(kind, params, DRIVEN_BARS, WITHOUT_BOOK) != full && !built.wants_book() {
+            silent.push(format!("{kind} reads the book"));
+        }
+        if drive_with(kind, params, DRIVEN_BARS, WITHOUT_REFERENCE) != full
+            && !built.wants_reference()
+        {
+            silent.push(format!("{kind} reads its reference"));
+        }
+    }
+
+    assert!(
+        silent.is_empty(),
+        "{} would be fed nothing and go silent:\n  {}",
+        silent.len(),
+        silent.join(", ")
+    );
+}
+
+/// A parameter a constructor rejects comes back as a config error, never a panic.
+///
+/// Parameters reach the registry from a config file or from a binding's JSON, so
+/// any number can arrive: a zero period, a negative window, a NaN. Most
+/// constructors return a `Result` for exactly that, and the generated build arm
+/// carries it with `?` -- 197 of those arms had never been driven, because
+/// `DEFAULTS` is by definition the set of parameters that work.
+///
+/// What this holds is the contract a caller depends on: a bad parameter is
+/// reported, in a message naming the indicator, and the process survives. A
+/// panic here would abort the host of every binding on the C ABI.
+#[test]
+fn a_rejected_parameter_is_reported_rather_than_panicking() {
+    // A period of zero, a negative window and a NaN: between them these are
+    // rejected by almost every constructor that validates anything at all.
+    const PROBES: [f64; 3] = [0.0, -1.0, f64::NAN];
+
+    let mut rejected = 0_usize;
+    let mut accepted = Vec::new();
+    for (kind, params) in DEFAULTS {
+        if params.is_empty() {
+            continue;
+        }
+        let mut refused = false;
+        for probe in PROBES {
+            let bad = vec![probe; params.len()];
+            let built = if PAIRWISE.contains(&kind) {
+                build_paired(kind, &bad, REFERENCE)
+            } else {
+                build(kind, &bad)
+            };
+            match built {
+                Ok(_) => {}
+                Err(err) => {
+                    refused = true;
+                    rejected += 1;
+                    let message = err.to_string();
+                    assert!(
+                        message.contains(kind),
+                        "{kind} rejected {probe} without naming itself: {message}"
+                    );
+                }
+            }
+        }
+        if !refused {
+            accepted.push(kind);
+        }
+    }
+
+    assert!(rejected > 0, "no constructor rejected anything");
+    // Not "every parameterised kind must refuse": a few take a value where zero,
+    // a negative and a NaN are all legitimate. Those are listed rather than
+    // waved through, so one that starts accepting nonsense shows up here.
+    assert_eq!(
+        accepted,
+        Vec::<&str>::new(),
+        "{} parameterised kinds accepted every probe",
+        accepted.len()
     );
 }
