@@ -1,0 +1,9 @@
+# Python 3.10+ tooling for the binding test job in ci.yml, covering the
+# 3.11 / 3.12 / 3.13 matrix rows.
+#
+# The published package declares no runtime dependencies, so this is build and
+# test tooling only.
+#
+# Locked output: ci-dev-py3.txt. Refresh via scripts/update-lockfiles.sh.
+maturin
+pytest>=9.0.3

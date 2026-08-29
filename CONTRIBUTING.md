@@ -100,9 +100,16 @@ without touching a single binding test.
 | `bindings/node` | `package-lock.json` | **yes** | Reproducible installs for the native binding. |
 | `examples/node` | `package-lock.json` | **yes** | The runnable examples link the binding through a `file:` dependency. |
 | `web` | `package-lock.json` | **yes** | The browser renderer is built in CI and by Cloudflare, which both need the same tree. |
-| `bindings/python` | — | n/a | The published package declares `dependencies = []`; its native code is pinned through the workspace `Cargo.lock`. CI tooling is pinned separately in `bindings/python/requirements-ci.txt`, which Dependabot watches. |
+| `bindings/python` | — | n/a | The published package declares `dependencies = []`; its native code is pinned through the workspace `Cargo.lock`. |
+| `.github/requirements` | `*.txt` (hash-pinned) | **yes** | The CI build and test tooling, locked with `uv pip compile --generate-hashes` and installed with `--require-hashes`. Split per Python version because pytest 9 carries the PYSEC-2026-1845 fix but needs 3.10, while 3.9 is the abi3 floor. |
 | `fuzz` | `fuzz/Cargo.lock` | **no** (ignored) | `fuzz/` is a detached crate and `cargo-fuzz init` ignores its lock. The smoke job resolves fresh, so nothing depends on it. |
 | `bindings/{csharp,java,go,r}` | — | n/a | NuGet, Maven, Go modules and R resolve from their own manifests; none of them adds a lockfile this repository would carry. |
+
+To refresh every committed lockfile at once, run
+[`./scripts/update-lockfiles.sh`](scripts/update-lockfiles.sh). It uses `uv`
+for the Python locks, and bootstraps it on Linux and macOS if it is absent,
+so each target version's hashed closure can be regenerated without that
+interpreter installed here.
 
 When you add a committed Node package, commit its `package-lock.json` and remove
 any ignore rule that would hide it. Do not add a lockfile at the repository

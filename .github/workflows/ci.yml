@@ -185,7 +185,19 @@ jobs:
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
       - uses: ./.github/actions/warm-cargo
-      - run: pip install -r bindings/python/requirements-ci.txt
+      # Hash-pinned, and installed with --require-hashes so pip refuses
+      # anything whose artefact does not match. Split by version because no
+      # single pytest covers the matrix: PYSEC-2026-1845 is fixed in 9.0.3 and
+      # pytest 9 needs Python >= 3.10, while 3.9 is the abi3 floor. The reason
+      # is written out in the .in files beside the locks.
+      - name: Install the pinned build and test tooling
+        shell: bash
+        run: |
+          if [ "${{ matrix.python-version }}" = "3.9" ]; then
+            python -m pip install --require-hashes -r .github/requirements/ci-dev-py39.txt
+          else
+            python -m pip install --require-hashes -r .github/requirements/ci-dev-py3.txt
+          fi
       - run: maturin build --out dist
         working-directory: bindings/python
       # --no-index keeps pip off PyPI so the freshly built wheel is the one
