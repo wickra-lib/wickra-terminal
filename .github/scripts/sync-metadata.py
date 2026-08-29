@@ -10,10 +10,14 @@ settled.
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import subprocess
 import sys
 import tomllib
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -103,11 +107,64 @@ def check_declared(meta: dict) -> list[str]:
             problems.append(f"{rel_path}: does not contain {needle!r} from [{section}].{key}")
     return problems
 
+def check_about(meta: dict) -> list[str]:
+    """The GitHub About description, which is the one count surface no test reaches.
+
+    Every other place the indicator count appears is inside the repository and is
+    held by a test: the README markers, the citation anchor, the eight language
+    floors. The About string lives in GitHub's settings, so it drifted -- it said
+    460 while the registry held 455, and nothing noticed until someone read both.
+
+    Compared against the README marker rather than against the registry directly,
+    because the marker is already pinned to `DEFAULTS.len()` by
+    `docs_examples::the_documented_indicator_count_is_the_real_one`. One truth,
+    one hop.
+
+    Network, so it is opt-in: skipped with a notice when the description cannot
+    be read, rather than failing a job for an unrelated reason.
+    """
+    readme = (REPO_ROOT / 'README.md').read_text(encoding='utf-8')
+    match = re.search(r'<!--indicator-count-->(\d+)<!--/indicator-count-->', readme)
+    if match is None:
+        return ['README.md: no indicator-count marker to compare the About against']
+    expected = match.group(1)
+
+    slug = f"{meta['repo']['org']}/{meta['repo']['name']}"
+    request = urllib.request.Request(
+        f'https://api.github.com/repos/{slug}',
+        headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'wickra-sync-metadata'},
+    )
+    token = os.environ.get('GITHUB_TOKEN')
+    if token:
+        request.add_header('Authorization', f'Bearer {token}')
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            description = json.load(response).get('description') or ''
+    except (urllib.error.URLError, OSError, json.JSONDecodeError) as err:
+        print(f'::notice::could not read the About description ({err}); skipping that check')
+        return []
+
+    found = re.search(r'(\d+)\s+Wickra indicators', description)
+    if found is None:
+        return [f'the About description does not state an indicator count: {description!r}']
+    if found.group(1) != expected:
+        return [
+            f'the About description says {found.group(1)} indicators; the repository says {expected}. '
+            f'Fix it with: gh repo edit {slug} --description ...'
+        ]
+    print(f'sync-metadata: the About description agrees with the repository ({expected}).')
+    return []
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true", help="audit-only (default)")
+    parser.add_argument(
+        "--about",
+        action="store_true",
+        help="also check the GitHub About description against the README count",
+    )
     args = parser.parse_args()
-    _ = args  # currently only --check is supported
+
 
     meta = load_metadata()
     audit = meta.get("audit", {})
@@ -133,6 +190,8 @@ def main() -> int:
         return 1
 
     drift = check_declared(meta)
+    if args.about:
+        drift += check_about(meta)
     if drift:
         print(f"sync-metadata: {len(drift)} declared value(s) not where repo-metadata.toml says:", file=sys.stderr)
         for problem in drift:
