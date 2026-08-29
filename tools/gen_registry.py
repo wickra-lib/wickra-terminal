@@ -85,6 +85,7 @@ WRAPPERS = {
     # Not an `Input` any indicator declares -- a routing target. See
     # RETURN_INPUT_ONLY below.
     "CrossSection": ("CrossIn", "CrossInFields"),
+    "DerivativesTick": ("DerivIn", "DerivInFields"),
     "returns": ("ReturnsIn", "ReturnsInFields"),
 }
 
@@ -144,6 +145,7 @@ INPUT_TY = {
     "OrderBook": "wc::OrderBook",
     "(f64,f64)": "(f64, f64)",
     "CrossSection": "wc::CrossSection",
+    "DerivativesTick": "wc::DerivativesTick",
     "returns": "f64",
 }
 
@@ -164,6 +166,13 @@ UPDATE_EXPR = {
     "Candle": "input.candle.and_then(|c| self.inner.update(c))",
     "Trade": "input.trade.and_then(|t| self.inner.update(t))",
     "OrderBook": "input.book.clone().and_then(|b| self.inner.update(b))",
+    "DerivativesTick": (
+        "input"
+        + chr(10)
+        + "            .derivatives"
+        + chr(10)
+        + "            .and_then(|derivatives| self.inner.update(derivatives))"
+    ),
     "CrossSection": (
         "input"
         + chr(10)
@@ -353,6 +362,12 @@ pub struct TickInput {
     /// one market has closed a bar -- a breadth reading compares closes, and a
     /// universe of markets that have not produced one is not a reading.
     pub cross_section: Option<wc::CrossSection>,
+    /// This market's derivatives microstructure, if the host has fed any.
+    ///
+    /// Absent until the venue's mark, index and futures prices have all arrived:
+    /// `DerivativesTick::new` rejects a non-positive price, so a tick before
+    /// them would not be a tick.
+    pub derivatives: Option<wc::DerivativesTick>,
 }
 
 impl TickInput {
@@ -371,6 +386,7 @@ impl TickInput {
             book: None,
             references: BTreeMap::new(),
             cross_section: None,
+            derivatives: None,
         }
     }
 
@@ -459,6 +475,12 @@ WRAPPER_DOC = {
         "Wraps a book (`Input = OrderBook`) single-output indicator. Ticks whose",
         "book is one-sided yield `None` without advancing it.",
     ),
+    "DerivativesTick": (
+        "Wraps a derivatives (`Input = DerivativesTick`) single-output indicator:",
+        "funding, open interest, positioning and the mark/index/futures prices of",
+        "one perpetual market. Ticks before the host has fed those prices yield",
+        "`None` without advancing it.",
+    ),
     "CrossSection": (
         "Wraps a breadth (`Input = CrossSection`) single-output indicator: the",
         "whole tracked universe on one tick, not one market. Ticks before any",
@@ -479,6 +501,14 @@ WRAPPER_DOC = {
 
 # Prose for the struct-output wrappers, mirroring WRAPPER_DOC.
 FIELD_WRAPPER_DOC = {
+    "DerivativesTick": (
+        "Wraps a derivatives indicator whose output is a struct of fields. The",
+        "primary value is the first field; every field is reachable by name.",
+    ),
+    "CrossSection": (
+        "Wraps a breadth indicator whose output is a struct of fields. The",
+        "primary value is the first field; every field is reachable by name.",
+    ),
     "f64": (
         "Wraps a price indicator whose output is a struct of `f64` fields. The",
         "primary value is the first field; every field is reachable by name.",

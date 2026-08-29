@@ -1,7 +1,7 @@
 # Indicators
 
 The terminal drives the [Wickra](https://github.com/wickra-lib/wickra) indicator
-set directly: **<!--indicator-count-->475<!--/indicator-count--> of them**, constructible by name from a config or at run
+set directly: **<!--indicator-count-->492<!--/indicator-count--> of them**, constructible by name from a config or at run
 time, in every binding.
 
 ## Naming one
@@ -158,13 +158,12 @@ it saw before.
 
 ## What is not registered, and why
 
-29 of the 504 indicators in `wickra-core` are not reachable from the terminal
+12 of the 504 indicators in `wickra-core` are not reachable from the terminal
 yet. They are listed with a reason every time the registry is regenerated, rather
 than quietly dropped:
 
 | Missing | Count | Why |
 |---------|------:|-----|
-| derivatives tick | 17 | no funding/open-interest feed in this repository |
 | cross-section | 1 | `BullishPercentIndex` alone: it reads a point-and-figure buy signal per symbol, which needs P&F column state the terminal does not keep |
 | trade-quote | 3 | no quote feed |
 | output or constructor shape | 8 | profile outputs, `u32` outputs, and variable-length level and bin lists |

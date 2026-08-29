@@ -169,4 +169,4 @@ capture.
 
 The indicator count is a direct multiplier on `fold_trade` and `tick_synth`: the
 numbers above are the two-indicator default. A configuration tracking twenty
-indicators does twenty indicators' work per trade, and the registry offers <!--indicator-count-->475<!--/indicator-count-->.
+indicators does twenty indicators' work per trade, and the registry offers <!--indicator-count-->492<!--/indicator-count-->.

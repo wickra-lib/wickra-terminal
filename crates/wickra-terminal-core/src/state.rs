@@ -31,6 +31,152 @@ use crate::source::{DataSource, SourceId, Symbol};
 /// the convention.
 const BREADTH_MA_PERIOD: usize = 50;
 
+/// One derivatives update from the host, in the terminal's wire shape.
+///
+/// Every field is optional because the channels arrive on their own cadences: a
+/// venue publishes funding eight-hourly, open interest by the minute and
+/// mark/index continuously. A host sends whichever it just received and the
+/// terminal folds it into what it already holds.
+///
+/// Defined here rather than reusing `wickra_exchange_core::DerivativesFeed`,
+/// which carries exchange `Decimal`s and no serde derives — this is the command
+/// schema, and the command boundary is JSON.
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DerivativesUpdate {
+    /// Funding rate for the interval, as a fraction (0.0001 is one basis point).
+    pub funding_rate: Option<f64>,
+    /// Mark price, the venue's fair value for the perpetual.
+    pub mark_price: Option<f64>,
+    /// Index price, the underlying spot reference.
+    pub index_price: Option<f64>,
+    /// Futures price, for the dated contract the basis is measured against.
+    pub futures_price: Option<f64>,
+    /// Open interest, in contracts.
+    pub open_interest: Option<f64>,
+    /// Aggregate long positioning.
+    pub long_size: Option<f64>,
+    /// Aggregate short positioning.
+    pub short_size: Option<f64>,
+    /// Long notional forcibly liquidated since the last update.
+    pub long_liquidation: Option<f64>,
+    /// Short notional forcibly liquidated since the last update.
+    pub short_liquidation: Option<f64>,
+    /// Venue timestamp for this update.
+    pub timestamp: i64,
+}
+
+/// The derivatives microstructure of one market, folded from host updates.
+///
+/// Held per symbol and folded rather than replaced, because the channels are
+/// independent: a funding print carries no open interest, and an open-interest
+/// print carries no mark price. Replacing would blank every field the update did
+/// not mention.
+///
+/// Kept here rather than delegating to `wickra_exchange_core`'s
+/// `DerivativesTickBuilder`, and for one concrete reason: that builder passes
+/// **zero** for taker buy and sell volume, with a comment saying they stay zero
+/// "until a trade-derived source sets it". This terminal is a trade-derived
+/// source — it holds the tape, with an aggressor side on every print — so going
+/// through the builder would make `TakerBuySellRatio` read a constant 0/0 under
+/// a name that promises a ratio. Folding the channels here lets the taker
+/// volumes come from where they actually are.
+#[derive(Debug, Default)]
+struct DerivativesState {
+    funding_rate: f64,
+    mark_price: f64,
+    index_price: f64,
+    futures_price: f64,
+    open_interest: f64,
+    long_size: f64,
+    short_size: f64,
+    /// Accumulated from this market's own prints, by aggressor side.
+    taker_buy_volume: f64,
+    taker_sell_volume: f64,
+    /// Accumulated since the last update, the way a liquidation flow is read.
+    long_liquidation: f64,
+    short_liquidation: f64,
+    timestamp: i64,
+    /// False until mark, index and futures prices have all been set.
+    ///
+    /// `DerivativesTick::new` rejects a non-positive price, so a tick cannot be
+    /// built before they arrive. Tracked rather than inferred from the values
+    /// being non-zero, so a venue legitimately publishing a price this terminal
+    /// then loses is not mistaken for one that never sent one.
+    priced: bool,
+}
+
+impl DerivativesState {
+    /// Fold one host update. Absent fields leave what is already held.
+    fn apply(&mut self, update: &DerivativesUpdate) {
+        let set = |target: &mut f64, value: Option<f64>| {
+            if let Some(value) = value {
+                if value.is_finite() {
+                    *target = value;
+                }
+            }
+        };
+        set(&mut self.funding_rate, update.funding_rate);
+        set(&mut self.mark_price, update.mark_price);
+        set(&mut self.index_price, update.index_price);
+        set(&mut self.futures_price, update.futures_price);
+        set(&mut self.open_interest, update.open_interest);
+        set(&mut self.long_size, update.long_size);
+        set(&mut self.short_size, update.short_size);
+
+        // Liquidations accumulate rather than replace: they are a flow over the
+        // interval, and two prints inside one interval are two liquidations.
+        for (target, value) in [
+            (&mut self.long_liquidation, update.long_liquidation),
+            (&mut self.short_liquidation, update.short_liquidation),
+        ] {
+            if let Some(value) = value {
+                if value.is_finite() && value >= 0.0 {
+                    *target += value;
+                }
+            }
+        }
+
+        if update.timestamp != 0 {
+            self.timestamp = update.timestamp;
+        }
+        self.priced = self.mark_price > 0.0 && self.index_price > 0.0 && self.futures_price > 0.0;
+    }
+
+    /// Accumulate one print into the taker flow, by aggressor side.
+    fn add_trade(&mut self, quantity: f64, aggressor: OrderSide) {
+        if !quantity.is_finite() || quantity < 0.0 {
+            return;
+        }
+        match aggressor {
+            OrderSide::Buy => self.taker_buy_volume += quantity,
+            OrderSide::Sell => self.taker_sell_volume += quantity,
+        }
+    }
+
+    /// This market's derivatives tick, or `None` before its prices have arrived.
+    fn tick(&self) -> Option<wc::DerivativesTick> {
+        if !self.priced {
+            return None;
+        }
+        wc::DerivativesTick::new(
+            self.funding_rate,
+            self.mark_price,
+            self.index_price,
+            self.futures_price,
+            self.open_interest,
+            self.long_size,
+            self.short_size,
+            self.taker_buy_volume,
+            self.taker_sell_volume,
+            self.long_liquidation,
+            self.short_liquidation,
+            self.timestamp,
+        )
+        .ok()
+    }
+}
+
 /// What one market contributes to a market-wide cross-section.
 ///
 /// The breadth family does not read a price; it reads a *universe* — how many
@@ -645,6 +791,8 @@ pub struct SymbolState {
     pub candles: CandleBuilder,
     /// What this market contributes to a market-wide cross-section.
     breadth: BreadthState,
+    /// The derivatives microstructure of this market, folded from host updates.
+    derivatives: DerivativesState,
 }
 
 impl SymbolState {
@@ -664,7 +812,15 @@ impl SymbolState {
             history: VecDeque::with_capacity(512),
             candles: CandleBuilder::new(timeframe),
             breadth: BreadthState::new(),
+            derivatives: DerivativesState::default(),
         })
+    }
+}
+
+impl SymbolState {
+    /// Fold one derivatives update into this market's microstructure.
+    pub(crate) fn apply_derivatives(&mut self, update: &DerivativesUpdate) {
+        self.derivatives.apply(update);
     }
 }
 
@@ -679,6 +835,7 @@ impl Default for SymbolState {
             history: VecDeque::with_capacity(512),
             candles: CandleBuilder::new(Timeframe::default()),
             breadth: BreadthState::new(),
+            derivatives: DerivativesState::default(),
         }
     }
 }
@@ -833,9 +990,17 @@ impl AppState {
                 if let Some(bar) = closed.as_ref() {
                     state.breadth.update(bar);
                 }
+                // The taker flow is this terminal's own: the aggressor side
+                // is on every print, and the derivatives feeds do not carry
+                // it -- wickra-exchange's builder passes zero for it and says
+                // so, which is why the fold above is here rather than there.
+                state
+                    .derivatives
+                    .add_trade(print.quantity.to_f64().unwrap_or(0.0), print.aggressor);
                 let mut tick = TickInput::price(price);
                 tick.candle = closed;
                 tick.cross_section = cross_section;
+                tick.derivatives = state.derivatives.tick();
                 tick.trade = core_trade(print);
                 tick.book = book;
                 tick.references = references;
@@ -1511,5 +1676,80 @@ mod tests {
             state.cross_section(1).is_some(),
             "the first bar closed, so the market is now a member"
         );
+    }
+
+    /// The taker flow is the terminal's own contribution to a derivatives tick.
+    ///
+    /// wickra-exchange's `DerivativesTickBuilder` passes zero for both taker
+    /// volumes and says so in a comment: they stay zero "until a trade-derived
+    /// source sets it". This terminal is one -- the aggressor side is on every
+    /// print -- which is the entire reason the channels are folded here rather
+    /// than there. Without this, `TakerBuySellRatio` reads a constant.
+    #[test]
+    fn the_taker_flow_comes_from_the_tape_not_the_derivatives_feed() {
+        let mut derivatives = DerivativesState::default();
+        derivatives.apply(&DerivativesUpdate {
+            mark_price: Some(20_000.0),
+            index_price: Some(20_000.0),
+            futures_price: Some(20_050.0),
+            timestamp: 1,
+            ..DerivativesUpdate::default()
+        });
+        for _ in 0..3 {
+            derivatives.add_trade(2.0, OrderSide::Buy);
+        }
+        derivatives.add_trade(2.0, OrderSide::Sell);
+
+        let tick = derivatives.tick().expect("the three prices have arrived");
+        assert!(
+            (tick.taker_buy_volume - 6.0).abs() < 1e-9,
+            "three buys of two should be six, got {}",
+            tick.taker_buy_volume
+        );
+        assert!(
+            (tick.taker_sell_volume - 2.0).abs() < 1e-9,
+            "one sell of two should be two, got {}",
+            tick.taker_sell_volume
+        );
+    }
+
+    #[test]
+    fn a_derivatives_tick_needs_its_prices_first() {
+        let mut derivatives = DerivativesState::default();
+        // Funding alone is not a tick: `DerivativesTick::new` rejects a
+        // non-positive mark, index or futures price, so a host feeding only
+        // the funding channel must not produce one.
+        derivatives.apply(&DerivativesUpdate {
+            funding_rate: Some(0.0001),
+            timestamp: 1,
+            ..DerivativesUpdate::default()
+        });
+        assert!(derivatives.tick().is_none());
+    }
+
+    #[test]
+    fn liquidations_accumulate_and_other_channels_replace() {
+        let mut derivatives = DerivativesState::default();
+        let priced = DerivativesUpdate {
+            mark_price: Some(20_000.0),
+            index_price: Some(20_000.0),
+            futures_price: Some(20_050.0),
+            timestamp: 1,
+            ..DerivativesUpdate::default()
+        };
+        derivatives.apply(&priced);
+        // A liquidation is a flow over the interval: two prints inside one
+        // interval are two liquidations, not the second one only.
+        for _ in 0..3 {
+            derivatives.apply(&DerivativesUpdate {
+                long_liquidation: Some(1_000.0),
+                open_interest: Some(500.0),
+                ..DerivativesUpdate::default()
+            });
+        }
+        let tick = derivatives.tick().expect("priced");
+        assert!((tick.long_liquidation - 3_000.0).abs() < 1e-9);
+        // Open interest is a level, not a flow, so it replaces.
+        assert!((tick.open_interest - 500.0).abs() < 1e-9);
     }
 }

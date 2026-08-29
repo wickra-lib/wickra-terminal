@@ -18,7 +18,7 @@ use crate::panels::{build_panel, Panel};
 use crate::registry;
 use crate::source::manual::MAX_PENDING_EVENTS;
 use crate::source::{build_source, event_symbol, Event, Fed, SourceId, Symbol};
-use crate::state::{AppState, IndicatorSet, SymbolState};
+use crate::state::{AppState, DerivativesUpdate, IndicatorSet, SymbolState};
 use crate::view::Frame;
 
 /// A command applied through the data-driven boundary.
@@ -93,6 +93,22 @@ enum Command {
         source: SourceId,
         /// The market event to fold (a trade, ticker, book snapshot or diff).
         event: Event,
+    },
+    /// Fold a derivatives update -- funding, open interest, positioning,
+    /// mark/index/futures prices -- into a market's microstructure.
+    ///
+    /// Its own command rather than a variant of `Feed`, because these do not
+    /// travel as `Event`s: the exchange layer models them as a separate feed
+    /// with its own cadences, and no venue publishes them on the trade stream.
+    /// Every field of the update is optional, so a host sends whichever channel
+    /// just arrived and the terminal folds it into what it already holds.
+    FeedDerivatives {
+        /// The source id the market is tracked on.
+        source: SourceId,
+        /// The market, as written in a config: `BTC/USDT`.
+        symbol: String,
+        /// The channels that arrived.
+        update: DerivativesUpdate,
     },
 }
 
@@ -303,6 +319,35 @@ impl Terminal {
     /// Returns [`Error::UnknownSource`] if `id` is not open, or [`Error::Command`]
     /// if the event has no market or the source does not accept fed events (it is
     /// not a manual source, or the market is not subscribed on it).
+    /// Fold a derivatives update into a tracked market's microstructure.
+    ///
+    /// Unlike [`feed`](Self::feed), this does not queue anything on a source:
+    /// the update is not an event and does not need to be replayed in order.
+    /// It lands directly on the market's state, and the derivatives indicators
+    /// read it on the next print -- which is the cadence they have, since a
+    /// funding print alone does not move a price.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Command`] if the market is not tracked on that source.
+    /// A silent no-op would let a host feed a misspelled symbol forever and
+    /// wonder why the readings never arrive.
+    pub fn feed_derivatives(
+        &mut self,
+        id: SourceId,
+        symbol: &str,
+        update: &DerivativesUpdate,
+    ) -> Result<()> {
+        let market = parse_symbol(symbol)?;
+        let state = self.state.symbols.get_mut(&(id, market)).ok_or_else(|| {
+            Error::Command(format!(
+                "{symbol} is not tracked on source {id}: subscribe it first"
+            ))
+        })?;
+        state.apply_derivatives(update);
+        Ok(())
+    }
+
     pub fn feed(&mut self, id: SourceId, event: Event) -> Result<()> {
         let Some(sym) = event_symbol(&event) else {
             return Err(Error::Command(
@@ -418,6 +463,13 @@ impl Terminal {
             }
             Command::Feed { source, event } => {
                 self.feed(source, event)?;
+            }
+            Command::FeedDerivatives {
+                source,
+                symbol,
+                update,
+            } => {
+                self.feed_derivatives(source, &symbol, &update)?;
             }
             Command::AddIndicator { spec } => {
                 self.state.add_indicator(&spec)?;
@@ -1054,5 +1106,91 @@ mod tests {
             panic!("an unknown unit should be rejected");
         };
         assert!(err.to_string().contains("1w"), "{err}");
+    }
+
+    /// A terminal on a synth source tracking one derivatives indicator.
+    fn derivatives_terminal(kind: &str) -> Terminal {
+        let mut cfg = synth_config();
+        cfg.indicators = vec![IndicatorSpec {
+            kind: kind.to_string(),
+            params: Vec::new(),
+            reference: None,
+        }];
+        let mut term = Terminal::new(&cfg).expect("a synth terminal with one indicator");
+        term.subscribe(0, &Symbol::new("BTC", "USDT"))
+            .expect("subscribe");
+        term
+    }
+
+    /// A derivatives update carrying the three prices a tick needs, plus funding.
+    fn priced_update(step: i64) -> DerivativesUpdate {
+        DerivativesUpdate {
+            funding_rate: Some(0.0001 * f64::from(i32::try_from(step % 7).unwrap_or(0))),
+            mark_price: Some(20_000.0 + step as f64),
+            index_price: Some(20_000.0),
+            futures_price: Some(20_050.0),
+            open_interest: Some(1_000_000.0 + step as f64 * 10.0),
+            ..DerivativesUpdate::default()
+        }
+    }
+
+    #[test]
+    fn a_derivatives_indicator_reads_what_the_host_fed() {
+        let mut term = derivatives_terminal("FundingRate");
+        for step in 0..30 {
+            term.feed_derivatives(0, "BTC/USDT", &priced_update(step))
+                .expect("BTC/USDT is subscribed");
+            term.command_json(TICK).expect("tick");
+        }
+        let reading = term
+            .state
+            .get(&(0, Symbol::new("BTC", "USDT")))
+            .expect("BTC is tracked")
+            .indicators
+            .values()
+            .first()
+            .and_then(|(_, reading)| *reading);
+        assert!(
+            reading.is_some(),
+            "FundingRate produced no reading after 30 fed updates"
+        );
+    }
+
+    #[test]
+    fn a_derivatives_update_for_an_untracked_market_is_an_error() {
+        let mut term = derivatives_terminal("FundingRate");
+        // A silent no-op here would let a host feed a misspelled symbol forever
+        // and wonder why the readings never arrive.
+        let err = term
+            .feed_derivatives(0, "ETH/USDT", &priced_update(0))
+            .expect_err("ETH/USDT was never subscribed");
+        assert!(
+            err.to_string().contains("not tracked"),
+            "the error should say the market is not tracked, got: {err}"
+        );
+    }
+
+    #[test]
+    fn a_malformed_symbol_is_refused_before_it_reaches_the_state() {
+        let mut term = derivatives_terminal("FundingRate");
+        assert!(term
+            .feed_derivatives(0, "not a symbol", &priced_update(0))
+            .is_err());
+    }
+
+    #[test]
+    fn the_command_boundary_carries_a_derivatives_update() {
+        // The whole point of the command: a host in any of the ten languages
+        // drives this through JSON, not through the Rust API.
+        let mut term = derivatives_terminal("FundingRate");
+        let command = r#"{"type":"FeedDerivatives","source":0,"symbol":"BTC/USDT",
+            "update":{"funding_rate":0.0002,"mark_price":20100.0,"index_price":20000.0,
+            "futures_price":20050.0,"timestamp":7}}"#;
+        term.command_json(command).expect("a well-formed command");
+        // And an unknown field is refused rather than silently dropped, so a
+        // typo in a host's payload is an error rather than a missing channel.
+        let typo = r#"{"type":"FeedDerivatives","source":0,"symbol":"BTC/USDT",
+            "update":{"funding_rat":0.0002,"timestamp":7}}"#;
+        assert!(term.command_json(typo).is_err());
     }
 }

@@ -12,7 +12,7 @@
 
 use std::collections::BTreeSet;
 
-use wickra_core::{Candle, CrossSection, Level, Member, OrderBook, Side, Trade};
+use wickra_core::{Candle, CrossSection, DerivativesTick, Level, Member, OrderBook, Side, Trade};
 use wickra_terminal_core::registry::{build, build_paired, DEFAULTS, KINDS, PAIRWISE};
 use wickra_terminal_core::{CandleBuilder, TickInput, Timeframe};
 
@@ -43,6 +43,39 @@ fn build_any(kind: &str, params: &[f64]) -> Box<dyn wickra_terminal_core::TickIn
 fn reference_at(step: i64) -> f64 {
     let t = step as f64;
     1500.0 + 200.0 * (t * 0.05 + 0.9).sin() + 25.0 * (t * 0.55).sin()
+}
+
+/// A derivatives tick that moves, for the perpetual-futures family.
+///
+/// Every field varies, and each because a constant one silences something:
+/// a flat funding rate leaves `FundingRateZScore` dividing a zero variance,
+/// a mark price pinned to the index leaves `PerpetualPremiumIndex` reporting
+/// zero forever, and equal taker volumes make `TakerBuySellRatio` a constant
+/// one. The prices sit near the price path so a basis is a plausible size
+/// rather than an arbitrage nobody would believe.
+fn derivatives_at(step: i64) -> DerivativesTick {
+    let t = step as f64;
+    let index = price_at(step);
+    // A premium that changes sign, so the basis family sees both.
+    let mark = index * (1.0 + 0.0008 * (t * 0.07).sin());
+    let futures = index * (1.0 + 0.0015 * (t * 0.03).cos());
+    DerivativesTick::new(
+        0.0001 * (t * 0.11).sin(),
+        mark,
+        index,
+        futures,
+        1_000_000.0 + 50_000.0 * (t * 0.05).sin(),
+        600_000.0 + 40_000.0 * (t * 0.09).sin(),
+        400_000.0 + 40_000.0 * (t * 0.09).cos(),
+        900.0 + 300.0 * (t * 0.13).sin(),
+        900.0 + 300.0 * (t * 0.13).cos(),
+        // Liquidations are a flow, and mostly zero: a venue does not force
+        // one every tick, and a family reading them should survive the gaps.
+        if step % 17 == 0 { 25_000.0 } else { 0.0 },
+        if step % 23 == 0 { 18_000.0 } else { 0.0 },
+        step,
+    )
+    .expect("finite funding and positive mark/index/futures prices")
 }
 
 /// A synthetic universe for the breadth family.
@@ -150,6 +183,7 @@ fn drive(kind: &str, params: &[f64], bars: i64) -> (usize, usize) {
                 .references
                 .insert(REFERENCE.to_string(), reference_at(step));
             input.cross_section = Some(cross_section_at(step));
+            input.derivatives = Some(derivatives_at(step));
             if indicator.update(&input).is_some() {
                 values += 1;
             }
@@ -326,7 +360,7 @@ fn no_indicator_ever_reports_a_non_finite_value() {
 /// shipped for four phases reporting `price_low` -- a price -- under a profile's
 /// name, because the only multi-output assertion in this suite drove MACD and
 /// asked whether the field list was non-empty.
-const STRUCT_OUTPUT_FIELDS: [(&str, &[&str]); 91] = [
+const STRUCT_OUTPUT_FIELDS: [(&str, &[&str]); 92] = [
     ("AccelerationBands", &["upper", "middle", "lower"]),
     ("Adx", &["plus_di", "minus_di", "adx"]),
     ("Alligator", &["jaw", "teeth", "lips"]),
@@ -432,6 +466,10 @@ const STRUCT_OUTPUT_FIELDS: [(&str, &[&str]); 91] = [
     ("Kst", &["kst", "signal"]),
     ("LeadLagCrossCorrelation", &["lag", "correlation"]),
     ("LinRegChannel", &["upper", "middle", "lower"]),
+    (
+        "LiquidationFeatures",
+        &["long", "short", "net", "total", "imbalance"],
+    ),
     ("MaEnvelope", &["upper", "middle", "lower"]),
     ("MacdExt", &["macd", "signal", "histogram"]),
     ("MacdFix", &["macd", "signal", "histogram"]),
@@ -521,6 +559,7 @@ fn last_reading(
                 .references
                 .insert(REFERENCE.to_string(), reference_at(step));
             input.cross_section = Some(cross_section_at(step));
+            input.derivatives = Some(derivatives_at(step));
             // Fields are read on every tick, not only on the ticks that produce a
             // reading. The reading is the FIRST field, so when that one field is
             // optional and absent the indicator returns None while still holding
@@ -759,7 +798,7 @@ fn a_candle_indicator_reads_the_bar_not_the_price() {
 /// third field is the variable-length bin list the profile exists for, so each
 /// reported `price_low` under a profile's name. They stay skipped like
 /// `Footprint`, whose output is the same shape. See `docs/INDICATORS.md`.
-const REGISTERED_FLOOR: usize = 475;
+const REGISTERED_FLOOR: usize = 492;
 
 #[test]
 fn the_registry_has_not_silently_shrunk() {

@@ -64,6 +64,12 @@ pub struct TickInput {
     /// one market has closed a bar -- a breadth reading compares closes, and a
     /// universe of markets that have not produced one is not a reading.
     pub cross_section: Option<wc::CrossSection>,
+    /// This market's derivatives microstructure, if the host has fed any.
+    ///
+    /// Absent until the venue's mark, index and futures prices have all arrived:
+    /// `DerivativesTick::new` rejects a non-positive price, so a tick before
+    /// them would not be a tick.
+    pub derivatives: Option<wc::DerivativesTick>,
 }
 
 impl TickInput {
@@ -82,6 +88,7 @@ impl TickInput {
             book: None,
             references: BTreeMap::new(),
             cross_section: None,
+            derivatives: None,
         }
     }
 
@@ -304,6 +311,32 @@ where
     }
 }
 
+/// Wraps a derivatives (`Input = DerivativesTick`) single-output indicator:
+/// funding, open interest, positioning and the mark/index/futures prices of
+/// one perpetual market. Ticks before the host has fed those prices yield
+/// `None` without advancing it.
+struct DerivIn<I> {
+    inner: I,
+}
+
+impl<I> TickIndicator for DerivIn<I>
+where
+    I: Indicator<Input = wc::DerivativesTick, Output = f64> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        input
+            .derivatives
+            .and_then(|derivatives| self.inner.update(derivatives))
+            .filter(|value| value.is_finite())
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        Vec::new()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
 /// Wraps an indicator whose `Input = f64` is a per-period RETURN rather
 /// than a price, feeding it the close-to-close return of each closed bar.
 /// The first bar establishes the close to difference against and yields
@@ -355,6 +388,13 @@ struct PairInFields<I, O> {
     inner: I,
     last: Option<O>,
     reference: String,
+}
+
+/// Wraps a derivatives indicator whose output is a struct of fields. The
+/// primary value is the first field; every field is reachable by name.
+struct DerivInFields<I, O> {
+    inner: I,
+    last: Option<O>,
 }
 
 impl<I> TickIndicator for PairInFields<I, wc::CointegrationOutput>
@@ -2527,6 +2567,43 @@ where
     }
 }
 
+impl<I> TickIndicator for DerivInFields<I, wc::LiquidationFeaturesOutput>
+where
+    I: Indicator<Input = wc::DerivativesTick, Output = wc::LiquidationFeaturesOutput> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        let out = input
+            .derivatives
+            .and_then(|derivatives| self.inner.update(derivatives))
+            .filter(|last| {
+                last.long.is_finite()
+                    && last.short.is_finite()
+                    && last.net.is_finite()
+                    && last.total.is_finite()
+                    && last.imbalance.is_finite()
+            });
+        self.last = out;
+        self.last.as_ref().map(|last| last.long)
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        self.last
+            .as_ref()
+            .map(|last| {
+                vec![
+                    ("long", last.long),
+                    ("short", last.short),
+                    ("net", last.net),
+                    ("total", last.total),
+                    ("imbalance", last.imbalance),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
 impl<I> TickIndicator for ScalarPriceFields<I, wc::BollingerOutput>
 where
     I: Indicator<Input = f64, Output = wc::BollingerOutput> + Send,
@@ -2965,7 +3042,7 @@ fn map_new<T>(kind: &str, made: core::result::Result<T, wc::Error>) -> Result<T>
 }
 
 /// Every registered indicator name, sorted.
-pub const KINDS: [&str; 477] = [
+pub const KINDS: [&str; 494] = [
     "AbandonedBaby",
     "Abcd",
     "AbsoluteBreadthIndex",
@@ -3022,6 +3099,7 @@ pub const KINDS: [&str; 477] = [
     "Breakaway",
     "BurkeRatio",
     "Butterfly",
+    "CalendarSpread",
     "CalmarRatio",
     "Camarilla",
     "CandleVolume",
@@ -3087,6 +3165,7 @@ pub const KINDS: [&str; 477] = [
     "EmpiricalModeDecomposition",
     "Engulfing",
     "Equivolume",
+    "EstimatedLeverageRatio",
     "EvenBetterSinewave",
     "EveningDojiStar",
     "Evwma",
@@ -3110,6 +3189,11 @@ pub const KINDS: [&str; 477] = [
     "FractalChaosBands",
     "Frama",
     "FryPanBottom",
+    "FundingBasis",
+    "FundingImpliedApr",
+    "FundingRate",
+    "FundingRateMean",
+    "FundingRateZScore",
     "GainLossRatio",
     "GainToPainRatio",
     "GapSideBySideWhite",
@@ -3183,9 +3267,11 @@ pub const KINDS: [&str; 477] = [
     "LinRegIntercept",
     "LinRegSlope",
     "LinearRegression",
+    "LiquidationFeatures",
     "LogReturn",
     "LongLeggedDoji",
     "LongLine",
+    "LongShortRatio",
     "M2Measure",
     "MaEnvelope",
     "Macd",
@@ -3225,9 +3311,14 @@ pub const KINDS: [&str; 477] = [
     "NewPriceLines",
     "Nrtr",
     "Nvi",
+    "OIPriceDivergence",
+    "OIWeighted",
     "Obv",
+    "OiToVolumeRatio",
     "OmegaRatio",
     "OnNeck",
+    "OpenInterestDelta",
+    "OpenInterestMomentum",
     "OpeningMarubozu",
     "OpeningRange",
     "OrderBookImbalanceFull",
@@ -3245,6 +3336,7 @@ pub const KINDS: [&str; 477] = [
     "PercentAboveMa",
     "PercentB",
     "PercentageTrailingStop",
+    "PerpetualPremiumIndex",
     "Pgo",
     "PiercingDarkCloud",
     "Pin",
@@ -3338,6 +3430,7 @@ pub const KINDS: [&str; 477] = [
     "SuperTrend",
     "T3",
     "TailRatio",
+    "TakerBuySellRatio",
     "Takuri",
     "TasukiGap",
     "TdCamouflage",
@@ -3360,6 +3453,7 @@ pub const KINDS: [&str; 477] = [
     "TdSetup",
     "TdTrap",
     "Tema",
+    "TermStructureBasis",
     "ThreeDrives",
     "ThreeInside",
     "ThreeLineBreak",
@@ -3449,7 +3543,7 @@ pub const KINDS: [&str; 477] = [
 /// same values the library pins its own reference outputs with. Used by the
 /// build-all test so every registered indicator is constructed the way wickra
 /// constructs it, rather than with a guessed parameter count.
-pub const DEFAULTS: [(&str, &[f64]); 475] = [
+pub const DEFAULTS: [(&str, &[f64]); 492] = [
     ("AbandonedBaby", &[]),
     ("Abcd", &[]),
     ("AbsoluteBreadthIndex", &[]),
@@ -3505,6 +3599,7 @@ pub const DEFAULTS: [(&str, &[f64]); 475] = [
     ("Breakaway", &[]),
     ("BurkeRatio", &[14.0]),
     ("Butterfly", &[]),
+    ("CalendarSpread", &[]),
     ("CalmarRatio", &[14.0]),
     ("Camarilla", &[]),
     ("CandleVolume", &[14.0]),
@@ -3570,6 +3665,7 @@ pub const DEFAULTS: [(&str, &[f64]); 475] = [
     ("EmpiricalModeDecomposition", &[20.0, 0.1]),
     ("Engulfing", &[]),
     ("Equivolume", &[14.0]),
+    ("EstimatedLeverageRatio", &[]),
     ("EvenBetterSinewave", &[40.0, 10.0]),
     ("EveningDojiStar", &[]),
     ("Evwma", &[14.0]),
@@ -3593,6 +3689,11 @@ pub const DEFAULTS: [(&str, &[f64]); 475] = [
     ("FractalChaosBands", &[14.0]),
     ("Frama", &[14.0]),
     ("FryPanBottom", &[14.0]),
+    ("FundingBasis", &[]),
+    ("FundingImpliedApr", &[1095.0]),
+    ("FundingRate", &[]),
+    ("FundingRateMean", &[20.0]),
+    ("FundingRateZScore", &[20.0]),
     ("GainLossRatio", &[14.0]),
     ("GainToPainRatio", &[14.0]),
     ("GapSideBySideWhite", &[]),
@@ -3666,9 +3767,11 @@ pub const DEFAULTS: [(&str, &[f64]); 475] = [
     ("LinRegIntercept", &[14.0]),
     ("LinRegSlope", &[14.0]),
     ("LinearRegression", &[14.0]),
+    ("LiquidationFeatures", &[]),
     ("LogReturn", &[14.0]),
     ("LongLeggedDoji", &[]),
     ("LongLine", &[]),
+    ("LongShortRatio", &[]),
     ("M2Measure", &[14.0, 2.0, 0.5]),
     ("MaEnvelope", &[14.0, 2.0]),
     ("MacdExt", &[12.0, 0.0, 26.0, 0.0, 9.0, 0.0]),
@@ -3707,9 +3810,14 @@ pub const DEFAULTS: [(&str, &[f64]); 475] = [
     ("NewPriceLines", &[14.0]),
     ("Nrtr", &[2.0]),
     ("Nvi", &[]),
+    ("OIPriceDivergence", &[20.0]),
+    ("OIWeighted", &[]),
     ("Obv", &[]),
+    ("OiToVolumeRatio", &[]),
     ("OmegaRatio", &[14.0, 2.0]),
     ("OnNeck", &[]),
+    ("OpenInterestDelta", &[]),
+    ("OpenInterestMomentum", &[10.0]),
     ("OpeningMarubozu", &[]),
     ("OpeningRange", &[14.0]),
     ("OrderBookImbalanceFull", &[]),
@@ -3727,6 +3835,7 @@ pub const DEFAULTS: [(&str, &[f64]); 475] = [
     ("PercentAboveMa", &[]),
     ("PercentB", &[14.0, 2.0]),
     ("PercentageTrailingStop", &[2.0]),
+    ("PerpetualPremiumIndex", &[]),
     ("Pgo", &[14.0]),
     ("PiercingDarkCloud", &[]),
     ("Pin", &[20.0]),
@@ -3820,6 +3929,7 @@ pub const DEFAULTS: [(&str, &[f64]); 475] = [
     ("SuperTrend", &[14.0, 2.0]),
     ("T3", &[5.0, 0.7]),
     ("TailRatio", &[14.0]),
+    ("TakerBuySellRatio", &[]),
     ("Takuri", &[]),
     ("TasukiGap", &[]),
     ("TdCamouflage", &[]),
@@ -3842,6 +3952,7 @@ pub const DEFAULTS: [(&str, &[f64]); 475] = [
     ("TdSetup", &[3.0, 7.0]),
     ("TdTrap", &[]),
     ("Tema", &[14.0]),
+    ("TermStructureBasis", &[]),
     ("ThreeDrives", &[]),
     ("ThreeInside", &[]),
     ("ThreeLineBreak", &[14.0]),
@@ -4337,6 +4448,9 @@ fn build_inner(
         "Butterfly" => Ok(Box::new(CandleIn {
             inner: wc::Butterfly::new(),
         })),
+        "CalendarSpread" => Ok(Box::new(DerivIn {
+            inner: wc::CalendarSpread::new(),
+        })),
         "CalmarRatio" => Ok(Box::new(ScalarPrice {
             inner: map_new(kind, wc::CalmarRatio::new(usize_param(params, 0, kind)?))?,
         })),
@@ -4678,6 +4792,9 @@ fn build_inner(
             inner: map_new(kind, wc::Equivolume::new(usize_param(params, 0, kind)?))?,
             last: None,
         })),
+        "EstimatedLeverageRatio" => Ok(Box::new(DerivIn {
+            inner: wc::EstimatedLeverageRatio::new(),
+        })),
         "EvenBetterSinewave" => Ok(Box::new(ScalarPrice {
             inner: map_new(
                 kind,
@@ -4771,6 +4888,30 @@ fn build_inner(
         })),
         "FryPanBottom" => Ok(Box::new(CandleIn {
             inner: map_new(kind, wc::FryPanBottom::new(usize_param(params, 0, kind)?))?,
+        })),
+        "FundingBasis" => Ok(Box::new(DerivIn {
+            inner: wc::FundingBasis::new(),
+        })),
+        "FundingImpliedApr" => Ok(Box::new(DerivIn {
+            inner: map_new(
+                kind,
+                wc::FundingImpliedApr::new(float_param(params, 0, kind)?),
+            )?,
+        })),
+        "FundingRate" => Ok(Box::new(DerivIn {
+            inner: wc::FundingRate::new(),
+        })),
+        "FundingRateMean" => Ok(Box::new(DerivIn {
+            inner: map_new(
+                kind,
+                wc::FundingRateMean::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "FundingRateZScore" => Ok(Box::new(DerivIn {
+            inner: map_new(
+                kind,
+                wc::FundingRateZScore::new(usize_param(params, 0, kind)?),
+            )?,
         })),
         "GainLossRatio" => Ok(Box::new(ReturnsIn {
             inner: map_new(kind, wc::GainLossRatio::new(usize_param(params, 0, kind)?))?,
@@ -5177,6 +5318,10 @@ fn build_inner(
                 wc::LinearRegression::new(usize_param(params, 0, kind)?),
             )?,
         })),
+        "LiquidationFeatures" => Ok(Box::new(DerivInFields {
+            inner: wc::LiquidationFeatures::new(),
+            last: None,
+        })),
         "LogReturn" => Ok(Box::new(ScalarPrice {
             inner: map_new(kind, wc::LogReturn::new(usize_param(params, 0, kind)?))?,
         })),
@@ -5185,6 +5330,9 @@ fn build_inner(
         })),
         "LongLine" => Ok(Box::new(CandleIn {
             inner: wc::LongLine::new(),
+        })),
+        "LongShortRatio" => Ok(Box::new(DerivIn {
+            inner: wc::LongShortRatio::new(),
         })),
         "M2Measure" => Ok(Box::new(ScalarPrice {
             inner: map_new(
@@ -5367,8 +5515,20 @@ fn build_inner(
         "Nvi" => Ok(Box::new(CandleIn {
             inner: wc::Nvi::new(),
         })),
+        "OIPriceDivergence" => Ok(Box::new(DerivIn {
+            inner: map_new(
+                kind,
+                wc::OIPriceDivergence::new(usize_param(params, 0, kind)?),
+            )?,
+        })),
+        "OIWeighted" => Ok(Box::new(DerivIn {
+            inner: wc::OIWeighted::new(),
+        })),
         "Obv" => Ok(Box::new(CandleIn {
             inner: wc::Obv::new(),
+        })),
+        "OiToVolumeRatio" => Ok(Box::new(DerivIn {
+            inner: wc::OiToVolumeRatio::new(),
         })),
         "OmegaRatio" => Ok(Box::new(ReturnsIn {
             inner: map_new(
@@ -5379,6 +5539,15 @@ fn build_inner(
         })),
         "OnNeck" => Ok(Box::new(CandleIn {
             inner: wc::OnNeck::new(),
+        })),
+        "OpenInterestDelta" => Ok(Box::new(DerivIn {
+            inner: wc::OpenInterestDelta::new(),
+        })),
+        "OpenInterestMomentum" => Ok(Box::new(DerivIn {
+            inner: map_new(
+                kind,
+                wc::OpenInterestMomentum::new(usize_param(params, 0, kind)?),
+            )?,
         })),
         "OpeningMarubozu" => Ok(Box::new(CandleIn {
             inner: wc::OpeningMarubozu::new(),
@@ -5463,6 +5632,9 @@ fn build_inner(
                 kind,
                 wc::PercentageTrailingStop::new(float_param(params, 0, kind)?),
             )?,
+        })),
+        "PerpetualPremiumIndex" => Ok(Box::new(DerivIn {
+            inner: wc::PerpetualPremiumIndex::new(),
         })),
         "Pgo" => Ok(Box::new(CandleIn {
             inner: map_new(kind, wc::Pgo::new(usize_param(params, 0, kind)?))?,
@@ -5952,6 +6124,9 @@ fn build_inner(
         "TailRatio" => Ok(Box::new(ScalarPrice {
             inner: map_new(kind, wc::TailRatio::new(usize_param(params, 0, kind)?))?,
         })),
+        "TakerBuySellRatio" => Ok(Box::new(DerivIn {
+            inner: wc::TakerBuySellRatio::new(),
+        })),
         "Takuri" => Ok(Box::new(CandleIn {
             inner: wc::Takuri::new(),
         })),
@@ -6061,6 +6236,9 @@ fn build_inner(
         })),
         "Tema" => Ok(Box::new(ScalarPrice {
             inner: map_new(kind, wc::Tema::new(usize_param(params, 0, kind)?))?,
+        })),
+        "TermStructureBasis" => Ok(Box::new(DerivIn {
+            inner: wc::TermStructureBasis::new(),
         })),
         "ThreeDrives" => Ok(Box::new(CandleIn {
             inner: wc::ThreeDrives::new(),
