@@ -56,6 +56,14 @@ pub struct TickInput {
     /// configuration with no pairwise indicator — the usual one — never builds
     /// it. Keyed by the symbol as it is written in a config, `BTC/USDT`.
     pub references: BTreeMap<String, f64>,
+    /// Every tracked market as one cross-section, for the breadth family.
+    ///
+    /// Populated only when some indicator in the set reads the universe, for the
+    /// same reason `references` is: assembling it walks every market, and the
+    /// usual configuration has no breadth indicator in it. Absent until at least
+    /// one market has closed a bar -- a breadth reading compares closes, and a
+    /// universe of markets that have not produced one is not a reading.
+    pub cross_section: Option<wc::CrossSection>,
 }
 
 impl TickInput {
@@ -73,6 +81,7 @@ impl TickInput {
             trade: None,
             book: None,
             references: BTreeMap::new(),
+            cross_section: None,
         }
     }
 
@@ -266,6 +275,32 @@ where
     }
     fn wants_reference(&self) -> bool {
         true
+    }
+}
+
+/// Wraps a breadth (`Input = CrossSection`) single-output indicator: the
+/// whole tracked universe on one tick, not one market. Ticks before any
+/// market has closed a bar yield `None` without advancing it.
+struct CrossIn<I> {
+    inner: I,
+}
+
+impl<I> TickIndicator for CrossIn<I>
+where
+    I: Indicator<Input = wc::CrossSection, Output = f64> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        input
+            .cross_section
+            .clone()
+            .and_then(|universe| self.inner.update(universe))
+            .filter(|value| value.is_finite())
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        Vec::new()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
     }
 }
 
@@ -2930,18 +2965,22 @@ fn map_new<T>(kind: &str, made: core::result::Result<T, wc::Error>) -> Result<T>
 }
 
 /// Every registered indicator name, sorted.
-pub const KINDS: [&str; 463] = [
+pub const KINDS: [&str; 477] = [
     "AbandonedBaby",
     "Abcd",
+    "AbsoluteBreadthIndex",
     "AccelerationBands",
     "AcceleratorOscillator",
     "AdOscillator",
+    "AdVolumeLine",
     "AdaptiveCci",
     "AdaptiveCycle",
     "AdaptiveLaguerreFilter",
     "AdaptiveRsi",
     "Adl",
     "AdvanceBlock",
+    "AdvanceDecline",
+    "AdvanceDeclineRatio",
     "Adx",
     "Adxr",
     "Alligator",
@@ -2979,6 +3018,7 @@ pub const KINDS: [&str; 463] = [
     "BollingerBands",
     "BollingerBandwidth",
     "BomarBands",
+    "BreadthThrust",
     "Breakaway",
     "BurkeRatio",
     "Butterfly",
@@ -3011,6 +3051,7 @@ pub const KINDS: [&str; 463] = [
     "Counterattack",
     "Crab",
     "CumulativeVolumeDelta",
+    "CumulativeVolumeIndex",
     "CupAndHandle",
     "CyberneticCycle",
     "Cypher",
@@ -3090,6 +3131,7 @@ pub const KINDS: [&str; 463] = [
     "HeikinAshi",
     "HeikinAshiOscillator",
     "HiLoActivator",
+    "HighLowIndex",
     "HighLowRange",
     "HighLowVolumeNodes",
     "HighWave",
@@ -3159,6 +3201,8 @@ pub const KINDS: [&str; 463] = [
     "MatHold",
     "MatchingLow",
     "MaxDrawdown",
+    "McClellanOscillator",
+    "McClellanSummationIndex",
     "McGinleyDynamic",
     "MedianAbsoluteDeviation",
     "MedianChannel",
@@ -3177,6 +3221,7 @@ pub const KINDS: [&str; 463] = [
     "MurreyMathLines",
     "NakedPoc",
     "Natr",
+    "NewHighsNewLows",
     "NewPriceLines",
     "Nrtr",
     "Nvi",
@@ -3197,6 +3242,7 @@ pub const KINDS: [&str; 463] = [
     "PairwiseBeta",
     "ParkinsonVolatility",
     "PearsonCorrelation",
+    "PercentAboveMa",
     "PercentB",
     "PercentageTrailingStop",
     "Pgo",
@@ -3322,6 +3368,7 @@ pub const KINDS: [&str; 463] = [
     "ThreeSoldiersOrCrows",
     "ThreeStarsInSouth",
     "Thrusting",
+    "TickIndex",
     "Tii",
     "TimeBasedStop",
     "TowerTopBottom",
@@ -3334,6 +3381,7 @@ pub const KINDS: [&str; 463] = [
     "TreynorRatio",
     "Triangle",
     "Trima",
+    "Trin",
     "TripleTopBottom",
     "Tristar",
     "Trix",
@@ -3353,6 +3401,7 @@ pub const KINDS: [&str; 463] = [
     "UltimateOscillator",
     "UniqueThreeRiver",
     "UniversalOscillator",
+    "UpDownVolumeRatio",
     "UpsideGapThreeMethods",
     "UpsideGapTwoCrows",
     "UpsidePotentialRatio",
@@ -3400,18 +3449,22 @@ pub const KINDS: [&str; 463] = [
 /// same values the library pins its own reference outputs with. Used by the
 /// build-all test so every registered indicator is constructed the way wickra
 /// constructs it, rather than with a guessed parameter count.
-pub const DEFAULTS: [(&str, &[f64]); 461] = [
+pub const DEFAULTS: [(&str, &[f64]); 475] = [
     ("AbandonedBaby", &[]),
     ("Abcd", &[]),
+    ("AbsoluteBreadthIndex", &[]),
     ("AccelerationBands", &[14.0, 2.0]),
     ("AcceleratorOscillator", &[3.0, 7.0, 14.0]),
     ("AdOscillator", &[]),
+    ("AdVolumeLine", &[]),
     ("AdaptiveCci", &[14.0]),
     ("AdaptiveCycle", &[]),
     ("AdaptiveLaguerreFilter", &[20.0]),
     ("AdaptiveRsi", &[14.0]),
     ("Adl", &[]),
     ("AdvanceBlock", &[]),
+    ("AdvanceDecline", &[]),
+    ("AdvanceDeclineRatio", &[]),
     ("Adx", &[14.0]),
     ("Adxr", &[14.0]),
     ("Alligator", &[3.0, 7.0, 14.0]),
@@ -3448,6 +3501,7 @@ pub const DEFAULTS: [(&str, &[f64]); 461] = [
     ("BollingerBands", &[20.0, 2.0]),
     ("BollingerBandwidth", &[14.0, 2.0]),
     ("BomarBands", &[4.0, 0.85]),
+    ("BreadthThrust", &[10.0]),
     ("Breakaway", &[]),
     ("BurkeRatio", &[14.0]),
     ("Butterfly", &[]),
@@ -3480,6 +3534,7 @@ pub const DEFAULTS: [(&str, &[f64]); 461] = [
     ("Counterattack", &[]),
     ("Crab", &[]),
     ("CumulativeVolumeDelta", &[]),
+    ("CumulativeVolumeIndex", &[]),
     ("CupAndHandle", &[]),
     ("CyberneticCycle", &[14.0]),
     ("Cypher", &[]),
@@ -3559,6 +3614,7 @@ pub const DEFAULTS: [(&str, &[f64]); 461] = [
     ("HeikinAshi", &[]),
     ("HeikinAshiOscillator", &[14.0]),
     ("HiLoActivator", &[14.0]),
+    ("HighLowIndex", &[10.0]),
     ("HighLowRange", &[]),
     ("HighLowVolumeNodes", &[3.0, 7.0]),
     ("HighWave", &[]),
@@ -3627,6 +3683,8 @@ pub const DEFAULTS: [(&str, &[f64]); 461] = [
     ("MatHold", &[]),
     ("MatchingLow", &[]),
     ("MaxDrawdown", &[14.0]),
+    ("McClellanOscillator", &[]),
+    ("McClellanSummationIndex", &[]),
     ("McGinleyDynamic", &[14.0]),
     ("MedianAbsoluteDeviation", &[14.0]),
     ("MedianChannel", &[14.0, 2.0]),
@@ -3645,6 +3703,7 @@ pub const DEFAULTS: [(&str, &[f64]); 461] = [
     ("MurreyMathLines", &[14.0]),
     ("NakedPoc", &[3.0, 7.0]),
     ("Natr", &[14.0]),
+    ("NewHighsNewLows", &[]),
     ("NewPriceLines", &[14.0]),
     ("Nrtr", &[2.0]),
     ("Nvi", &[]),
@@ -3665,6 +3724,7 @@ pub const DEFAULTS: [(&str, &[f64]); 461] = [
     ("PairwiseBeta", &[14.0]),
     ("ParkinsonVolatility", &[20.0, 252.0]),
     ("PearsonCorrelation", &[14.0]),
+    ("PercentAboveMa", &[]),
     ("PercentB", &[14.0, 2.0]),
     ("PercentageTrailingStop", &[2.0]),
     ("Pgo", &[14.0]),
@@ -3790,6 +3850,7 @@ pub const DEFAULTS: [(&str, &[f64]); 461] = [
     ("ThreeSoldiersOrCrows", &[]),
     ("ThreeStarsInSouth", &[]),
     ("Thrusting", &[]),
+    ("TickIndex", &[]),
     ("Tii", &[3.0, 7.0]),
     ("TimeBasedStop", &[14.0]),
     ("TowerTopBottom", &[]),
@@ -3802,6 +3863,7 @@ pub const DEFAULTS: [(&str, &[f64]); 461] = [
     ("TreynorRatio", &[14.0, 2.0]),
     ("Triangle", &[]),
     ("Trima", &[14.0]),
+    ("Trin", &[]),
     ("TripleTopBottom", &[]),
     ("Tristar", &[]),
     ("Trix", &[14.0]),
@@ -3821,6 +3883,7 @@ pub const DEFAULTS: [(&str, &[f64]); 461] = [
     ("UltimateOscillator", &[3.0, 7.0, 14.0]),
     ("UniqueThreeRiver", &[]),
     ("UniversalOscillator", &[14.0]),
+    ("UpDownVolumeRatio", &[]),
     ("UpsideGapThreeMethods", &[]),
     ("UpsideGapTwoCrows", &[]),
     ("UpsidePotentialRatio", &[14.0, 2.0]),
@@ -3904,6 +3967,36 @@ pub const PAIRWISE: [&str; 24] = [
     "VarianceRatio",
 ];
 
+/// Every registered indicator that reads the whole tracked universe, sorted.
+pub const CROSS_SECTION: [&str; 14] = [
+    "AbsoluteBreadthIndex",
+    "AdVolumeLine",
+    "AdvanceDecline",
+    "AdvanceDeclineRatio",
+    "BreadthThrust",
+    "CumulativeVolumeIndex",
+    "HighLowIndex",
+    "McClellanOscillator",
+    "McClellanSummationIndex",
+    "NewHighsNewLows",
+    "PercentAboveMa",
+    "TickIndex",
+    "Trin",
+    "UpDownVolumeRatio",
+];
+
+/// Whether `kind` reads the universe rather than one market.
+///
+/// Asked by the state before it borrows a market, because assembling the
+/// universe walks every market and so cannot happen while one is borrowed.
+/// Unlike a pairwise reference -- which is a field on the spec, and readable
+/// without the registry -- nothing in a spec says a kind reads breadth. The
+/// registry is the only thing that knows, so it says so.
+#[must_use]
+pub fn is_cross_section(kind: &str) -> bool {
+    CROSS_SECTION.binary_search(&kind).is_ok()
+}
+
 /// The reference symbol a pairwise indicator was configured with.
 fn pair_reference<'a>(kind: &str, reference: Option<&'a str>) -> Result<&'a str> {
     reference.ok_or_else(|| {
@@ -3950,6 +4043,9 @@ fn build_inner(
         "Abcd" => Ok(Box::new(CandleIn {
             inner: wc::Abcd::new(),
         })),
+        "AbsoluteBreadthIndex" => Ok(Box::new(CrossIn {
+            inner: wc::AbsoluteBreadthIndex::new(),
+        })),
         "AccelerationBands" => Ok(Box::new(CandleInFields {
             inner: map_new(
                 kind,
@@ -3973,6 +4069,9 @@ fn build_inner(
         "AdOscillator" => Ok(Box::new(CandleIn {
             inner: wc::AdOscillator::new(),
         })),
+        "AdVolumeLine" => Ok(Box::new(CrossIn {
+            inner: wc::AdVolumeLine::new(),
+        })),
         "AdaptiveCci" => Ok(Box::new(CandleIn {
             inner: map_new(kind, wc::AdaptiveCci::new(usize_param(params, 0, kind)?))?,
         })),
@@ -3993,6 +4092,12 @@ fn build_inner(
         })),
         "AdvanceBlock" => Ok(Box::new(CandleIn {
             inner: wc::AdvanceBlock::new(),
+        })),
+        "AdvanceDecline" => Ok(Box::new(CrossIn {
+            inner: wc::AdvanceDecline::new(),
+        })),
+        "AdvanceDeclineRatio" => Ok(Box::new(CrossIn {
+            inner: wc::AdvanceDeclineRatio::new(),
         })),
         "Adx" => Ok(Box::new(CandleInFields {
             inner: map_new(kind, wc::Adx::new(usize_param(params, 0, kind)?))?,
@@ -4220,6 +4325,9 @@ fn build_inner(
             )?,
             last: None,
         })),
+        "BreadthThrust" => Ok(Box::new(CrossIn {
+            inner: map_new(kind, wc::BreadthThrust::new(usize_param(params, 0, kind)?))?,
+        })),
         "Breakaway" => Ok(Box::new(CandleIn {
             inner: wc::Breakaway::new(),
         })),
@@ -4400,6 +4508,9 @@ fn build_inner(
         })),
         "CumulativeVolumeDelta" => Ok(Box::new(TradeIn {
             inner: wc::CumulativeVolumeDelta::new(),
+        })),
+        "CumulativeVolumeIndex" => Ok(Box::new(CrossIn {
+            inner: wc::CumulativeVolumeIndex::new(),
         })),
         "CupAndHandle" => Ok(Box::new(CandleIn {
             inner: wc::CupAndHandle::new(),
@@ -4770,6 +4881,9 @@ fn build_inner(
         })),
         "HiLoActivator" => Ok(Box::new(CandleIn {
             inner: map_new(kind, wc::HiLoActivator::new(usize_param(params, 0, kind)?))?,
+        })),
+        "HighLowIndex" => Ok(Box::new(CrossIn {
+            inner: map_new(kind, wc::HighLowIndex::new(usize_param(params, 0, kind)?))?,
         })),
         "HighLowRange" => Ok(Box::new(CandleIn {
             inner: wc::HighLowRange::new(),
@@ -5159,6 +5273,12 @@ fn build_inner(
         "MaxDrawdown" => Ok(Box::new(ScalarPrice {
             inner: map_new(kind, wc::MaxDrawdown::new(usize_param(params, 0, kind)?))?,
         })),
+        "McClellanOscillator" => Ok(Box::new(CrossIn {
+            inner: wc::McClellanOscillator::new(),
+        })),
+        "McClellanSummationIndex" => Ok(Box::new(CrossIn {
+            inner: wc::McClellanSummationIndex::new(),
+        })),
         "McGinleyDynamic" => Ok(Box::new(ScalarPrice {
             inner: map_new(
                 kind,
@@ -5233,6 +5353,9 @@ fn build_inner(
         })),
         "Natr" => Ok(Box::new(CandleIn {
             inner: map_new(kind, wc::Natr::new(usize_param(params, 0, kind)?))?,
+        })),
+        "NewHighsNewLows" => Ok(Box::new(CrossIn {
+            inner: wc::NewHighsNewLows::new(),
         })),
         "NewPriceLines" => Ok(Box::new(CandleIn {
             inner: map_new(kind, wc::NewPriceLines::new(usize_param(params, 0, kind)?))?,
@@ -5325,6 +5448,9 @@ fn build_inner(
                 wc::PearsonCorrelation::new(usize_param(params, 0, kind)?),
             )?,
             reference: pair_reference(kind, reference)?.to_string(),
+        })),
+        "PercentAboveMa" => Ok(Box::new(CrossIn {
+            inner: wc::PercentAboveMa::new(),
         })),
         "PercentB" => Ok(Box::new(ScalarPrice {
             inner: map_new(
@@ -5960,6 +6086,9 @@ fn build_inner(
         "Thrusting" => Ok(Box::new(CandleIn {
             inner: wc::Thrusting::new(),
         })),
+        "TickIndex" => Ok(Box::new(CrossIn {
+            inner: wc::TickIndex::new(),
+        })),
         "Tii" => Ok(Box::new(ScalarPrice {
             inner: map_new(
                 kind,
@@ -6011,6 +6140,9 @@ fn build_inner(
         })),
         "Trima" => Ok(Box::new(ScalarPrice {
             inner: map_new(kind, wc::Trima::new(usize_param(params, 0, kind)?))?,
+        })),
+        "Trin" => Ok(Box::new(CrossIn {
+            inner: wc::Trin::new(),
         })),
         "TripleTopBottom" => Ok(Box::new(CandleIn {
             inner: wc::TripleTopBottom::new(),
@@ -6099,6 +6231,9 @@ fn build_inner(
                 kind,
                 wc::UniversalOscillator::new(usize_param(params, 0, kind)?),
             )?,
+        })),
+        "UpDownVolumeRatio" => Ok(Box::new(CrossIn {
+            inner: wc::UpDownVolumeRatio::new(),
         })),
         "UpsideGapThreeMethods" => Ok(Box::new(CandleIn {
             inner: wc::UpsideGapThreeMethods::new(),

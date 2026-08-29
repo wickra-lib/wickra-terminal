@@ -84,12 +84,31 @@ WRAPPERS = {
     "(f64,f64)": ("PairIn", "PairInFields"),
     # Not an `Input` any indicator declares -- a routing target. See
     # RETURN_INPUT_ONLY below.
+    "CrossSection": ("CrossIn", "CrossInFields"),
     "returns": ("ReturnsIn", "ReturnsInFields"),
 }
 
 # The families this terminal can feed. `returns` is in here because the routing
 # above assigns it before this check, and no indicator declares it as an
 # `Input`, so it cannot be reached by accident.
+# Breadth indicators reading a per-symbol signal this terminal does not keep.
+#
+# `Member` carries six fields. Five are folded from each market's closed bars --
+# change, volume, new_high, new_low, and above_ma against a reference moving
+# average. The sixth, `on_buy_signal`, is whether a symbol sits on a
+# point-and-figure BUY signal, which needs P&F column state per symbol: box size,
+# reversal, and the column history a breakout is judged against. The terminal
+# keeps none of that.
+#
+# Registering the one indicator that reads it would mean feeding `false` for
+# every member, so `BullishPercentIndex` would report a constant zero under a
+# name that promises a breadth reading. That is the same call P4.3d made for
+# `Footprint` and P12.1 made for `VolumeProfile`: an honest absence beats a
+# confident wrong answer. Wiring P&F per symbol removes this entry.
+CROSS_SECTION_UNAVAILABLE = {
+    "BullishPercentIndex",
+}
+
 SUPPORTED_INPUTS = set(WRAPPERS)
 
 # Indicators whose `Input = f64` is a per-period RETURN, not a price.
@@ -124,6 +143,7 @@ INPUT_TY = {
     "Trade": "wc::Trade",
     "OrderBook": "wc::OrderBook",
     "(f64,f64)": "(f64, f64)",
+    "CrossSection": "wc::CrossSection",
     "returns": "f64",
 }
 
@@ -144,6 +164,15 @@ UPDATE_EXPR = {
     "Candle": "input.candle.and_then(|c| self.inner.update(c))",
     "Trade": "input.trade.and_then(|t| self.inner.update(t))",
     "OrderBook": "input.book.clone().and_then(|b| self.inner.update(b))",
+    "CrossSection": (
+        "input"
+        + chr(10)
+        + "            .cross_section"
+        + chr(10)
+        + "            .clone()"
+        + chr(10)
+        + "            .and_then(|universe| self.inner.update(universe))"
+    ),
     "returns": (
         "input.candle.and_then(|candle| {"
         + chr(10)
@@ -316,6 +345,14 @@ pub struct TickInput {
     /// configuration with no pairwise indicator — the usual one — never builds
     /// it. Keyed by the symbol as it is written in a config, `BTC/USDT`.
     pub references: BTreeMap<String, f64>,
+    /// Every tracked market as one cross-section, for the breadth family.
+    ///
+    /// Populated only when some indicator in the set reads the universe, for the
+    /// same reason `references` is: assembling it walks every market, and the
+    /// usual configuration has no breadth indicator in it. Absent until at least
+    /// one market has closed a bar -- a breadth reading compares closes, and a
+    /// universe of markets that have not produced one is not a reading.
+    pub cross_section: Option<wc::CrossSection>,
 }
 
 impl TickInput {
@@ -333,6 +370,7 @@ impl TickInput {
             trade: None,
             book: None,
             references: BTreeMap::new(),
+            cross_section: None,
         }
     }
 
@@ -420,6 +458,11 @@ WRAPPER_DOC = {
     "OrderBook": (
         "Wraps a book (`Input = OrderBook`) single-output indicator. Ticks whose",
         "book is one-sided yield `None` without advancing it.",
+    ),
+    "CrossSection": (
+        "Wraps a breadth (`Input = CrossSection`) single-output indicator: the",
+        "whole tracked universe on one tick, not one market. Ticks before any",
+        "market has closed a bar yield `None` without advancing it.",
     ),
     "returns": (
         "Wraps an indicator whose `Input = f64` is a per-period RETURN rather",
@@ -735,6 +778,12 @@ def main() -> None:
                 skipped["no associated types"] += 1
                 skipped_names.setdefault("no associated types", []).append(ty)
                 continue
+            if ty in CROSS_SECTION_UNAVAILABLE:
+                skipped["reads a per-symbol signal the terminal has no source for"] += 1
+                skipped_names.setdefault(
+                    "reads a per-symbol signal the terminal has no source for", []
+                ).append(ty)
+                continue
             if ty in RETURN_INPUT_ONLY:
                 # Routed to the returns family rather than skipped: the terminal
                 # has no return to feed directly, but it builds candles, and a
@@ -818,6 +867,7 @@ def main() -> None:
         default_rows.append(f'    ("{name}", &[{vals}]),')
 
     pairwise = sorted(e[0] for e in entries if e[1] == "(f64,f64)")
+    breadth = sorted(e[0] for e in entries if e[1] == "CrossSection")
 
     alias_rows = chr(10).join(
         f'    ("{alias}", "{canonical}"),'
@@ -858,6 +908,23 @@ pub const ALIASES: [(&str, &str); {alias_count}] = [
 pub const PAIRWISE: [&str; {len(pairwise)}] = [
 {chr(10).join(f'    "{n}",' for n in pairwise)}
 ];
+
+/// Every registered indicator that reads the whole tracked universe, sorted.
+pub const CROSS_SECTION: [&str; {len(breadth)}] = [
+{chr(10).join(f'    "{n}",' for n in breadth)}
+];
+
+/// Whether `kind` reads the universe rather than one market.
+///
+/// Asked by the state before it borrows a market, because assembling the
+/// universe walks every market and so cannot happen while one is borrowed.
+/// Unlike a pairwise reference -- which is a field on the spec, and readable
+/// without the registry -- nothing in a spec says a kind reads breadth. The
+/// registry is the only thing that knows, so it says so.
+#[must_use]
+pub fn is_cross_section(kind: &str) -> bool {{
+    CROSS_SECTION.binary_search(&kind).is_ok()
+}}
 
 /// The reference symbol a pairwise indicator was configured with.
 fn pair_reference<'a>(kind: &str, reference: Option<&'a str>) -> Result<&'a str> {{

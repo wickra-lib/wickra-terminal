@@ -13,7 +13,7 @@ view-models — the same protocol the TUI and Web renderers drive.
 | Node.js | [`node/synth_terminal.js`](node/synth_terminal.js) | `node examples/node/synth_terminal.js` |
 | Go | [`go/synth_terminal.go`](go/synth_terminal.go) | `cd examples/go && go run .` |
 | C# | [`csharp/Program.cs`](csharp/Program.cs) | `dotnet run --project examples/csharp` |
-| Java | [`java/SynthTerminal.java`](java/SynthTerminal.java) | see the header of the file |
+| Java | [`java/SynthTerminal.java`](java/SynthTerminal.java) | see the Java block below |
 | R | [`r/synth_terminal.R`](r/synth_terminal.R) | `Rscript examples/r/synth_terminal.R` |
 
 ## Building the native library
@@ -34,6 +34,53 @@ ctest --test-dir examples/c/build -C Release --output-on-failure
 
 The CMake build copies the runtime DLL next to each executable on Windows and
 caps each test's timeout, so a missing dependency fails fast instead of hanging.
+
+## Go
+
+cgo links the library from `bindings/go/lib/<goos>_<goarch>/`, which CI stages
+from the release build. Stage it once and the example runs from anywhere:
+
+```bash
+mkdir -p bindings/go/lib/linux_amd64        # or darwin_arm64, windows_amd64, ...
+cp target/release/libwickra_terminal.so bindings/go/lib/linux_amd64/
+cd examples/go && go run .
+```
+
+## C#
+
+The project copies the native library beside the executable, so there is
+nothing to stage:
+
+```bash
+dotnet run --project examples/csharp
+```
+
+## Java
+
+FFM needs `--enable-native-access`, and the library directory is a system
+property rather than a path lookup:
+
+```bash
+mvn -f bindings/java/pom.xml -q package -DskipTests
+javac -cp bindings/java/target/classes examples/java/SynthTerminal.java -d examples/java/out
+java --enable-native-access=ALL-UNNAMED -Dnative.lib.dir=target/release \
+     -cp "bindings/java/target/classes:examples/java/out" SynthTerminal
+```
+
+The classpath separator is `:` on Linux and macOS and `;` on Windows.
+
+## R
+
+`WKTERM_INC` and `WKTERM_LIB` point the package at a local build instead of a
+downloaded release asset:
+
+```bash
+export WKTERM_INC="$PWD/bindings/c/include" WKTERM_LIB="$PWD/target/release"
+R CMD INSTALL bindings/r
+Rscript examples/r/synth_terminal.R
+```
+
+On Windows the library directory also has to be on `PATH` for the DLL to load.
 
 ## Python / Node.js
 

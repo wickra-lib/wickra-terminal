@@ -122,6 +122,12 @@ def check_about(meta: dict) -> list[str]:
 
     Network, so it is opt-in: skipped with a notice when the description cannot
     be read, rather than failing a job for an unrelated reason.
+
+    Set GITHUB_TOKEN. An unauthenticated read of this endpoint can come back from
+    a CDN cache minutes stale, which shows up as a mismatch against a description
+    that was just corrected -- seen while writing this. CI always has one
+    (`github.token`); a local run without one may report a value that is no
+    longer there.
     """
     readme = (REPO_ROOT / 'README.md').read_text(encoding='utf-8')
     match = re.search(r'<!--indicator-count-->(\d+)<!--/indicator-count-->', readme)
