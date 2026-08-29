@@ -8,4 +8,4 @@
 #
 # Locked output: ci-dev-py39.txt. Refresh via scripts/update-lockfiles.sh.
 maturin
-pytest<9
+pytest<10
