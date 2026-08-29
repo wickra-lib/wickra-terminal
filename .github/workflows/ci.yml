@@ -62,8 +62,17 @@ jobs:
       - run: cargo test --workspace --all-features --exclude wickra-terminal-python --exclude wickra-terminal-c
 
   lint:
-    name: Format & Clippy
-    runs-on: ubuntu-latest
+    name: Format & Clippy (${{ matrix.os }})
+    # Linted on every OS the crate is built for, not just Linux. A lint can be
+    # platform-conditional, and this repository has platform-conditional code:
+    # the wickra_terminal.pdb workaround in `test` and the cygpath branch in the
+    # `r` job both exist because Windows behaves differently. Clippy does not
+    # link, so the pdb collision `test` works around cannot occur here.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
