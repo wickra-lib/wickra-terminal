@@ -31,7 +31,7 @@ requests.
    Best Practices, link check, release and web deploy. ✅
 10. **README, badges, docs** — the banner and badge treatment, and the docs
     guides. ✅
-11. **Indicators** — tick-to-OHLCV aggregation and a generated registry of <!--indicator-count-->492<!--/indicator-count-->
+11. **Indicators** — tick-to-OHLCV aggregation and a generated registry of <!--indicator-count-->495<!--/indicator-count-->
     `wickra-core` indicators, configurable and changeable at run time from every
     binding. ✅
 
@@ -40,7 +40,7 @@ requests.
 Nothing here is scheduled. These are the openings the current shape leaves, in
 roughly the order they would pay off.
 
-- **The remaining indicator families.** 12 of the 504 in `wickra-core` are not
+- **The remaining indicator families.** 9 of the 504 in `wickra-core` are not
   reachable, and the reason is now the same for nearly all of them:
   [`docs/INDICATORS.md`](docs/INDICATORS.md) lists them. Derivatives-tick (17),
   cross-section (15) and trade-quote (3) need feeds this repository has no source

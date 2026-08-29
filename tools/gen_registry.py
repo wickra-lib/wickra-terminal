@@ -86,6 +86,7 @@ WRAPPERS = {
     # RETURN_INPUT_ONLY below.
     "CrossSection": ("CrossIn", "CrossInFields"),
     "DerivativesTick": ("DerivIn", "DerivInFields"),
+    "TradeQuote": ("QuoteIn", "QuoteInFields"),
     "returns": ("ReturnsIn", "ReturnsInFields"),
 }
 
@@ -146,6 +147,7 @@ INPUT_TY = {
     "(f64,f64)": "(f64, f64)",
     "CrossSection": "wc::CrossSection",
     "DerivativesTick": "wc::DerivativesTick",
+    "TradeQuote": "wc::TradeQuote",
     "returns": "f64",
 }
 
@@ -166,6 +168,13 @@ UPDATE_EXPR = {
     "Candle": "input.candle.and_then(|c| self.inner.update(c))",
     "Trade": "input.trade.and_then(|t| self.inner.update(t))",
     "OrderBook": "input.book.clone().and_then(|b| self.inner.update(b))",
+    "TradeQuote": (
+        "input"
+        + chr(10)
+        + "            .trade_quote"
+        + chr(10)
+        + "            .and_then(|quote| self.inner.update(quote))"
+    ),
     "DerivativesTick": (
         "input"
         + chr(10)
@@ -368,6 +377,11 @@ pub struct TickInput {
     /// `DerivativesTick::new` rejects a non-positive price, so a tick before
     /// them would not be a tick.
     pub derivatives: Option<wc::DerivativesTick>,
+    /// This print paired with the mid that was standing when it arrived.
+    ///
+    /// Absent when the book is one-sided, since there is no mid to measure
+    /// against, and on any tick that is not a print.
+    pub trade_quote: Option<wc::TradeQuote>,
 }
 
 impl TickInput {
@@ -387,6 +401,7 @@ impl TickInput {
             references: BTreeMap::new(),
             cross_section: None,
             derivatives: None,
+            trade_quote: None,
         }
     }
 
@@ -475,6 +490,12 @@ WRAPPER_DOC = {
         "Wraps a book (`Input = OrderBook`) single-output indicator. Ticks whose",
         "book is one-sided yield `None` without advancing it.",
     ),
+    "TradeQuote": (
+        "Wraps a microstructure (`Input = TradeQuote`) single-output indicator: one",
+        "print paired with the mid that was standing when it arrived. Ticks with a",
+        "one-sided book yield `None` without advancing it -- there is no mid to",
+        "measure the print against.",
+    ),
     "DerivativesTick": (
         "Wraps a derivatives (`Input = DerivativesTick`) single-output indicator:",
         "funding, open interest, positioning and the mark/index/futures prices of",
@@ -501,6 +522,10 @@ WRAPPER_DOC = {
 
 # Prose for the struct-output wrappers, mirroring WRAPPER_DOC.
 FIELD_WRAPPER_DOC = {
+    "TradeQuote": (
+        "Wraps a microstructure indicator whose output is a struct of fields. The",
+        "primary value is the first field; every field is reachable by name.",
+    ),
     "DerivativesTick": (
         "Wraps a derivatives indicator whose output is a struct of fields. The",
         "primary value is the first field; every field is reachable by name.",

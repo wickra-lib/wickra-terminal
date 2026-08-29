@@ -17,7 +17,7 @@ CORE   crates/wickra-terminal-core
        DataSource(Live | Replay | Synth)  ·  AppState<(SourceId,Symbol), SymbolState> (O(1) fold)  ·  Panels → view-models
       ▼ exposed as a data API in ten languages (like wickra-backtest's run_json)
 BINDINGS   python · node · wasm · c (ABI hub → c/c++/c#/go/java/r)
-CORES   wickra-core (<!--indicator-count-->492<!--/indicator-count--> of its indicators reached) · wickra-exchange (Live)
+CORES   wickra-core (<!--indicator-count-->495<!--/indicator-count--> of its indicators reached) · wickra-exchange (Live)
 ```
 
 ## The core is renderer-agnostic

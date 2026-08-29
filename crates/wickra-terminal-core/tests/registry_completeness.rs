@@ -12,7 +12,9 @@
 
 use std::collections::BTreeSet;
 
-use wickra_core::{Candle, CrossSection, DerivativesTick, Level, Member, OrderBook, Side, Trade};
+use wickra_core::{
+    Candle, CrossSection, DerivativesTick, Level, Member, OrderBook, Side, Trade, TradeQuote,
+};
 use wickra_terminal_core::registry::{build, build_paired, DEFAULTS, KINDS, PAIRWISE};
 use wickra_terminal_core::{CandleBuilder, TickInput, Timeframe};
 
@@ -43,6 +45,23 @@ fn build_any(kind: &str, params: &[f64]) -> Box<dyn wickra_terminal_core::TickIn
 fn reference_at(step: i64) -> f64 {
     let t = step as f64;
     1500.0 + 200.0 * (t * 0.05 + 0.9).sin() + 25.0 * (t * 0.55).sin()
+}
+
+/// The mid a print arrived against, alternating which side the print crosses.
+///
+/// The book fixture is centred on the same price the trade prints at, so
+/// taking its mid literally would make the effective spread exactly zero on
+/// every tick -- and a family that measures how far a print landed from the
+/// mid has nothing to measure. Offsetting by one tick, alternating, is what a
+/// real tape looks like: the mid stands, and the print takes the ask or hits
+/// the bid.
+fn mid_at(price: f64, step: i64) -> f64 {
+    let tick = 0.01;
+    if step % 2 == 0 {
+        price - tick
+    } else {
+        price + tick
+    }
 }
 
 /// A derivatives tick that moves, for the perpetual-futures family.
@@ -184,6 +203,9 @@ fn drive(kind: &str, params: &[f64], bars: i64) -> (usize, usize) {
                 .insert(REFERENCE.to_string(), reference_at(step));
             input.cross_section = Some(cross_section_at(step));
             input.derivatives = Some(derivatives_at(step));
+            input.trade_quote = input
+                .trade
+                .and_then(|print| TradeQuote::new(print, mid_at(price, step)).ok());
             if indicator.update(&input).is_some() {
                 values += 1;
             }
@@ -560,6 +582,9 @@ fn last_reading(
                 .insert(REFERENCE.to_string(), reference_at(step));
             input.cross_section = Some(cross_section_at(step));
             input.derivatives = Some(derivatives_at(step));
+            input.trade_quote = input
+                .trade
+                .and_then(|print| TradeQuote::new(print, mid_at(price, step)).ok());
             // Fields are read on every tick, not only on the ticks that produce a
             // reading. The reading is the FIRST field, so when that one field is
             // optional and absent the indicator returns None while still holding
@@ -798,7 +823,7 @@ fn a_candle_indicator_reads_the_bar_not_the_price() {
 /// third field is the variable-length bin list the profile exists for, so each
 /// reported `price_low` under a profile's name. They stay skipped like
 /// `Footprint`, whose output is the same shape. See `docs/INDICATORS.md`.
-const REGISTERED_FLOOR: usize = 492;
+const REGISTERED_FLOOR: usize = 495;
 
 #[test]
 fn the_registry_has_not_silently_shrunk() {

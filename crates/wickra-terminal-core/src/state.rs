@@ -346,6 +346,20 @@ impl BookState {
         }
     }
 
+    /// The mid price, or `None` if either side is empty.
+    ///
+    /// What the microstructure family measures a print against: the effective
+    /// spread is how far a trade printed from the mid that was standing when
+    /// it arrived, so this has to be read BEFORE the print is folded. A trade
+    /// does not move the book, so in the fold that ordering is free.
+    #[must_use]
+    pub fn mid(&self) -> Option<Decimal> {
+        match (self.best_bid(), self.best_ask()) {
+            (Some((bid, _)), Some((ask, _))) => Some((bid + ask) / Decimal::TWO),
+            _ => None,
+        }
+    }
+
     /// The top `n` bid levels, best (highest) first.
     #[must_use]
     pub fn top_bids(&self, n: usize) -> Vec<(Decimal, Decimal)> {
@@ -1002,6 +1016,18 @@ impl AppState {
                 tick.cross_section = cross_section;
                 tick.derivatives = state.derivatives.tick();
                 tick.trade = core_trade(print);
+                // The mid as it stands NOW, which is the mid this print
+                // arrived against: a trade does not move the book, so it is
+                // still the one the last depth update left. That ordering is
+                // the whole measurement -- an effective spread taken against
+                // a mid the trade itself moved would be measuring nothing.
+                tick.trade_quote = tick.trade.and_then(|trade| {
+                    state
+                        .book
+                        .mid()
+                        .and_then(|mid| mid.to_f64())
+                        .and_then(|mid| wc::TradeQuote::new(trade, mid).ok())
+                });
                 tick.book = book;
                 tick.references = references;
                 state.indicators.update(&tick);
@@ -1751,5 +1777,96 @@ mod tests {
         assert!((tick.long_liquidation - 3_000.0).abs() < 1e-9);
         // Open interest is a level, not a flow, so it replaces.
         assert!((tick.open_interest - 500.0).abs() < 1e-9);
+    }
+
+    /// The mid is read before the print is folded, not after.
+    ///
+    /// The whole microstructure measurement is how far a print landed from the
+    /// mid that was STANDING when it arrived. A trade does not move the book,
+    /// so reading it in the fold is free -- but reading it from a book the
+    /// print had already been applied to would measure nothing at all.
+    #[test]
+    fn a_trade_quote_pairs_the_print_with_the_standing_mid() {
+        let sym = Symbol::new("BTC", "USDT");
+        let mut book = BookState::default();
+        book.apply_snapshot(&OrderBookSnapshot {
+            symbol: sym.clone(),
+            bids: vec![BookLevel {
+                price: dec!(99),
+                quantity: dec!(5),
+            }],
+            asks: vec![BookLevel {
+                price: dec!(101),
+                quantity: dec!(5),
+            }],
+            last_update_id: 1,
+        });
+        assert_eq!(book.mid(), Some(dec!(100)));
+    }
+
+    #[test]
+    fn a_one_sided_book_has_no_mid_to_measure_against() {
+        let sym = Symbol::new("BTC", "USDT");
+        let mut book = BookState::default();
+        book.apply_snapshot(&OrderBookSnapshot {
+            symbol: sym,
+            bids: vec![BookLevel {
+                price: dec!(99),
+                quantity: dec!(5),
+            }],
+            asks: Vec::new(),
+            last_update_id: 1,
+        });
+        // No ask means no mid, and a TradeQuote without one is not a quote:
+        // `TradeQuote::new` rejects a non-positive mid, and half a book has no
+        // defensible one to offer.
+        assert!(book.mid().is_none());
+    }
+
+    #[test]
+    fn a_microstructure_indicator_reads_prints_against_the_book() {
+        let sym = Symbol::new("BTC", "USDT");
+        let mut state = AppState {
+            indicators: vec![IndicatorSpec {
+                kind: "EffectiveSpread".to_string(),
+                params: Vec::new(),
+                reference: None,
+            }],
+            ..Default::default()
+        };
+        // A book on both sides, then prints that cross it. Without the book
+        // there is no mid and the family stays silent, which is the case the
+        // wiring has to get right.
+        for step in 0..40 {
+            let mid = Decimal::from(100 + step % 3);
+            state.fold(
+                0,
+                &sym,
+                &Event::BookSnapshot(OrderBookSnapshot {
+                    symbol: sym.clone(),
+                    bids: vec![BookLevel {
+                        price: mid - dec!(1),
+                        quantity: dec!(5),
+                    }],
+                    asks: vec![BookLevel {
+                        price: mid + dec!(1),
+                        quantity: dec!(5),
+                    }],
+                    last_update_id: u64::try_from(step).unwrap_or(0),
+                }),
+            );
+            state.fold(0, &sym, &trade(&sym, mid + dec!(1), OrderSide::Buy));
+        }
+        let reading = state
+            .get(&(0, sym))
+            .expect("BTC is tracked")
+            .indicators
+            .values()
+            .first()
+            .and_then(|(_, reading)| *reading);
+        assert!(
+            reading.is_some(),
+            "EffectiveSpread produced no reading after 40 prints against a two-sided book"
+        );
     }
 }

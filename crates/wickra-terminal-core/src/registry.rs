@@ -70,6 +70,11 @@ pub struct TickInput {
     /// `DerivativesTick::new` rejects a non-positive price, so a tick before
     /// them would not be a tick.
     pub derivatives: Option<wc::DerivativesTick>,
+    /// This print paired with the mid that was standing when it arrived.
+    ///
+    /// Absent when the book is one-sided, since there is no mid to measure
+    /// against, and on any tick that is not a print.
+    pub trade_quote: Option<wc::TradeQuote>,
 }
 
 impl TickInput {
@@ -89,6 +94,7 @@ impl TickInput {
             references: BTreeMap::new(),
             cross_section: None,
             derivatives: None,
+            trade_quote: None,
         }
     }
 
@@ -327,6 +333,32 @@ where
         input
             .derivatives
             .and_then(|derivatives| self.inner.update(derivatives))
+            .filter(|value| value.is_finite())
+    }
+    fn fields(&self) -> Vec<(&'static str, f64)> {
+        Vec::new()
+    }
+    fn warmup(&self) -> usize {
+        self.inner.warmup_period()
+    }
+}
+
+/// Wraps a microstructure (`Input = TradeQuote`) single-output indicator: one
+/// print paired with the mid that was standing when it arrived. Ticks with a
+/// one-sided book yield `None` without advancing it -- there is no mid to
+/// measure the print against.
+struct QuoteIn<I> {
+    inner: I,
+}
+
+impl<I> TickIndicator for QuoteIn<I>
+where
+    I: Indicator<Input = wc::TradeQuote, Output = f64> + Send,
+{
+    fn update(&mut self, input: &TickInput) -> Option<f64> {
+        input
+            .trade_quote
+            .and_then(|quote| self.inner.update(quote))
             .filter(|value| value.is_finite())
     }
     fn fields(&self) -> Vec<(&'static str, f64)> {
@@ -3042,7 +3074,7 @@ fn map_new<T>(kind: &str, made: core::result::Result<T, wc::Error>) -> Result<T>
 }
 
 /// Every registered indicator name, sorted.
-pub const KINDS: [&str; 494] = [
+pub const KINDS: [&str; 497] = [
     "AbandonedBaby",
     "Abcd",
     "AbsoluteBreadthIndex",
@@ -3156,6 +3188,7 @@ pub const KINDS: [&str; 494] = [
     "Dx",
     "DynamicMomentumIndex",
     "EaseOfMovement",
+    "EffectiveSpread",
     "EhlersStochastic",
     "Ehma",
     "ElderImpulse",
@@ -3259,6 +3292,7 @@ pub const KINDS: [&str; 494] = [
     "Kst",
     "Kurtosis",
     "Kvo",
+    "KylesLambda",
     "LadderBottom",
     "LaguerreRsi",
     "LeadLagCrossCorrelation",
@@ -3358,6 +3392,7 @@ pub const KINDS: [&str; 494] = [
     "QuartileBands",
     "QuotedSpread",
     "RSquared",
+    "RealizedSpread",
     "RealizedVolatility",
     "RecoveryFactor",
     "RectangleRange",
@@ -3543,7 +3578,7 @@ pub const KINDS: [&str; 494] = [
 /// same values the library pins its own reference outputs with. Used by the
 /// build-all test so every registered indicator is constructed the way wickra
 /// constructs it, rather than with a guessed parameter count.
-pub const DEFAULTS: [(&str, &[f64]); 492] = [
+pub const DEFAULTS: [(&str, &[f64]); 495] = [
     ("AbandonedBaby", &[]),
     ("Abcd", &[]),
     ("AbsoluteBreadthIndex", &[]),
@@ -3656,6 +3691,7 @@ pub const DEFAULTS: [(&str, &[f64]); 492] = [
     ("Dx", &[14.0]),
     ("DynamicMomentumIndex", &[14.0]),
     ("EaseOfMovement", &[14.0]),
+    ("EffectiveSpread", &[]),
     ("EhlersStochastic", &[14.0]),
     ("Ehma", &[14.0]),
     ("ElderImpulse", &[3.0, 7.0, 14.0, 28.0]),
@@ -3759,6 +3795,7 @@ pub const DEFAULTS: [(&str, &[f64]); 492] = [
     ("Kst", &[3.0, 7.0, 14.0, 28.0, 35.0, 42.0, 56.0, 63.0, 70.0]),
     ("Kurtosis", &[14.0]),
     ("Kvo", &[3.0, 7.0]),
+    ("KylesLambda", &[20.0]),
     ("LadderBottom", &[]),
     ("LaguerreRsi", &[0.5]),
     ("LeadLagCrossCorrelation", &[20.0, 10.0]),
@@ -3857,6 +3894,7 @@ pub const DEFAULTS: [(&str, &[f64]); 492] = [
     ("QuartileBands", &[14.0]),
     ("QuotedSpread", &[]),
     ("RSquared", &[14.0]),
+    ("RealizedSpread", &[20.0]),
     ("RealizedVolatility", &[14.0]),
     ("RecoveryFactor", &[]),
     ("RectangleRange", &[]),
@@ -4739,6 +4777,9 @@ fn build_inner(
         "EaseOfMovement" => Ok(Box::new(CandleIn {
             inner: map_new(kind, wc::EaseOfMovement::new(usize_param(params, 0, kind)?))?,
         })),
+        "EffectiveSpread" => Ok(Box::new(QuoteIn {
+            inner: wc::EffectiveSpread::new(),
+        })),
         "EhlersStochastic" => Ok(Box::new(ScalarPrice {
             inner: map_new(
                 kind,
@@ -5273,6 +5314,9 @@ fn build_inner(
                 wc::Kvo::new(usize_param(params, 0, kind)?, usize_param(params, 1, kind)?),
             )?,
         })),
+        "KylesLambda" => Ok(Box::new(QuoteIn {
+            inner: map_new(kind, wc::KylesLambda::new(usize_param(params, 0, kind)?))?,
+        })),
         "LadderBottom" => Ok(Box::new(CandleIn {
             inner: wc::LadderBottom::new(),
         })),
@@ -5750,6 +5794,9 @@ fn build_inner(
         })),
         "RSquared" => Ok(Box::new(ScalarPrice {
             inner: map_new(kind, wc::RSquared::new(usize_param(params, 0, kind)?))?,
+        })),
+        "RealizedSpread" => Ok(Box::new(QuoteIn {
+            inner: map_new(kind, wc::RealizedSpread::new(usize_param(params, 0, kind)?))?,
         })),
         "RealizedVolatility" => Ok(Box::new(ScalarPrice {
             inner: map_new(
