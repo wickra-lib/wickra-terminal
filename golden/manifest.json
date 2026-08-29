@@ -49,6 +49,24 @@
       "name": "source_lifecycle"
     },
     {
+      "commands": "commands/profiles.txt",
+      "config": "configs/profiles.json",
+      "expected": "expected/profiles.min.json",
+      "name": "profiles"
+    },
+    {
+      "commands": "commands/alt_bars.txt",
+      "config": "configs/alt_bars.json",
+      "expected": "expected/alt_bars.min.json",
+      "name": "alt_bars"
+    },
+    {
+      "commands": "commands/derivatives.txt",
+      "config": "configs/derivatives.json",
+      "expected": "expected/derivatives.min.json",
+      "name": "derivatives"
+    },
+    {
       "commands": "commands/multi_source.txt",
       "config": "configs/multi_source.json",
       "expected": "expected/multi_source.min.json",

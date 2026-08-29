@@ -101,7 +101,7 @@ parse_manifest <- function(text) {
 
 g <- golden_dir()
 scenarios <- parse_manifest(slurp(file.path(g, "manifest.json")))
-stopifnot(length(scenarios) >= 9)
+stopifnot(length(scenarios) >= 12)
 
 scenario_names <- character(0)
 for (scenario in scenarios) {

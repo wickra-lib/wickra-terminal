@@ -270,7 +270,7 @@ int main(void) {
     /* A manifest that silently shrank would leave this passing while checking a
      * fraction of what it used to, so the count is floored the way the other
      * suites floor theirs. */
-    if (count < 9) {
+    if (count < 12) {
         fprintf(stderr, "only %zu scenarios parsed from the manifest\n", count);
         return 1;
     }
