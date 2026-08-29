@@ -42,6 +42,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
 
       # Idempotent publishing: if the version is already on crates.io we treat
       # that as success so re-runs of the workflow do not fail.
@@ -210,6 +211,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       # npm install (not ci): the per-platform optionalDependencies are not yet
       # published, so they are absent from the lock and npm ci would reject it.
       - name: Install Node deps
@@ -363,6 +365,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       - name: Install wasm-pack (latest, via prebuilt binary)
         uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
@@ -428,6 +431,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       - name: Build the TUI binary
         run: cargo build -p wickra-terminal --release --target ${{ matrix.target }}
       - name: Package the binary
@@ -479,6 +483,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       - name: Build the C ABI library (cdylib + staticlib)
         run: cargo build -p wickra-terminal-c --release --target ${{ matrix.target }}
       - name: Package header + libraries

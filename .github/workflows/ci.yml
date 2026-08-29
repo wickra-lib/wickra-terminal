@@ -54,6 +54,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       # The PyO3 extension cdylib is built and tested by the `python` job via
       # maturin; the C ABI cdylib by the `c-abi` job. Exclude both here — the
       # latter also avoids the wickra_terminal.pdb output-filename collision.
@@ -74,6 +75,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
@@ -91,6 +93,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       # The Node binding (napi 3) and the ui-tui app (ratatui pulls instability,
       # which needs 1.88) require Rust 1.88 and are checked separately below; the
       # Python binding needs maturin's platform link flags and is built by the
@@ -115,6 +118,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       - run: cargo build -p wickra-terminal-node -p wickra-terminal
 
   binding-surface:
@@ -187,6 +191,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       - run: pip install -r bindings/python/requirements-ci.txt
       - run: maturin build --out dist
         working-directory: bindings/python
@@ -284,6 +289,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       - name: Set up Node
         id: setup_node
         continue-on-error: true
@@ -333,6 +339,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       - name: Install wasm-pack
         uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
@@ -371,6 +378,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       - name: Install wasm-pack
         uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
@@ -424,6 +432,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       - name: Install cbindgen
         uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
@@ -468,6 +477,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
 
       - name: Build the C ABI library
         run: cargo build -p wickra-terminal-c --release
@@ -529,6 +539,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: "8.0"
@@ -562,6 +573,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       # The binding loads the C ABI hub via the Java FFM API; the pom points
       # native.lib.dir at target/debug, so build it in the debug profile here.
       - name: Build the C ABI library
@@ -595,6 +607,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       # The package compiles a thin .Call glue layer against the C ABI hub and
       # links -lwickra_terminal from WKTERM_LIB; build the library first.
       - name: Build the C ABI library
@@ -639,6 +652,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
@@ -708,6 +722,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
         with:
           workspaces: fuzz
       - name: Install cargo-fuzz

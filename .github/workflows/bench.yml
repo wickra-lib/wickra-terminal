@@ -31,6 +31,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      - uses: ./.github/actions/warm-cargo
       - name: Run the Criterion benchmark
         run: cargo bench -p wickra-terminal-bench | tee benchmark.txt
       - name: Upload report

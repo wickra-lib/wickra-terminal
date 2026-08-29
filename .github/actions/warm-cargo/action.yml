@@ -1,0 +1,27 @@
+name: Warm the cargo registry (with retry)
+description: >
+  Pre-fetch the dependency graph with real backoff, so a transient registry or
+  DNS failure on the runner does not fail the first cargo step of the job.
+
+  CARGO_NET_RETRY rides out short blips, but a longer runner DNS outage outlasts
+  cargo's rapid in-process retries: the crates.io index fetch that the first
+  cargo command performs then fails ("Could not resolve host: index.crates.io")
+  and takes the whole job with it. Fetching here with widening pauses means the
+  build, test and clippy steps that follow resolve from a warmed local cache.
+
+  Belongs after the cache restore, not before it: a warm cache already holds the
+  graph, and `cargo fetch` is then a cheap no-op rather than a full download.
+
+runs:
+  using: composite
+  steps:
+    - name: Warm cargo registry (retry transient DNS/registry flakes)
+      shell: bash
+      run: |
+        for attempt in 1 2 3 4 5; do
+          if cargo fetch; then exit 0; fi
+          echo "::warning::cargo fetch failed (attempt $attempt/5) — likely a registry/DNS flake; retrying in $((attempt * 20))s..."
+          sleep $((attempt * 20))
+        done
+        echo "::error::cargo fetch still failing after 5 attempts"
+        exit 1
