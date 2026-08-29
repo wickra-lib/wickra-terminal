@@ -575,6 +575,14 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
+      # This job builds the wrapper against the header in the tree, which match
+      # by construction. r-universe does not: `bindings/r/configure` downloads
+      # the C ABI from the release DESCRIPTION's Version names, so the pairing
+      # it compiles is one nothing here ever sees. Checked once rather than per
+      # OS -- it reads two files and answers the same on all three.
+      - name: Check the R wrapper against the C ABI
+        if: runner.os == 'Linux'
+        run: python3 scripts/check_r_abi_skew.py
       - uses: ./.github/actions/warm-cargo
       # The package compiles a thin .Call glue layer against the C ABI hub and
       # links -lwickra_terminal from WKTERM_LIB; build the library first.
