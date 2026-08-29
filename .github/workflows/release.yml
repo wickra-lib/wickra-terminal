@@ -575,13 +575,18 @@ jobs:
           done
       - name: Pack
         uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        # The version reaches the shell through the environment rather than
+        # being pasted into the script text. It is derived from the tag name,
+        # so interpolating it directly would splice a ref into a command line.
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         with:
           timeout_minutes: 15
           max_attempts: 2
           retry_wait_seconds: 20
           shell: bash
           command: |
-            version="${{ steps.version.outputs.version }}"
+            version="${VERSION}"
             dotnet pack bindings/csharp/WickraTerminal/WickraTerminal.csproj -c Release -p:Version="$version" -o nupkg
       - name: NuGet login (OIDC -> temporary API key)
         uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
@@ -750,9 +755,10 @@ jobs:
         shell: bash
         env:
           MIRROR_TOKEN: ${{ secrets.GO_MIRROR_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -e
-          version="${{ steps.version.outputs.version }}"
+          version="${VERSION}"
           remote="https://x-access-token:${MIRROR_TOKEN}@github.com/wickra-lib/wickra-terminal-go.git"
           git clone -q "$remote" mirror-repo
           cd mirror-repo
