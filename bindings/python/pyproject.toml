@@ -54,3 +54,6 @@ strip = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra -q"
+# A DeprecationWarning out of pyo3 or CPython is a signal that this binding is
+# about to break on the next version; it must fail the suite, not scroll past.
+filterwarnings = ["error"]
