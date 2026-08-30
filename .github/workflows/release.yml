@@ -449,7 +449,7 @@ jobs:
           set -e
           dir="wickra-terminal-${{ matrix.target }}"
           mkdir -p "$dir"
-          bin="target/${{ matrix.target }}/release/wickra-terminal"
+          bin="target/${{ matrix.target }}/release/wkterm"
           if [ -f "$bin.exe" ]; then
             cp "$bin.exe" "$dir/"
           else

@@ -22,7 +22,19 @@ categories.workspace = true
 workspace = true
 
 [[bin]]
-name = "wickra-terminal"
+# `wkterm`, not `wickra-terminal`, and the reason is an output collision rather
+# than brevity. Cargo normalises a target name to an object-file stem, so a bin
+# called `wickra-terminal` and the C ABI's `wickra_terminal` cdylib both write
+# `wickra_terminal.pdb`; a parallel `cargo build --workspace` on Windows races
+# for it and fails with LNK1201. Cargo warns about the collision itself.
+#
+# The bin is what moves because the cdylib name is what every binding dlopens.
+# wickra-backtest reached the same place from the same constraint and named its
+# CLI `wkbt`; the R binding here already prefixes everything `wkterm_`.
+#
+# The package is still `wickra-terminal`, so `cargo install wickra-terminal` is
+# unchanged -- it just puts `wkterm` on the PATH.
+name = "wkterm"
 path = "src/main.rs"
 
 [dependencies]

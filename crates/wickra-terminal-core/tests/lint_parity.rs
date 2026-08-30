@@ -97,3 +97,86 @@ fn every_other_crate_inherits_rather_than_copying() {
         "a crate carries its own clippy table without being listed here"
     );
 }
+
+/// No two workspace targets normalise to the same output stem.
+///
+/// Cargo turns a target name into an object-file stem by replacing `-` with `_`,
+/// so a bin called `wickra-terminal` and the C ABI's `wickra_terminal` cdylib
+/// both write `wickra_terminal.pdb`. A parallel `cargo build --workspace` on
+/// Windows then races for that file and fails with `LNK1201`, which reads as a
+/// disk or permissions fault and is neither.
+///
+/// Cargo notices, but only warns -- `output filename collision at ...` in a build
+/// that otherwise succeeds, which is exactly the kind of line that scrolls past.
+/// So it is asserted here instead. wickra-backtest hit the same constraint and
+/// answered it the same way, by naming its CLI `wkbt`.
+#[test]
+fn no_two_targets_share_an_output_stem() {
+    let root = repo_root();
+    let workspace = fs::read_to_string(root.join("Cargo.toml")).expect("the workspace manifest");
+    let members = between(&workspace, "members = [", "]");
+
+    let mut stems: Vec<(String, String)> = Vec::new();
+    for member in members {
+        let manifest_path = root.join(&member).join("Cargo.toml");
+        let manifest = fs::read_to_string(&manifest_path)
+            .unwrap_or_else(|_| panic!("{member} is a workspace member with no manifest"));
+        for (section, target) in target_names(&manifest) {
+            stems.push((target.replace('-', "_"), format!("{member} [{section}]")));
+        }
+    }
+
+    let mut clashes = Vec::new();
+    for (index, (stem, owner)) in stems.iter().enumerate() {
+        for (other_stem, other_owner) in &stems[index + 1..] {
+            if stem == other_stem {
+                clashes.push(format!("{stem}: {owner} and {other_owner}"));
+            }
+        }
+    }
+    assert!(
+        clashes.is_empty(),
+        "{} pair(s) of targets write the same output stem:\n  {}",
+        clashes.len(),
+        clashes.join("\n  ")
+    );
+}
+
+/// The slice between two markers, split into quoted entries.
+fn between(text: &str, open: &str, close: &str) -> Vec<String> {
+    let start = text.find(open).map_or(0, |at| at + open.len());
+    let end = text[start..]
+        .find(close)
+        .map_or(text.len(), |at| start + at);
+    text[start..end]
+        .split(',')
+        .filter_map(|entry| {
+            let entry = entry.trim().trim_matches('"');
+            (!entry.is_empty()).then(|| entry.to_owned())
+        })
+        .collect()
+}
+
+/// Every explicitly named `[lib]` and `[[bin]]` target in one manifest.
+///
+/// A target with no `name` takes the package name, and two packages cannot share
+/// one, so only the explicit names can collide.
+fn target_names(manifest: &str) -> Vec<(&'static str, String)> {
+    let mut found = Vec::new();
+    for (section, header) in [("lib", "[lib]"), ("bin", "[[bin]]")] {
+        let mut rest = manifest;
+        while let Some(at) = rest.find(header) {
+            rest = &rest[at + header.len()..];
+            let block = rest.split("\n[").next().unwrap_or(rest);
+            if let Some(line) = block
+                .lines()
+                .find(|line| line.trim_start().starts_with("name"))
+            {
+                if let Some(name) = line.split('=').nth(1) {
+                    found.push((section, name.trim().trim_matches('"').to_owned()));
+                }
+            }
+        }
+    }
+    found
+}

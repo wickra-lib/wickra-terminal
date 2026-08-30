@@ -35,7 +35,7 @@ use term::TermGuard;
 ///
 /// The web renderer is a separate app in `web/`; see the README.
 #[derive(Parser)]
-#[command(name = "wickra-terminal", version, about)]
+#[command(name = "wkterm", version, about)]
 struct Cli {
     /// A source shorthand: `synth:<seed>`, `live:<venue>:<BASE/QUOTE>` or
     /// `replay:<json>`.
