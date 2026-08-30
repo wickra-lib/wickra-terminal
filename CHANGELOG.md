@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-30
+
 ### Added
 
 - Repository scaffolding: Cargo workspace, supply-chain configuration
@@ -121,4 +123,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The gated live-integration test fails on no data instead of passing, so the
   nightly job can report a real result.
 
-[Unreleased]: https://github.com/wickra-lib/wickra-terminal/commits/main
+[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/wickra-lib/wickra-terminal/releases/tag/v0.1.0

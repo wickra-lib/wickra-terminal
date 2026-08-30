@@ -7,13 +7,12 @@ data. See [THREAT_MODEL.md](THREAT_MODEL.md) for what that leaves in scope.
 
 ## Supported versions
 
-This project is pre-release. Security fixes target the `main` branch; once a
-release exists they will target the latest one.
+Security fixes are applied to the latest released version, `0.1.0`, only; please
+upgrade to the newest release before reporting an issue.
 
 | Version | Supported |
 | --- | --- |
-| `main` | :white_check_mark: |
-| `0.1.0` (unreleased) | :white_check_mark: |
+| 0.1.0 (latest) | :white_check_mark: |
 
 ## Reporting a vulnerability
 
