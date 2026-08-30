@@ -49,8 +49,16 @@ jobs:
       - name: Build the WASM package
         run: wasm-pack build bindings/wasm --target web --release
 
+      - name: Install web dependencies
+        # npm's own fetch-retry rides out a single bad request; wrapping the whole
+        # install means a longer registry outage retries instead of failing the job.
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          timeout_minutes: 10
+          max_attempts: 3
+          retry_wait_seconds: 20
+          command: cd web && npm ci --no-audit --no-fund
+          shell: bash
       - name: Build the web renderer
         working-directory: web
-        run: |
-          npm ci --no-audit --no-fund
-          npm run build
+        run: npm run build
