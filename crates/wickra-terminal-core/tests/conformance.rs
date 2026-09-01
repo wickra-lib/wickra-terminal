@@ -19,12 +19,7 @@ const KINDS: [PanelKind; 5] = [
 fn panels_are_object_safe_and_report_their_kind() {
     let panels: Vec<Box<dyn Panel>> = KINDS
         .iter()
-        .map(|&kind| {
-            build_panel(&PanelSpec {
-                kind,
-                rect: RectSpec::new(0, 0, 100, 100),
-            })
-        })
+        .map(|&kind| build_panel(&PanelSpec::new(kind, RectSpec::new(0, 0, 100, 100))))
         .collect();
 
     assert_eq!(panels.len(), KINDS.len());

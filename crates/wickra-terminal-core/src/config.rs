@@ -76,7 +76,51 @@ pub struct PanelSpec {
     pub kind: PanelKind,
     /// Where it sits on the grid.
     pub rect: RectSpec,
+    /// How many rows this panel carries, or `None` for its default.
+    ///
+    /// One number rather than a name per panel, because every panel that has a
+    /// bound has exactly one: book levels a side, tape prints, footprint levels,
+    /// chart points and bars, alternative bars per stream. The watchlist and the
+    /// profile panel have none -- one row per tracked market, one row per bin --
+    /// and ignore it.
+    ///
+    /// It is the *carried* depth, not the drawn one. A renderer draws what fits
+    /// and scrolls through the rest, so asking for more here is what makes
+    /// scrolling possible at all: before this the core sent twelve book levels
+    /// and there was nothing underneath them to scroll to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depth: Option<usize>,
 }
+
+impl PanelSpec {
+    /// A panel of `kind` at `rect`, carrying its default depth.
+    #[must_use]
+    pub fn new(kind: PanelKind, rect: RectSpec) -> Self {
+        Self {
+            kind,
+            rect,
+            depth: None,
+        }
+    }
+
+    /// The depth this panel carries, clamped so a config cannot ask for a
+    /// terminal-sized allocation per frame.
+    ///
+    /// Zero is refused rather than honoured: a panel configured to carry nothing
+    /// is a panel that renders blank with no error, which reads as a broken feed
+    /// rather than as a configuration.
+    #[must_use]
+    pub fn depth_or(&self, default: usize) -> usize {
+        self.depth.map_or(default, |d| d.clamp(1, MAX_PANEL_DEPTH))
+    }
+}
+
+/// The most rows a panel may be configured to carry.
+///
+/// The state's own rings are the real ceiling -- 256 alternative bars, 256 kept
+/// tape prints, 512 price points -- so this only stops a config asking for a
+/// number that would allocate before those bounds bit.
+pub const MAX_PANEL_DEPTH: usize = 512;
 
 /// Action → key bindings, data-driven so both renderers share one keymap.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,6 +147,8 @@ impl Default for Keybinds {
             ("list_indicators", "l"),
             ("seek_back", ","),
             ("seek_forward", "."),
+            ("scroll_up", "up"),
+            ("scroll_down", "down"),
         ]
         .into_iter()
         .map(|(a, k)| (a.to_string(), k.to_string()))
@@ -288,26 +334,11 @@ impl Default for Layout {
     /// Five panels (chart, book, footprint, tape, watchlist) and the default keymap.
     fn default() -> Self {
         let panels = vec![
-            PanelSpec {
-                kind: PanelKind::Chart,
-                rect: RectSpec::new(0, 0, 70, 70),
-            },
-            PanelSpec {
-                kind: PanelKind::Book,
-                rect: RectSpec::new(70, 0, 30, 35),
-            },
-            PanelSpec {
-                kind: PanelKind::Footprint,
-                rect: RectSpec::new(70, 35, 30, 35),
-            },
-            PanelSpec {
-                kind: PanelKind::Tape,
-                rect: RectSpec::new(70, 70, 30, 30),
-            },
-            PanelSpec {
-                kind: PanelKind::Watchlist,
-                rect: RectSpec::new(0, 70, 70, 30),
-            },
+            PanelSpec::new(PanelKind::Chart, RectSpec::new(0, 0, 70, 70)),
+            PanelSpec::new(PanelKind::Book, RectSpec::new(70, 0, 30, 35)),
+            PanelSpec::new(PanelKind::Footprint, RectSpec::new(70, 35, 30, 35)),
+            PanelSpec::new(PanelKind::Tape, RectSpec::new(70, 70, 30, 30)),
+            PanelSpec::new(PanelKind::Watchlist, RectSpec::new(0, 70, 70, 30)),
         ];
         Self {
             panels,

@@ -8,7 +8,7 @@ use ratatui::Frame;
 use wickra_terminal_core::view::TapeView;
 
 /// Render the tape panel.
-pub(crate) fn render(frame: &mut Frame, area: Rect, view: &TapeView, focused: bool) {
+pub(crate) fn render(frame: &mut Frame, area: Rect, view: &TapeView, focused: bool, scroll: u16) {
     let lines: Vec<Line> = view
         .prints
         .iter()
@@ -25,7 +25,9 @@ pub(crate) fn render(frame: &mut Frame, area: Rect, view: &TapeView, focused: bo
         })
         .collect();
     frame.render_widget(
-        Paragraph::new(lines).block(super::panel_block(format!("Tape {}", view.symbol), focused)),
+        Paragraph::new(lines)
+            .scroll((scroll, 0))
+            .block(super::panel_block(format!("Tape {}", view.symbol), focused)),
         area,
     );
 }
@@ -54,7 +56,7 @@ mod tests {
             symbol: "BTC/USDT".to_owned(),
             prints: vec![print(100.0, "buy"), print(99.0, "sell")],
         };
-        let buffer = harness::draw(40, 6, |frame, area| render(frame, area, &view, false));
+        let buffer = harness::draw(40, 6, |frame, area| render(frame, area, &view, false, 0));
         assert_eq!(harness::row_colour(&buffer, 1), Color::Green);
         assert_eq!(harness::row_colour(&buffer, 2), Color::Red);
         assert!(harness::row(&buffer, 1).contains("buy"));
@@ -69,7 +71,7 @@ mod tests {
             symbol: "S".to_owned(),
             prints: vec![print(100.0, "")],
         };
-        let buffer = harness::draw(40, 4, |frame, area| render(frame, area, &view, false));
+        let buffer = harness::draw(40, 4, |frame, area| render(frame, area, &view, false, 0));
         assert_eq!(harness::row_colour(&buffer, 1), Color::Red);
     }
 
@@ -79,7 +81,7 @@ mod tests {
             symbol: "BTC/USDT".to_owned(),
             prints: Vec::new(),
         };
-        let buffer = harness::draw(30, 4, |frame, area| render(frame, area, &view, true));
+        let buffer = harness::draw(30, 4, |frame, area| render(frame, area, &view, true, 0));
         assert!(harness::text(&buffer).contains("Tape BTC/USDT"));
     }
 }

@@ -34,6 +34,7 @@ pub(crate) fn draw(
     config: &Config,
     footer: &str,
     focused_panel: usize,
+    scroll: &[usize],
 ) {
     let full = frame.area();
     let footer_height = 1;
@@ -56,7 +57,8 @@ pub(crate) fn draw(
     } else {
         for (index, (spec, panel)) in config.layout.panels.iter().zip(&view.panels).enumerate() {
             let rect = rect_from_spec(area, spec.rect);
-            widgets::render_panel(frame, rect, panel, index == focused_panel);
+            let offset = u16::try_from(scroll.get(index).copied().unwrap_or(0)).unwrap_or(u16::MAX);
+            widgets::render_panel(frame, rect, panel, index == focused_panel, offset);
         }
     }
 
@@ -80,14 +82,8 @@ mod tests {
         let mut config = Config::default_layout();
         config.sources = vec![SourceSpec::Synth { seed: 3 }];
         config.layout.panels = vec![
-            PanelSpec {
-                kind: PanelKind::Chart,
-                rect: Spec::new(0, 0, 50, 100),
-            },
-            PanelSpec {
-                kind: PanelKind::Tape,
-                rect: Spec::new(50, 0, 50, 100),
-            },
+            PanelSpec::new(PanelKind::Chart, Spec::new(0, 0, 50, 100)),
+            PanelSpec::new(PanelKind::Tape, Spec::new(50, 0, 50, 100)),
         ];
         let mut terminal = Terminal::new(&config).unwrap();
         let symbol = Symbol::new("BTC", "USDT");
@@ -105,7 +101,7 @@ mod tests {
         // says which key adds a market instead.
         let config = Config::default_layout();
         let empty = Frame { panels: Vec::new() };
-        let buffer = harness::draw(70, 6, |frame, _| draw(frame, &empty, &config, "", 0));
+        let buffer = harness::draw(70, 6, |frame, _| draw(frame, &empty, &config, "", 0, &[]));
         let text = harness::text(&buffer);
         assert!(text.contains("no market subscribed"), "{text}");
         assert!(!text.contains(BORDER), "panels were drawn anyway: {text}");
@@ -117,7 +113,7 @@ mod tests {
         // starts at the midpoint. Drawn from a common origin they overlap and
         // the last one wins, which reads as a panel that went missing.
         let (view, config) = two_panels();
-        let buffer = harness::draw(80, 10, |frame, _| draw(frame, &view, &config, "", 0));
+        let buffer = harness::draw(80, 10, |frame, _| draw(frame, &view, &config, "", 0, &[]));
         let top = harness::row(&buffer, 0);
         let chart = top
             .find("Chart")
@@ -132,7 +128,7 @@ mod tests {
     fn the_footer_takes_the_last_row_and_the_panels_stop_above_it() {
         let (view, config) = two_panels();
         let buffer = harness::draw(80, 10, |frame, _| {
-            draw(frame, &view, &config, "source added", 0);
+            draw(frame, &view, &config, "source added", 0, &[]);
         });
         let footer = harness::row(&buffer, 9);
         assert_eq!(footer, "source added");
@@ -142,8 +138,8 @@ mod tests {
     #[test]
     fn the_focused_panel_is_drawn_differently_from_the_others() {
         let (view, config) = two_panels();
-        let first = harness::draw(80, 10, |frame, _| draw(frame, &view, &config, "", 0));
-        let second = harness::draw(80, 10, |frame, _| draw(frame, &view, &config, "", 1));
+        let first = harness::draw(80, 10, |frame, _| draw(frame, &view, &config, "", 0, &[]));
+        let second = harness::draw(80, 10, |frame, _| draw(frame, &view, &config, "", 1, &[]));
         assert_ne!(first, second, "moving the focus changed nothing on screen");
     }
 
@@ -152,8 +148,8 @@ mod tests {
         // Documented behaviour, and what an empty layout has to look like: the
         // index is not clamped back onto the first panel.
         let (view, config) = two_panels();
-        let none = harness::draw(80, 10, |frame, _| draw(frame, &view, &config, "", 99));
-        let first = harness::draw(80, 10, |frame, _| draw(frame, &view, &config, "", 0));
+        let none = harness::draw(80, 10, |frame, _| draw(frame, &view, &config, "", 99, &[]));
+        let first = harness::draw(80, 10, |frame, _| draw(frame, &view, &config, "", 0, &[]));
         assert_ne!(none, first);
     }
 
@@ -161,7 +157,7 @@ mod tests {
     fn a_screen_with_no_room_for_a_footer_does_not_panic() {
         // One row: the panel area saturates to nothing and the footer takes it.
         let (view, config) = two_panels();
-        let buffer = harness::draw(20, 1, |frame, _| draw(frame, &view, &config, "x", 0));
+        let buffer = harness::draw(20, 1, |frame, _| draw(frame, &view, &config, "x", 0, &[]));
         assert!(!buffer.content().is_empty());
     }
 

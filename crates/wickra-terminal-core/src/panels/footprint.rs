@@ -3,14 +3,17 @@
 
 use rust_decimal::prelude::ToPrimitive;
 
-use super::{Panel, PanelKind, DEFAULT_DEPTH};
+use super::{Panel, PanelKind};
 use crate::source::{SourceId, Symbol};
 use crate::state::AppState;
 use crate::view::{FootprintLevel, FootprintView, PanelView};
 
 /// A per-price buy/sell volume profile for the focused market.
 #[derive(Debug)]
-pub struct FootprintPanel;
+pub struct FootprintPanel {
+    /// How many price levels this panel carries around the last trade.
+    pub(crate) depth: usize,
+}
 
 impl Panel for FootprintPanel {
     fn kind(&self) -> PanelKind {
@@ -23,7 +26,7 @@ impl Panel for FootprintPanel {
             .get(&(focus.0, focus.1.clone()))
             .map(|st| {
                 st.footprint
-                    .around(st.last, DEFAULT_DEPTH)
+                    .around(st.last, self.depth)
                     .into_iter()
                     .map(|(price, buy, sell)| FootprintLevel {
                         price: price.to_f64().unwrap_or(0.0),
@@ -39,6 +42,7 @@ impl Panel for FootprintPanel {
 
 #[cfg(test)]
 mod tests {
+    use super::super::DEFAULT_DEPTH;
     use super::*;
     use rust_decimal_macros::dec;
     use wickra_exchange_core::{Event, OrderSide, TradePrint};
@@ -66,7 +70,10 @@ mod tests {
             state.fold(0, &sym, &trade_at(&sym, price));
         }
 
-        let PanelView::Footprint(view) = FootprintPanel.view(&state, (0, &sym)) else {
+        let PanelView::Footprint(view) = FootprintPanel {
+            depth: DEFAULT_DEPTH,
+        }
+        .view(&state, (0, &sym)) else {
             panic!("expected a footprint view");
         };
         let last = 496.01;
@@ -98,7 +105,10 @@ mod tests {
         state.fold(0, &sym, &trade(&sym, dec!(100), OrderSide::Sell));
         state.fold(0, &sym, &trade(&sym, dec!(101), OrderSide::Buy));
 
-        let PanelView::Footprint(view) = FootprintPanel.view(&state, (0, &sym)) else {
+        let PanelView::Footprint(view) = FootprintPanel {
+            depth: DEFAULT_DEPTH,
+        }
+        .view(&state, (0, &sym)) else {
             panic!("expected a footprint view");
         };
         let close = |a: f64, b: f64| (a - b).abs() < 1e-9;

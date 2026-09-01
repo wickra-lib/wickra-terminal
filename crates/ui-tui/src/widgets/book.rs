@@ -12,7 +12,7 @@ fn level_line(level: &Level) -> String {
 }
 
 /// Render the order-book panel.
-pub(crate) fn render(frame: &mut Frame, area: Rect, view: &BookView, focused: bool) {
+pub(crate) fn render(frame: &mut Frame, area: Rect, view: &BookView, focused: bool, scroll: u16) {
     let mut lines: Vec<Line> = Vec::new();
     // Asks worst-first so the best ask sits just above the spread line.
     for level in view.asks.iter().rev() {
@@ -26,7 +26,9 @@ pub(crate) fn render(frame: &mut Frame, area: Rect, view: &BookView, focused: bo
         lines.push(Line::from(level_line(level)).green());
     }
     frame.render_widget(
-        Paragraph::new(lines).block(super::panel_block(format!("Book {}", view.symbol), focused)),
+        Paragraph::new(lines)
+            .scroll((scroll, 0))
+            .block(super::panel_block(format!("Book {}", view.symbol), focused)),
         area,
     );
 }
@@ -57,7 +59,7 @@ mod tests {
         // meet at the spread the way a book reads. Drawn in arrival order the
         // ladder is inside out and the panel is silently wrong.
         let buffer = harness::draw(40, 8, |frame, area| {
-            render(frame, area, &view(Some(2.0)), false);
+            render(frame, area, &view(Some(2.0)), false, 0);
         });
         let rows: Vec<String> = (1..5).map(|y| harness::row(&buffer, y)).collect();
         assert!(rows[0].starts_with("102.00"), "{rows:?}");
@@ -69,7 +71,7 @@ mod tests {
     #[test]
     fn each_side_is_drawn_in_its_own_colour() {
         let buffer = harness::draw(40, 8, |frame, area| {
-            render(frame, area, &view(Some(2.0)), false);
+            render(frame, area, &view(Some(2.0)), false, 0);
         });
         assert_eq!(harness::row_colour(&buffer, 1), Color::Red);
         assert_eq!(harness::row_colour(&buffer, 4), Color::Green);
@@ -80,7 +82,7 @@ mod tests {
         // A one-sided or crossed book has no spread, and printing a zero there
         // would be a claim about the market rather than an absence.
         let buffer = harness::draw(40, 8, |frame, area| {
-            render(frame, area, &view(None), false);
+            render(frame, area, &view(None), false, 0);
         });
         assert!(
             harness::text(&buffer).contains("spread —"),

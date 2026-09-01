@@ -258,15 +258,10 @@ fn scenarios() -> Vec<Scenario> {
     let profile_feed = multi_second_feed();
     let mut with_profile = replay_config(&profile_feed);
     with_profile.profiles = vec![IndicatorSpec::new("VolumeProfile", vec![4.0, 8.0])];
-    with_profile.layout.panels = vec![PanelSpec {
-        kind: PanelKind::Profile,
-        rect: RectSpec {
-            x: 0,
-            y: 0,
-            w: 100,
-            h: 100,
-        },
-    }];
+    with_profile.layout.panels = vec![PanelSpec::new(
+        PanelKind::Profile,
+        RectSpec::new(0, 0, 100, 100),
+    )];
     with_profile.timeframe = Timeframe::parse("1s").unwrap();
 
     let bar_feed = multi_second_feed();
@@ -274,15 +269,10 @@ fn scenarios() -> Vec<Scenario> {
     // A three-unit brick on a feed that walks in threes, so bricks complete
     // within the scenario rather than after it.
     with_bars.bars = vec![IndicatorSpec::new("RenkoBars", vec![3.0])];
-    with_bars.layout.panels = vec![PanelSpec {
-        kind: PanelKind::Bars,
-        rect: RectSpec {
-            x: 0,
-            y: 0,
-            w: 100,
-            h: 100,
-        },
-    }];
+    with_bars.layout.panels = vec![PanelSpec::new(
+        PanelKind::Bars,
+        RectSpec::new(0, 0, 100, 100),
+    )];
     with_bars.timeframe = Timeframe::parse("1s").unwrap();
 
     let derivatives_feed = indicator_feed();

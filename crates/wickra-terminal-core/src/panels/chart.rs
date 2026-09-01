@@ -7,16 +7,6 @@ use crate::source::{SourceId, Symbol};
 use crate::state::AppState;
 use crate::view::{ChartView, IndicatorField, IndicatorValue, OhlcBar, PanelView};
 
-/// The number of price points the chart series carries.
-const CHART_POINTS: usize = 120;
-
-/// The number of closed bars the chart carries.
-///
-/// Fewer than the series because a bar is wider than a tick: a hundred and
-/// twenty candles is already more than a terminal column or a canvas draws
-/// legibly, and the renderer trims to what it has room for.
-const CHART_BARS: usize = 120;
-
 /// A core candle as the view-model carries it.
 fn ohlc(candle: &wickra_core::Candle) -> OhlcBar {
     OhlcBar {
@@ -31,7 +21,14 @@ fn ohlc(candle: &wickra_core::Candle) -> OhlcBar {
 
 /// A price chart with the focused market's indicator overlays.
 #[derive(Debug)]
-pub struct ChartPanel;
+pub struct ChartPanel {
+    /// How many price points, bars and indicator points this panel carries.
+    ///
+    /// One number for all three: they are three views of the same window, and a
+    /// config that could set them apart would let a chart draw a bar the price
+    /// line does not reach.
+    pub(crate) points: usize,
+}
 
 impl Panel for ChartPanel {
     fn kind(&self) -> PanelKind {
@@ -44,8 +41,8 @@ impl Panel for ChartPanel {
             Some(st) => ChartView {
                 symbol,
                 last: st.last.to_f64().unwrap_or(0.0),
-                series: st.series(CHART_POINTS),
-                bars: st.ohlc(CHART_BARS).iter().map(ohlc).collect(),
+                series: st.series(self.points),
+                bars: st.ohlc(self.points).iter().map(ohlc).collect(),
                 forming: st.forming().as_ref().map(ohlc),
                 indicators: st
                     .indicators
@@ -67,7 +64,7 @@ impl Panel for ChartPanel {
                         // fewer should not ship more than it draws.
                         series: reading
                             .series
-                            .split_off(reading.series.len().saturating_sub(CHART_POINTS)),
+                            .split_off(reading.series.len().saturating_sub(self.points)),
                     })
                     .collect(),
             },

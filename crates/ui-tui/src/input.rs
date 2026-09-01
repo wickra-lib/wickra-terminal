@@ -40,6 +40,10 @@ pub(crate) enum Action {
     SeekBack,
     /// Advance a replayable source.
     SeekForward,
+    /// Scroll the focused panel towards the top of what it carries.
+    ScrollUp,
+    /// Scroll the focused panel towards the bottom.
+    ScrollDown,
     /// No bound action for this key.
     None,
 }
@@ -88,6 +92,8 @@ pub(crate) fn map_key(key: KeyEvent, binds: &Keybinds) -> Action {
         Some("list_indicators") => Action::ListIndicators,
         Some("seek_back") => Action::SeekBack,
         Some("seek_forward") => Action::SeekForward,
+        Some("scroll_up") => Action::ScrollUp,
+        Some("scroll_down") => Action::ScrollDown,
         _ => Action::None,
     }
 }

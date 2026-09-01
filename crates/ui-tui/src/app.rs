@@ -33,6 +33,23 @@ const SEEK_STEPS: usize = 20;
 use crate::input::Action;
 use crate::spec;
 
+/// How many rows a panel view carries, for clamping a scroll offset.
+///
+/// The panels with no row list -- the chart, which is a plot, and the profile,
+/// whose rows are bins inside each distribution -- report one, so scrolling them
+/// is a no-op rather than an offset that silently blanks them.
+fn panel_rows(view: &wickra_terminal_core::PanelView) -> usize {
+    use wickra_terminal_core::PanelView as V;
+    match view {
+        V::Book(book) => book.bids.len().max(book.asks.len()),
+        V::Tape(tape) => tape.prints.len(),
+        V::Watchlist(list) => list.rows.len(),
+        V::Footprint(fp) => fp.levels.len(),
+        V::Bars(bars) => bars.streams.iter().map(|s| s.bars.len()).max().unwrap_or(0),
+        V::Chart(_) | V::Profile(_) => 1,
+    }
+}
+
 /// A pending text prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InputKind {
@@ -72,26 +89,39 @@ pub(crate) struct App {
     pub status: String,
     /// Which panel of the configured layout is focused, by index.
     pub focused_panel: usize,
+    /// How far each panel is scrolled, by layout index.
+    ///
+    /// Renderer state, not core state, and it has to be: the core sends what a
+    /// panel carries and every front-end decides for itself how much of that it
+    /// can show. A browser scrolls a div; a terminal has to be told.
+    pub scroll: Vec<usize>,
 }
 
 impl App {
     /// Wrap a terminal core in a fresh app.
     #[must_use]
     pub(crate) fn new(terminal: Terminal) -> Self {
+        let panels = terminal.config().layout.panels.len();
         Self {
             terminal,
             should_quit: false,
             frame: Frame { panels: Vec::new() },
             mode: Mode::Normal,
-            status: "s source · a symbol · d unsub · x drop source · i/k indicator · t timeframe · l catalogue · ,/. seek · ←/→ symbol · tab panel · q quit"
+            status: "s source · a symbol · d unsub · x drop source · i/k indicator · t timeframe · l catalogue · ,/. seek · ↑/↓ scroll · ←/→ symbol · tab panel · q quit"
                 .to_string(),
             focused_panel: 0,
+            scroll: vec![0; panels],
         }
     }
 
     /// Pump the core and capture the next frame.
     pub(crate) fn update(&mut self) {
         self.frame = self.terminal.tick();
+        // The layout can grow a panel at run time, and a frame says how many
+        // rows each panel now has -- both of which can strand an offset.
+        self.scroll
+            .resize(self.terminal.config().layout.panels.len(), 0);
+        self.clamp_scroll();
     }
 
     /// Reduce a user action onto the terminal.
@@ -112,6 +142,8 @@ impl App {
             Action::ListIndicators => self.begin_input(InputKind::ListIndicators),
             Action::SeekBack => self.seek_by(-1),
             Action::SeekForward => self.seek_by(1),
+            Action::ScrollUp => self.scroll_by(-1),
+            Action::ScrollDown => self.scroll_by(1),
             Action::None => {}
         }
     }
@@ -344,6 +376,48 @@ impl App {
             Ok(()) => self.status = format!("replay {target}/{length}"),
             Err(err) => self.status = format!("seek failed: {err}"),
         }
+    }
+
+    /// Scroll the focused panel, clamped to what that panel carries.
+    ///
+    /// Panel focus was drawn and acted on nothing: tab moved a border and no key
+    /// did anything with it. This is the first thing it means. The bound is the
+    /// panel's own row count, so a book carrying twelve levels does not scroll
+    /// at all and one configured to carry fifty scrolls through thirty-eight --
+    /// which is why the depth is configurable in the first place.
+    fn scroll_by(&mut self, direction: i64) {
+        let Some(offset) = self.scroll.get_mut(self.focused_panel) else {
+            return;
+        };
+        let moved = i64::try_from(*offset)
+            .unwrap_or(i64::MAX)
+            .saturating_add(direction);
+        *offset = usize::try_from(moved.max(0)).unwrap_or(0);
+        let kind = self
+            .terminal
+            .config()
+            .layout
+            .panels
+            .get(self.focused_panel)
+            .map(|spec| spec.kind);
+        let clamped = self.clamp_scroll();
+        self.status = match kind {
+            Some(kind) => format!("{kind:?} row {clamped}"),
+            None => String::new(),
+        };
+    }
+
+    /// Hold every offset inside the rows its panel actually carries.
+    ///
+    /// Called after a scroll and after each frame, because the frame is what
+    /// says how many rows there are -- a tape that has only printed twice must
+    /// not be scrollable to row forty just because the last one was.
+    fn clamp_scroll(&mut self) -> usize {
+        for (index, offset) in self.scroll.iter_mut().enumerate() {
+            let rows = self.frame.panels.get(index).map_or(0, panel_rows);
+            *offset = (*offset).min(rows.saturating_sub(1));
+        }
+        self.scroll.get(self.focused_panel).copied().unwrap_or(0)
     }
 
     /// Move focus to the next/previous panel of the layout.
@@ -660,6 +734,97 @@ mod tests {
             moved >= rewound,
             "forward went backwards: {rewound} -> {moved}"
         );
+    }
+
+    #[test]
+    fn scrolling_moves_the_focused_panel_and_nothing_else() {
+        // Panel focus was drawn and acted on nothing: tab moved a border and no
+        // key did anything with it. This is the first thing it means.
+        let mut config = Config::default_layout();
+        config.sources = vec![SourceSpec::Synth { seed: 1 }];
+        // A book deep enough to scroll: with the default twelve levels there is
+        // nothing underneath them to scroll to, which is why the depth is
+        // configurable at all.
+        for panel in &mut config.layout.panels {
+            panel.depth = Some(40);
+        }
+        let mut app = App::new(Terminal::new(&config).unwrap());
+        app.terminal
+            .subscribe(0, &Symbol::new("BTC", "USDT"))
+            .unwrap();
+        for _ in 0..60 {
+            app.update();
+        }
+
+        // Focus the tape, which by then carries more rows than one screen.
+        let tape = config
+            .layout
+            .panels
+            .iter()
+            .position(|p| p.kind == wickra_terminal_core::PanelKind::Tape)
+            .expect("the default layout has a tape");
+        app.focused_panel = tape;
+
+        app.on_action(Action::ScrollDown);
+        app.on_action(Action::ScrollDown);
+        assert_eq!(app.scroll[tape], 2, "the focused panel did not scroll");
+        assert!(
+            app.scroll
+                .iter()
+                .enumerate()
+                .all(|(i, o)| i == tape || *o == 0),
+            "scrolling moved a panel that was not focused: {:?}",
+            app.scroll
+        );
+
+        app.on_action(Action::ScrollUp);
+        assert_eq!(app.scroll[tape], 1);
+    }
+
+    #[test]
+    fn scrolling_stops_at_the_rows_a_panel_actually_carries() {
+        // A tape that has printed twice must not be scrollable to row forty just
+        // because the last one was -- the frame says how many rows there are.
+        let mut config = Config::default_layout();
+        config.sources = vec![SourceSpec::Synth { seed: 1 }];
+        let mut app = App::new(Terminal::new(&config).unwrap());
+        app.terminal
+            .subscribe(0, &Symbol::new("BTC", "USDT"))
+            .unwrap();
+        app.update();
+
+        let tape = config
+            .layout
+            .panels
+            .iter()
+            .position(|p| p.kind == wickra_terminal_core::PanelKind::Tape)
+            .expect("the default layout has a tape");
+        app.focused_panel = tape;
+        for _ in 0..50 {
+            app.on_action(Action::ScrollDown);
+        }
+        let rows = match &app.frame.panels[tape] {
+            wickra_terminal_core::PanelView::Tape(view) => view.prints.len(),
+            other => panic!("expected a tape, got {other:?}"),
+        };
+        assert!(
+            app.scroll[tape] < rows.max(1),
+            "scrolled to {} of {rows} rows",
+            app.scroll[tape]
+        );
+    }
+
+    #[test]
+    fn scrolling_up_never_goes_below_the_first_row() {
+        let mut app = synth_app();
+        app.terminal
+            .subscribe(0, &Symbol::new("BTC", "USDT"))
+            .unwrap();
+        app.update();
+        for _ in 0..5 {
+            app.on_action(Action::ScrollUp);
+        }
+        assert_eq!(app.scroll[app.focused_panel], 0);
     }
 
     #[test]

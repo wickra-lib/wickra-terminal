@@ -56,22 +56,42 @@ pub trait Panel {
     fn view(&self, state: &AppState, focus: (SourceId, &Symbol)) -> PanelView;
 }
 
-/// Build the panel a spec describes.
+/// Build the panel a spec describes, carrying the depth it asks for.
+///
+/// The depth is read here rather than in each panel's `view`, so a panel holds
+/// the one number it needs and the spec is not threaded through the whole
+/// rendering path.
 #[must_use]
 pub fn build_panel(spec: &PanelSpec) -> Box<dyn Panel> {
     match spec.kind {
-        PanelKind::Chart => Box::new(ChartPanel),
-        PanelKind::Book => Box::new(BookPanel),
-        PanelKind::Tape => Box::new(TapePanel),
+        PanelKind::Chart => Box::new(ChartPanel {
+            points: spec.depth_or(CHART_POINTS),
+        }),
+        PanelKind::Book => Box::new(BookPanel {
+            depth: spec.depth_or(DEFAULT_DEPTH),
+        }),
+        PanelKind::Tape => Box::new(TapePanel {
+            rows: spec.depth_or(TAPE_ROWS),
+        }),
         PanelKind::Watchlist => Box::new(WatchlistPanel),
-        PanelKind::Footprint => Box::new(FootprintPanel),
+        PanelKind::Footprint => Box::new(FootprintPanel {
+            depth: spec.depth_or(DEFAULT_DEPTH),
+        }),
         PanelKind::Profile => Box::new(ProfilePanel),
-        PanelKind::Bars => Box::new(BarsPanel),
+        PanelKind::Bars => Box::new(BarsPanel {
+            bars: spec.depth_or(DEFAULT_DEPTH),
+        }),
     }
 }
 
 /// The number of levels/rows a panel shows by default.
 pub(crate) const DEFAULT_DEPTH: usize = 12;
+
+/// The default number of prints the tape carries.
+pub(crate) const TAPE_ROWS: usize = DEFAULT_DEPTH * 2;
+
+/// The default number of price points and bars the chart carries.
+pub(crate) const CHART_POINTS: usize = 120;
 
 #[cfg(test)]
 mod tests {
@@ -93,11 +113,41 @@ mod tests {
     ];
 
     #[test]
+    fn a_panel_carries_the_depth_its_spec_asks_for() {
+        // Book depth, tape rows and chart points were `const` in the code, so a
+        // config could set exactly one thing per panel -- its rectangle. That
+        // also meant a renderer had nothing underneath the twelve rows it drew,
+        // which is what made panel scrolling impossible rather than merely
+        // unimplemented.
+        let mut spec = PanelSpec::new(PanelKind::Book, RectSpec::new(0, 0, 100, 100));
+        assert_eq!(spec.depth_or(12), 12, "no depth means the default");
+        spec.depth = Some(40);
+        assert_eq!(spec.depth_or(12), 40);
+    }
+
+    #[test]
+    fn a_depth_of_zero_is_refused_rather_than_honoured() {
+        // A panel configured to carry nothing renders blank with no error, which
+        // reads as a broken feed rather than as a configuration.
+        let mut spec = PanelSpec::new(PanelKind::Tape, RectSpec::new(0, 0, 100, 100));
+        spec.depth = Some(0);
+        assert_eq!(spec.depth_or(24), 1);
+    }
+
+    #[test]
+    fn a_depth_beyond_the_ceiling_is_clamped() {
+        let mut spec = PanelSpec::new(PanelKind::Tape, RectSpec::new(0, 0, 100, 100));
+        spec.depth = Some(1_000_000);
+        assert_eq!(spec.depth_or(24), crate::config::MAX_PANEL_DEPTH);
+    }
+
+    #[test]
     fn build_panel_matches_the_spec_kind() {
         for kind in EVERY_KIND {
             let spec = PanelSpec {
                 kind,
                 rect: RectSpec::new(0, 0, 100, 100),
+                depth: None,
             };
             assert_eq!(build_panel(&spec).kind(), kind);
         }

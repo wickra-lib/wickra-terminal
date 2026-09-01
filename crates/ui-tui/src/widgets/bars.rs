@@ -50,10 +50,12 @@ fn rows(stream: &BarStreamView) -> Vec<Line<'static>> {
 }
 
 /// Render the bars panel.
-pub(crate) fn render(frame: &mut Frame, area: Rect, view: &BarsView, focused: bool) {
+pub(crate) fn render(frame: &mut Frame, area: Rect, view: &BarsView, focused: bool, scroll: u16) {
     let lines: Vec<Line> = view.streams.iter().flat_map(rows).collect();
     frame.render_widget(
-        Paragraph::new(lines).block(super::panel_block(format!("Bars {}", view.symbol), focused)),
+        Paragraph::new(lines)
+            .scroll((scroll, 0))
+            .block(super::panel_block(format!("Bars {}", view.symbol), focused)),
         area,
     );
 }
@@ -84,7 +86,7 @@ mod tests {
 
     fn drawn(view: &BarsView, width: u16, height: u16) -> String {
         harness::text(&harness::draw(width, height, |frame, area| {
-            render(frame, area, view, false);
+            render(frame, area, view, false, 0);
         }))
     }
 

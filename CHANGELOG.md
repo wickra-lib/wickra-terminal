@@ -204,6 +204,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `registry_drive` fuzz target found it in under a minute. The ceiling is a
   million -- a million one-minute bars is two years -- and the refusal names the
   indicator and the number.
+- Panels carry a configurable depth. Book levels, tape prints, footprint levels,
+  chart points and bars per stream were `const` in the code, so a config could
+  set exactly one thing per panel -- its rectangle. A `PanelSpec` now takes an
+  optional `depth`, clamped to 512 and refusing zero, and every panel that has a
+  bound reads it.
+- Panel focus finally means something. It was drawn and acted on nothing: `tab`
+  moved a border and no key did anything with it. `↑` / `↓` now scroll the
+  focused panel through the rows it carries, which is also why the depth had to
+  become configurable -- with twelve book levels there was nothing underneath
+  them to scroll to. The browser already scrolls its panels; a terminal has to
+  be told.
 - A streaming-versus-re-fold equivalence test in every binding: Python, Node,
   WASM, Go, Java, C#, R, C and C++. The terminal reaches a state two ways --
   streaming folds one event per tick as it arrives, `Seek` throws the state away

@@ -5,14 +5,17 @@
 //! hour completes no bars and a fast one completes several. The panel shows the
 //! most recent of each stream, which is what a chart of them is.
 
-use super::{Panel, PanelKind, DEFAULT_DEPTH};
+use super::{Panel, PanelKind};
 use crate::source::{SourceId, Symbol};
 use crate::state::AppState;
 use crate::view::{BarStreamView, BarsView, PanelView};
 
 /// The configured alternative bar streams for the focused market.
 #[derive(Debug)]
-pub struct BarsPanel;
+pub struct BarsPanel {
+    /// How many completed bars each stream carries.
+    pub(crate) bars: usize,
+}
 
 impl Panel for BarsPanel {
     fn kind(&self) -> PanelKind {
@@ -25,7 +28,7 @@ impl Panel for BarsPanel {
             .get(&(focus.0, focus.1.clone()))
             .map(|st| {
                 st.bars
-                    .streams(DEFAULT_DEPTH)
+                    .streams(self.bars)
                     .into_iter()
                     .map(|(label, bars)| BarStreamView {
                         label: label.to_string(),

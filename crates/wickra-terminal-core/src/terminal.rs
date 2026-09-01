@@ -1399,6 +1399,7 @@ mod tests {
                     w: 100,
                     h: 50,
                 },
+                depth: None,
             },
             PanelSpec {
                 kind: PanelKind::Bars,
@@ -1408,6 +1409,7 @@ mod tests {
                     w: 100,
                     h: 50,
                 },
+                depth: None,
             },
         ];
         cfg.profiles = registry::PROFILES
@@ -1459,6 +1461,7 @@ mod tests {
                 w: 100,
                 h: 100,
             },
+            depth: None,
         }];
         // One-second bars, so a tick closes a bar. The synth source advances
         // its clock a second per poll, and VolumeProfile needs twenty closed
@@ -1524,6 +1527,7 @@ mod tests {
                 w: 100,
                 h: 100,
             },
+            depth: None,
         }];
         // One-second bars, as the profile test does and for the same reason:
         // a Renko brick needs the price to move a whole box, and at the

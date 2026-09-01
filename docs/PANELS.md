@@ -105,18 +105,40 @@ that spans an odd fraction, a layout with gaps.
 A layout that omits a panel kind simply does not render it. Omitting the whole
 `layout` gives the standard five.
 
-## Bounds
+## Bounds, and how deep a panel carries
 
 Every panel reads from a bounded structure, so a session that runs for a week
 renders exactly as fast as one that just started:
 
-| Panel | Bound | Where |
-|-------|-------|-------|
-| `chart` | 120 bars of 256 kept, 120 price points, 120 points per indicator | `OHLC_HISTORY`, `SymbolState::history`, `IndicatorSet` |
-| `book` | 12 levels a side | `DEFAULT_DEPTH` |
-| `tape` | 24 rendered of 256 kept | `TapeRing` |
-| `footprint` | 12 levels | `DEFAULT_DEPTH` |
-| `watchlist` | one row per subscribed market | the watchlist itself |
+| Panel | Default depth | Ceiling |
+|-------|--------------|---------|
+| `chart` | 120 bars, 120 price points, 120 points per indicator | 256 bars kept, 512 price points |
+| `book` | 12 levels a side | the book itself |
+| `tape` | 24 prints | 256 kept |
+| `footprint` | 12 levels | 1024 levels kept |
+| `bars` | 12 bars a stream | 256 kept |
+| `watchlist` | one row per subscribed market | — |
+| `profile` | one row per bin | — |
+
+A panel spec may set its own depth:
+
+```json
+{ "kind": "Book", "rect": { "x": 70, "y": 0, "w": 30, "h": 35 }, "depth": 40 }
+```
+
+One number rather than a name per panel, because every panel that has a bound
+has exactly one: book levels a side, tape prints, footprint levels, chart points
+and bars, alternative bars per stream. The watchlist and the profile panel have
+none and ignore it. Zero is refused rather than honoured — a panel carrying
+nothing renders blank with no error, which reads as a broken feed rather than as
+a configuration — and the value is clamped to 512, above which the state's own
+rings are the real ceiling anyway.
+
+It is the **carried** depth, not the drawn one. A renderer draws what fits and
+scrolls through the rest, so asking for more here is what makes scrolling
+possible at all: with twelve book levels there is nothing underneath them to
+scroll to. In the TUI that is `↑` / `↓` on the focused panel; in the browser the
+panel is a scrollable box and the browser does it.
 
 ## Adding a panel
 
