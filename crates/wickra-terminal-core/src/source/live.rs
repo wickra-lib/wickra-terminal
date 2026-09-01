@@ -14,6 +14,7 @@
 
 use super::{event_symbol, DataSource, SourceId, SourceKind, Symbol};
 use crate::error::{Error, Result};
+use std::collections::HashSet;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 use wickra_exchange::{connect, Credentials, Event, Exchange, ExchangeOptions, MarketType};
@@ -89,6 +90,18 @@ pub struct LiveSource {
     id: SourceId,
     client: Box<dyn Exchange>,
     backoff: ReconnectBackoff,
+    /// The markets this source forwards.
+    ///
+    /// The exchange client has no per-symbol unsubscribe in its public surface,
+    /// so the socket keeps delivering a market after the terminal has dropped
+    /// it. `unsubscribe` used to be a comment saying exactly that and doing
+    /// nothing -- but the fold takes an event for any market and creates the
+    /// state for it, so the dropped market came straight back and was folded
+    /// forever, invisible because the watchlist no longer named it.
+    ///
+    /// Filtering here is what makes the drop mean something. The socket is still
+    /// the venue's to close; the work is not.
+    subscribed: HashSet<Symbol>,
 }
 
 impl std::fmt::Debug for LiveSource {
@@ -120,6 +133,7 @@ impl LiveSource {
             id,
             client,
             backoff: ReconnectBackoff::new(),
+            subscribed: HashSet::new(),
         })
     }
 }
@@ -138,12 +152,17 @@ impl DataSource for LiveSource {
             .subscribe_trades(sym)
             .and_then(|()| self.client.subscribe_book(sym))
             .and_then(|()| self.client.subscribe_ticker(sym))
-            .map_err(|e| Error::Exchange(e.to_string()))
+            .map_err(|e| Error::Exchange(e.to_string()))?;
+        self.subscribed.insert(sym.clone());
+        Ok(())
     }
 
-    fn unsubscribe(&mut self, _sym: &Symbol) {
-        // The pull-based exchange client has no per-symbol unsubscribe in its
-        // public surface; the terminal simply stops folding this symbol's state.
+    fn unsubscribe(&mut self, sym: &Symbol) {
+        // The exchange client has no per-symbol unsubscribe, so the socket keeps
+        // delivering this market. Dropping it from the filter is what stops the
+        // terminal folding it -- without that the fold creates the state again
+        // on the very next event.
+        self.subscribed.remove(sym);
     }
 
     fn poll(&mut self) -> Vec<(Symbol, Event)> {
@@ -153,11 +172,23 @@ impl DataSource for LiveSource {
         }
         let events = self.client.poll_events();
         self.backoff.observe(&events, now);
-        events
-            .into_iter()
-            .filter_map(|ev| event_symbol(&ev).map(|sym| (sym, ev)))
-            .collect()
+        forwarded(events, &self.subscribed)
     }
+}
+
+/// The events a poll forwards: those that name a market, and only markets still
+/// subscribed.
+///
+/// Split out from `poll` so it can be tested. Everything either side of it needs
+/// a socket; this is the part that decides what the terminal folds, and it is
+/// the part that was wrong -- `unsubscribe` did nothing, so a dropped market
+/// kept arriving and the fold created its state again on the next event.
+fn forwarded(events: Vec<Event>, subscribed: &HashSet<Symbol>) -> Vec<(Symbol, Event)> {
+    events
+        .into_iter()
+        .filter_map(|ev| event_symbol(&ev).map(|sym| (sym, ev)))
+        .filter(|(sym, _)| subscribed.contains(sym))
+        .collect()
 }
 
 /// Parse a `venue:BASE/QUOTE` live source shorthand into its parts, validating
@@ -264,6 +295,51 @@ mod tests {
         });
         backoff.observe(&[Event::Disconnected, trade], start);
         assert!(backoff.ready(start));
+    }
+
+    fn print(symbol: &Symbol, price: i64) -> Event {
+        Event::Trade(wickra_exchange::TradePrint {
+            symbol: symbol.clone(),
+            price: rust_decimal::Decimal::from(price),
+            quantity: rust_decimal::Decimal::from(1),
+            aggressor: wickra_exchange::OrderSide::Buy,
+            timestamp: 0,
+        })
+    }
+
+    #[test]
+    fn a_poll_forwards_only_the_markets_still_subscribed() {
+        // unsubscribe was a comment saying the client has no per-symbol
+        // unsubscribe, and doing nothing. But the fold creates state for
+        // whatever market an event names, so the dropped market came straight
+        // back and was folded forever -- invisible, because the watchlist no
+        // longer listed it. The socket is still the venue's to close; the work
+        // is not.
+        let btc = Symbol::new("BTC", "USDT");
+        let eth = Symbol::new("ETH", "USDT");
+        let mut subscribed = HashSet::new();
+        subscribed.insert(btc.clone());
+
+        let out = forwarded(vec![print(&btc, 100), print(&eth, 200)], &subscribed);
+        assert_eq!(out.len(), 1, "an unsubscribed market was forwarded");
+        assert_eq!(out[0].0, btc);
+    }
+
+    #[test]
+    fn a_poll_with_nothing_subscribed_forwards_nothing() {
+        let btc = Symbol::new("BTC", "USDT");
+        assert!(forwarded(vec![print(&btc, 100)], &HashSet::new()).is_empty());
+    }
+
+    #[test]
+    fn lifecycle_events_are_dropped_because_they_name_no_market() {
+        // The backoff reads them from the raw list before this runs, which is
+        // why it takes the raw events rather than what poll returns.
+        let btc = Symbol::new("BTC", "USDT");
+        let mut subscribed = HashSet::new();
+        subscribed.insert(btc);
+        let out = forwarded(vec![Event::Disconnected, Event::Reconnected], &subscribed);
+        assert!(out.is_empty());
     }
 
     #[test]

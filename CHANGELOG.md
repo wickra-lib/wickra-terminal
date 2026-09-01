@@ -295,6 +295,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   all; the dead `RUSTSEC-2024-0436` suppression was removed from both files.
 - The gated live-integration test fails on no data instead of passing, so the
   nightly job can report a real result.
+- Unsubscribing a live market stops the terminal folding it. `LiveSource`'s
+  `unsubscribe` was a comment noting that the exchange client has no per-symbol
+  unsubscribe, and doing nothing -- but the fold creates state for whatever
+  market an event names, so the dropped market came straight back on the next
+  poll and was folded for the rest of the session, invisible because the
+  watchlist no longer listed it. The source filters its own output now, the way
+  the replay, synthetic and manual sources already did. The socket is still the
+  venue's to close; the work is not.
 - `scripts/update-lockfiles.sh` no longer pipes `astral.sh/uv/install.sh` into a
   shell. That ran whatever was behind the URL at that moment, with the
   privileges of everyone who regenerated a lockfile. uv is now installed by hand
