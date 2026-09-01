@@ -116,11 +116,22 @@ cmake --build examples/c/build --config Release
 ctest --test-dir examples/c/build -C Release --output-on-failure
 ```
 
-Five tests, three of them C++: `terminal` drives the API, `golden_cpp` replays
-the shared corpus through it, and `lifetime` checks the ownership rules — that
-copying is rejected at compile time, that a moved-from terminal is empty and
-throws, that 500 failed commands leave the terminal usable, and that a failure
-carries the ABI's message rather than a placeholder.
+Seven tests, four of them C++: `terminal` drives the API, `golden_cpp` replays
+the shared corpus through it, `streaming_test_cpp` checks that streaming a feed
+and re-folding it in one batch reach byte-identical frames, and `lifetime`
+checks the ownership rules — that copying is rejected at compile time, that a
+moved-from terminal is empty and throws, that 500 failed commands leave the
+terminal usable, and that a failure carries the ABI's message rather than a
+placeholder.
+
+They live under `examples/c/` rather than beside this README, and that is
+deliberate rather than an accident of history. The C++ surface is a header
+inside the C binding — `bindings/c/include/wickra_terminal.hpp` — so its tests
+link the same library the C tests link, and one CMake project builds both. That
+is also what the repository blueprint prescribes: *`examples/c/CMakeLists.txt`
+builds the C and the C++ variants*. Compiling them the way a consumer compiles
+them is the point; a second project for four files would trade that for a tidier
+directory listing.
 
 ## The command protocol
 

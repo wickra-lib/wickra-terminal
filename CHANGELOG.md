@@ -204,6 +204,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `registry_drive` fuzz target found it in under a minute. The ceiling is a
   million -- a million one-minute bars is two years -- and the refusal names the
   indicator and the number.
+- A streaming-versus-re-fold equivalence test in every binding: Python, Node,
+  WASM, Go, Java, C#, R, C and C++. The terminal reaches a state two ways --
+  streaming folds one event per tick as it arrives, `Seek` throws the state away
+  and re-folds the whole prefix in one batch -- and ARCHITECTURE.md calls that
+  re-fold the moat. The Rust suite proved the core re-folds correctly; nothing
+  proved each binding carries the same bytes out, which is what these check, by
+  string equality on the compact command output rather than a per-language JSON
+  comparison. Each carries a second assertion that the frames compared are not
+  empty ones: two empty frames are also byte-identical.
 - Every command the boundary carries is now reachable from both renderers.
   `AddIndicator`, `RemoveIndicator`, `SetTimeframe`, `ListIndicators` and `Seek`
   were bound to nothing in either front-end, so the registry could only be
