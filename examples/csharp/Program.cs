@@ -2,7 +2,21 @@
 //
 //   cargo build --release -p wickra-terminal-c
 //   dotnet run --project examples/csharp
+//
+// A second scenario, the time-machine, is selected by argument:
+//
+//   dotnet run --project examples/csharp -- time-machine
+//
+// One project rather than a directory per example: the csproj carries forty
+// lines of native-library plumbing, and a copy of it per scenario is a copy
+// that goes stale.
 using WickraTerminal;
+
+if (args.Length > 0 && args[0] == "time-machine")
+{
+    TimeMachine.Run();
+    return;
+}
 
 const string config =
     "{\"sources\":[{\"Synth\":{\"seed\":1}}]," +

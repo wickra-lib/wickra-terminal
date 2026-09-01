@@ -204,6 +204,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `registry_drive` fuzz target found it in under a minute. The ceiling is a
   million -- a million one-minute bars is two years -- and the refusal names the
   indicator and the number.
+- A second scenario in every language's examples: `time_machine` plays a
+  recorded feed to its end, rewinds to the second trade and shows the frame the
+  forward pass had at that point. One scenario per language showed how to open a
+  terminal and read a frame; it could not show the capability the repository is
+  named around, and a reader could not guess it.
+- `examples/wasm/`, which did not exist. Every other reach had an example and
+  the browser had only the full Vue renderer -- which is the product rather than
+  the shape. One HTML file, no build tool, the same three calls.
 - Historical backfill. A fresh subscription fetches bars from the venue and
   seeds the chart, the price history and every bar-derived indicator with them.
   Without it every bar came from ticks the terminal saw itself, so `Atr(14)` on

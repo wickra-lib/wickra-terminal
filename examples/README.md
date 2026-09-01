@@ -1,20 +1,39 @@
 # Examples
 
-One runnable example per language. Each opens a deterministic `Synth` source,
-subscribes `BTC/USDT`, ticks the terminal a few times and prints a frame of
-view-models — the same protocol the TUI and Web renderers drive.
+Two scenarios, in every language.
 
-| Language | Path | Run |
-|----------|------|-----|
-| Rust | [`rust/`](rust/) | `cargo run -p wickra-terminal-example` |
-| C | [`c/synth.c`](c/synth.c) | see the C/C++ block below |
-| C++ | [`c/terminal.cpp`](c/terminal.cpp) | see the C/C++ block below |
-| Python | [`python/synth_terminal.py`](python/synth_terminal.py) | `python examples/python/synth_terminal.py` |
-| Node.js | [`node/synth_terminal.js`](node/synth_terminal.js) | `node examples/node/synth_terminal.js` |
-| Go | [`go/synth_terminal.go`](go/synth_terminal.go) | `cd examples/go && go run .` |
-| C# | [`csharp/Program.cs`](csharp/Program.cs) | `dotnet run --project examples/csharp` |
-| Java | [`java/SynthTerminal.java`](java/SynthTerminal.java) | see the Java block below |
-| R | [`r/synth_terminal.R`](r/synth_terminal.R) | `Rscript examples/r/synth_terminal.R` |
+**`synth`** opens a deterministic `Synth` source, subscribes `BTC/USDT`, ticks
+the terminal a few times and prints a frame of view-models — the shortest
+program that drives the core.
+
+**`time_machine`** plays a recorded feed to its end, rewinds to the second
+trade, and shows the frame the forward pass had at that point. `Seek` throws the
+folded state away and rebuilds it from the recording, so a rewind is
+deterministic rather than approximate — which is what makes a recording more
+than a slow synthetic feed, and it is the one capability a reader cannot guess
+from the first scenario.
+
+Neither is language-specific. Both are the same JSON commands over the same
+three calls; what differs between the files is only how each language spells
+them.
+
+| Language | `synth` | `time_machine` |
+|----------|---------|----------------|
+| Rust | `cargo run -p wickra-terminal-example --bin synth` | `cargo run -p wickra-terminal-example --bin time_machine` |
+| C | [`c/synth.c`](c/synth.c) | [`c/time_machine.c`](c/time_machine.c) |
+| C++ | [`c/terminal.cpp`](c/terminal.cpp) | (the C example, through the same ABI) |
+| Python | `python examples/python/synth_terminal.py` | `python examples/python/time_machine.py` |
+| Node.js | `node examples/node/synth_terminal.js` | `node examples/node/time_machine.js` |
+| WASM | [`wasm/`](wasm/) | (the same page — press *Rewind*) |
+| Go | `cd examples/go && go run .` | `cd examples/go && go run . time-machine` |
+| C# | `dotnet run --project examples/csharp` | `dotnet run --project examples/csharp -- time-machine` |
+| Java | [`java/SynthTerminal.java`](java/SynthTerminal.java) | [`java/TimeMachine.java`](java/TimeMachine.java) |
+| R | `Rscript examples/r/synth_terminal.R` | `Rscript examples/r/time_machine.R` |
+
+Go and C# select the scenario with an argument rather than putting it in a
+directory of its own. Go allows one `main` per package, and the C# project file
+carries forty lines of native-library plumbing that would go stale in a second
+copy — one program with two scenarios is the honest shape for both.
 
 ## Building the native library
 

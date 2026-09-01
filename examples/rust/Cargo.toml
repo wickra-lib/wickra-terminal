@@ -14,6 +14,10 @@ workspace = true
 name = "synth"
 path = "src/main.rs"
 
+[[bin]]
+name = "time_machine"
+path = "src/bin/time_machine.rs"
+
 # The no-boundary baseline for the nine per-binding throughput benchmarks.
 [[bin]]
 name = "throughput"

@@ -3,10 +3,16 @@
 //	cargo build --release -p wickra-terminal-c
 //	# stage the library under bindings/go/lib/<goos>_<goarch>/ (CI does this)
 //	cd examples/go && go run .
+//
+// A second scenario, the time-machine, lives in time_machine.go and is selected
+// by argument: `go run . time-machine`. One program rather than a directory per
+// example, because Go allows one main per package and a second directory would
+// mean a second module path for two files that share every line of setup.
 package main
 
 import (
 	"fmt"
+	"os"
 
 	wickra "github.com/wickra-lib/wickra-terminal-go"
 )
@@ -15,6 +21,10 @@ const config = `{"sources":[{"Synth":{"seed":1}}],` +
 	`"layout":{"panels":[{"kind":"Chart","rect":{"x":0,"y":0,"w":100,"h":100}}]}}`
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "time-machine" {
+		timeMachine()
+		return
+	}
 	term, err := wickra.New(config)
 	if err != nil {
 		panic(err)

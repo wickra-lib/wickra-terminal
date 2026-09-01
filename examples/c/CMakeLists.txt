@@ -48,6 +48,12 @@ add_executable(golden_cpp golden.cpp)
 target_include_directories(golden_cpp PRIVATE "${WICKRA_TERMINAL_INCLUDE}")
 target_link_libraries(golden_cpp PRIVATE "${WICKRA_TERMINAL_LIB}")
 
+# The time-machine, as a runnable example rather than a test: rewind a recorded
+# feed and watch the state re-fold.
+add_executable(time_machine time_machine.c)
+target_include_directories(time_machine PRIVATE "${WICKRA_TERMINAL_INCLUDE}")
+target_link_libraries(time_machine PRIVATE "${WICKRA_TERMINAL_LIB}")
+
 # Streaming and a batch re-fold must reach the same frame -- the equivalence the
 # eight language suites each check for their own reach, checked here for the hub
 # they all route through.
@@ -74,7 +80,7 @@ target_link_libraries(lifetime PRIVATE "${WICKRA_TERMINAL_LIB}")
 # via the linker's embedded path, so this is Windows-only.)
 if(WIN32)
     foreach(example synth terminal golden golden_cpp lifetime streaming_test
-                    streaming_test_cpp)
+                    streaming_test_cpp time_machine)
         add_custom_command(TARGET ${example} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${WICKRA_TERMINAL_LIB_DIR}/wickra_terminal.dll"
@@ -93,6 +99,7 @@ add_test(NAME golden_cpp COMMAND golden_cpp WORKING_DIRECTORY "${CMAKE_CURRENT_S
 add_test(NAME lifetime COMMAND lifetime)
 add_test(NAME streaming_test COMMAND streaming_test)
 add_test(NAME streaming_test_cpp COMMAND streaming_test_cpp)
+add_test(NAME time_machine COMMAND time_machine)
 # A missing runtime dependency must fail fast, never block the runner for hours.
 set_tests_properties(synth terminal golden golden_cpp lifetime streaming_test
-                     streaming_test_cpp PROPERTIES TIMEOUT 60)
+                     streaming_test_cpp time_machine PROPERTIES TIMEOUT 60)
