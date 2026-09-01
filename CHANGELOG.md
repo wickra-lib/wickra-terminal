@@ -91,6 +91,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   performance regression, documentation, question) and a long-form pull-request
   template for changes that touch the core contract, several bindings at once or
   the release pipeline.
+- `actionlint.yml`: the workflow files are now checked for whether they work at
+  all -- unknown contexts, invalid `needs`, dead matrix keys -- and, through the
+  bundled shellcheck, so is the shell inside every `run:` block. zizmor reads
+  the same files for security; nothing read them for correctness.
+- `codspeed.yml`: instruction counts on every pull request, so a performance
+  regression is reported when it lands rather than found weeks later by someone
+  re-measuring by hand.
+- `.github/codeql/codeql-config.yml`, and CodeQL now analyses Go, C/C++, C# and
+  Java as well -- the four bindings that hold a native handle or hand a pointer
+  to C, and so the only four where a memory mistake is possible at all. All four
+  are compiled rather than read as source, because without a build no call
+  resolves and the analysis is reported as low quality.
+- An `osv-scanner` step in the supply-chain job. `osv-scanner.toml` recorded
+  advisories assessed as not affecting this project and no workflow ever read
+  it; cargo-deny covers the Rust graph only, and npm, PyPI, Maven, NuGet, Go and
+  R had no vulnerability scanning at all.
+- A `semver` job holding the two published crates to their public surface. It
+  probes the crates.io index first: with no release yet there is no baseline, so
+  it says so and passes, and becomes a real gate with the first publish.
+- A dependabot entry for `/fuzz`. The fuzz targets are their own cargo
+  workspace, so the root entry never reached `fuzz/Cargo.lock`.
+- `timeout-minutes` on every job of `codeql`, `links`, `scorecard`,
+  `sync-metadata` and `zizmor`, which were unbounded and could hang for
+  GitHub's six-hour default.
 
 ### Changed
 
@@ -104,6 +128,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README section headings follow the fixed order the repository blueprint sets:
   `## Performance` is now `## Benchmarks`, and `## Building from source` is now
   `## Building everything from source`.
+- `ci.yml` builds pull requests against `main` only. It had no branch filter, so
+  a pull request against any branch started the full matrix.
+- `criterion` in `wickra-terminal-bench` resolves to `codspeed-criterion-compat`.
+  Outside a CodSpeed runner it behaves exactly as criterion does; inside one it
+  is the difference between the benches reporting and running silently.
 
 - `wickra-core` tracked from `1`; the `wickra-exchange` git dependencies are
   pinned to an explicit `rev`.
