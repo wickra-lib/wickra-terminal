@@ -37,8 +37,8 @@ const MAX_TICKS: usize = 64;
 /// Read a `f64` from four bytes, spread across the range that actually finds
 /// bugs: small integers (the periods every constructor validates), zero,
 /// negatives, and the occasional extreme.
-fn param_from(bytes: &[u8]) -> f64 {
-    let raw = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+fn param_from(bytes: &[u8; 4]) -> f64 {
+    let raw = u32::from_le_bytes(*bytes);
     match raw % 8 {
         0 => 0.0,
         1 => -(f64::from(raw % 512)),
@@ -156,7 +156,13 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
     let selector = usize::from(u16::from_le_bytes([data[0], data[1]]));
-    let params: Vec<f64> = data[2..].chunks_exact(4).take(4).map(param_from).collect();
+    let params: Vec<f64> = data[2..]
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .take(4)
+        .map(param_from)
+        .collect();
     let stream = &data[2 + params.len() * 4..];
     if stream.is_empty() {
         return;
