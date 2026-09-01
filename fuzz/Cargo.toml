@@ -10,6 +10,10 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 serde_json = "1"
+# The registry target builds the tick it feeds -- candles, prints, books,
+# breadth, derivatives -- out of wickra-core's own types, which is what the
+# indicators consume. The version follows the workspace's.
+wickra-core = "1"
 # The core without the `live` feature: no native networking, so the fuzz build
 # stays lean and no target ever opens a socket.
 wickra-terminal-core = { path = "../crates/wickra-terminal-core", default-features = false }
@@ -42,6 +46,13 @@ bench = false
 [[bin]]
 name = "config_parse"
 path = "fuzz_targets/config_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "registry_drive"
+path = "fuzz_targets/registry_drive.rs"
 test = false
 doc = false
 bench = false

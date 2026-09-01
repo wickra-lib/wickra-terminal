@@ -298,6 +298,39 @@ jobs:
         working-directory: bindings/node
         run: npx napi artifacts --output-dir artifacts
 
+      # Every manifest declares `MIT OR Apache-2.0`, but an SPDX expression is a
+      # reference to two documents, not the documents -- a package shipping the
+      # expression alone leaves whoever received it with terms to go and find.
+      # npm is happy to pack a file that appeared moments beforehand, so the
+      # copies are staged here rather than committed; `files` in each manifest
+      # names them, without which npm drops them again without a word. The pack
+      # dry-run is what proves both halves held.
+      - name: Stage the licence texts and prove they will be packed
+        working-directory: bindings/node
+        run: |
+          set -euo pipefail
+          for dir in . npm/*/; do
+            cp ../../LICENSE-MIT ../../LICENSE-APACHE "$dir/"
+          done
+          for dir in . npm/*/; do
+            # The ${...} below are JavaScript template literals inside a
+            # single-quoted node script, not shell expansions.
+            # shellcheck disable=SC2016
+            ( cd "$dir" && npm pack --dry-run --json ) | node -e '
+              const chunks = [];
+              process.stdin.on("data", c => chunks.push(c));
+              process.stdin.on("end", () => {
+                const pkg = JSON.parse(chunks.join(""))[0];
+                const names = pkg.files.map(f => f.path);
+                const missing = ["LICENSE-MIT", "LICENSE-APACHE"].filter(n => !names.includes(n));
+                if (missing.length) {
+                  console.error(`::error::${pkg.name} would publish without ${missing.join(" and ")}`);
+                  process.exit(1);
+                }
+                console.log(`${pkg.name}: licence texts present`);
+              });'
+          done
+
       - name: Publish platform packages (idempotent)
         working-directory: bindings/node
         env:
@@ -730,6 +763,20 @@ jobs:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: mvn -B -f bindings/java -Prelease deploy -DskipTests
 
+      # The jar Maven Central just received is uploaded as a build artifact so
+      # github-release can attach that exact file. Without it the release page
+      # carries an artefact for every package except Java, and the provenance
+      # subject below would have nothing to attest.
+      - name: Upload the jar for the release page
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: java-jar
+          path: |
+            bindings/java/target/*.jar
+            !bindings/java/target/*-sources.jar
+            !bindings/java/target/*-javadoc.jar
+          if-no-files-found: error
+
   # Mirror the in-repo Go module to the standalone wickra-terminal-go repository
   # so `go get github.com/wickra-lib/wickra-terminal-go` builds with no extra
   # steps. The mirror commits the prebuilt libraries per platform under
@@ -812,6 +859,60 @@ jobs:
             mkdir -p "$out/lib/$dir"; cp "$src" "$out/lib/$dir/"
           done
           echo "assembled module:"; find "$out" -type f | sort
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "stable"
+          cache: false
+
+      # Nothing here ever compiled the module it publishes. The tree is
+      # assembled by copying files and rewriting an import path with sed, and was
+      # pushed to pkg.go.dev on that basis alone -- a wrong header, a missing
+      # library or a botched sed would have surfaced on a user's machine. Build
+      # it, and run it, before it leaves.
+      - name: Verify the assembled module builds and runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd wickra-terminal-go-module
+          cat > smoke_main_test.go <<'GO'
+          package wickraterminal
+
+          import (
+            "strings"
+            "testing"
+          )
+
+          // Links against the staged linux_amd64 library and drives the whole
+          // surface: construct, subscribe, tick, read a frame, destroy.
+          // Compiling proves the header and the cgo directives; running proves
+          // the library is actually loadable.
+          func TestAssembledModuleSmoke(t *testing.T) {
+            term, err := New(`{"sources":[{"Synth":{"seed":1}}],"layout":{"panels":[{"kind":"Chart","rect":{"x":0,"y":0,"w":100,"h":100}}]}}`)
+            if err != nil {
+              t.Fatalf("New: %v", err)
+            }
+            defer term.Close()
+            if _, err := term.Command(`{"type":"Subscribe","source":0,"symbol":"BTC/USDT"}`); err != nil {
+              t.Fatalf("Subscribe: %v", err)
+            }
+            frame, err := term.Command(`{"type":"Tick"}`)
+            if err != nil {
+              t.Fatalf("Tick: %v", err)
+            }
+            if !strings.Contains(frame, `"panel":"chart"`) {
+              t.Fatalf("no chart panel in frame: %s", frame)
+            }
+            if Version() == "" {
+              t.Fatal("empty version")
+            }
+          }
+          GO
+          go vet ./...
+          go test -run TestAssembledModuleSmoke -v ./...
+          rm smoke_main_test.go
+          echo "module builds, links and runs"
+
       - name: Push to wickra-terminal-go and tag the release
         shell: bash
         env:
@@ -917,6 +1018,7 @@ jobs:
           find artifacts -type f -name "*.crate" -exec cp {} release-assets/ \;
           find artifacts -type f -name "*.cdx.json" -exec cp {} release-assets/ \;
           find artifacts -type f -name "*.nupkg" -exec cp {} release-assets/ \;
+          find artifacts -type f -name "*.jar" -exec cp {} release-assets/ \;
           ls -lh release-assets/
           # find rather than ls: a filename with a newline in it would make ls
           # miscount, and the number is what tells a reader whether every
@@ -984,6 +1086,8 @@ jobs:
       - python-sdist
       - tui-binaries
       - c-abi-build
+      - csharp-publish
+      - java-publish
       - github-release
     runs-on: ubuntu-latest
     permissions:
@@ -1012,6 +1116,21 @@ jobs:
         with:
           pattern: c-abi-*
           path: artifacts/c-abi
+      # The npm packages carry their own provenance via `npm publish
+      # --provenance`, and the crates, wheels, TUI binaries and C ABI archives
+      # are attested below. The .nupkg and the .jar had neither: two published
+      # artefacts with no attestation at all, while the README badge claims
+      # provenance for the release as a whole.
+      - name: Download the NuGet package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nuget-package
+          path: artifacts/nuget
+      - name: Download the jar
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: java-jar
+          path: artifacts/java
       - name: Attest build provenance
         id: attest
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -1022,6 +1141,8 @@ jobs:
             artifacts/python/*.tar.gz
             artifacts/tui/**/*
             artifacts/c-abi/**/*.tar.gz
+            artifacts/nuget/*.nupkg
+            artifacts/java/*.jar
       - name: Attach provenance bundle to the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

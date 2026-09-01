@@ -124,6 +124,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   long description of a published package, so a link that leaves the package
   resolves on GitHub and nowhere else, and nothing else in the build would say
   so, because the file it points at does exist.
+- `scripts/check_license_copies.py`, wired into CI, and the copies it demands:
+  `LICENSE-MIT` and `LICENSE-APACHE` inside `wickra-terminal-core`, `ui-tui` and
+  `bindings/python`. Every manifest declared `MIT OR Apache-2.0`, but an SPDX
+  expression is a reference to two documents rather than the documents, so each
+  published package left whoever received it with terms to go and find. Cargo
+  decides what to package from git, so the copies have to be committed --
+  and committed copies drift, which is what the check watches.
+- The npm packages stage the same two texts at publish time and name them in
+  `files`. Both halves are needed: npm silently drops a file its `files` list
+  does not mention, and the pack dry-run in `release.yml` now proves each of the
+  seven packages would carry them.
+- A CI check that the committed napi loader still matches what napi generates.
+  `bindings/node/index.js` and `index.d.ts` are generated and committed so
+  consumers need no toolchain, and nothing compared the two -- napi rewrites
+  them only when somebody rebuilds, and a rebuild is not part of committing.
+- `java-publish` uploads the jar it just deployed, so the release page carries a
+  Java artefact like every other language, and provenance has it to attest.
+- `go-mirror` builds and runs the module before pushing it. The tree is
+  assembled by copying files and rewriting an import path, and was published to
+  pkg.go.dev on that basis alone -- a wrong header, a missing library or a
+  botched rewrite would have surfaced on a user's machine. A smoke test now
+  constructs a terminal, subscribes, ticks and reads a frame against the staged
+  Linux library.
+- Build provenance covers the `.nupkg` and the `.jar`. Both were published with
+  no attestation while the README badge claimed provenance for the release.
+- `[package.metadata.docs.rs] all-features = true` on `ui-tui`, so the setting is
+  uniform across everything this workspace publishes.
 
 ### Changed
 
@@ -162,6 +189,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An indicator period is bounded, so an absurd one is refused rather than
+  allocated. A period is a length and the indicator allocates it: a parameter of
+  10^20 cast cleanly to `usize`, the indicator asked for a `Vec` that size, and
+  the process aborted on a capacity overflow no caller can catch. The new
+  `registry_drive` fuzz target found it in under a minute. The ceiling is a
+  million -- a million one-minute bars is two years -- and the refusal names the
+  indicator and the number.
+
 - The seven shell problems actionlint found on its first run, each real. Three
   publish steps used `A && B || C`, where C also runs when A succeeded and B
   failed -- so a publish that worked could report itself as an
@@ -192,5 +227,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   privileges of everyone who regenerated a lockfile. uv is now installed by hand
   or, with `WICKRA_BOOTSTRAP_UV=1`, fetched as one pinned release archive that is
   refused unless its checksum matches.
+- `osv-scanner.toml` records the pytest tmpdir advisory (GHSA-6w46-j5rx-g56g)
+  with its assessment. pytest is a CI-only dependency that never reaches a
+  published wheel, and the flaw needs a second local user on the machine, which
+  an ephemeral single-user runner does not have. It cannot simply be upgraded:
+  pytest 9 requires Python >= 3.10 while the 3.9 row exists to test the abi3
+  floor, so only that row stays at 8.4.2. Written here rather than left as prose
+  in the requirements file, because this file is now actually read.
 
 [Unreleased]: https://github.com/wickra-lib/wickra-terminal/commits/main

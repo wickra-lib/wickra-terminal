@@ -30,3 +30,25 @@
 id = "RUSTSEC-2026-0235"
 reason = "rkyv is a lockfile-only entry behind an optional rust_decimal feature this workspace does not enable; it is never compiled."
 
+
+# pytest tmpdir handling (CVSS 6.8, fixed in pytest 9.0.3) -- pytest through
+# 9.0.2 on UNIX uses predictable /tmp/pytest-of-{user} directories, which a
+# *second local user on the same machine* can abuse for denial of service or
+# possibly privilege escalation. Two reasons that does not apply here. pytest is
+# a test dependency: it is in .github/requirements/, never in a published wheel,
+# so no user of the terminal ever runs it. And it runs only on GitHub-hosted
+# runners, each a fresh single-user VM with no second local user to exploit it.
+#
+# It cannot simply be upgraded either: pytest 9 requires Python >= 3.10, while
+# ci-dev-py39.txt exists to test the Python 3.9 row of the matrix -- 3.9 being
+# the abi3 floor the wheel is built against. ci-dev-py3.txt already carries
+# 9.1.1; only the 3.9 row is pinned back. Removing the exposure means dropping
+# Python 3.9, which is a decision about who can install the terminal rather than
+# about this advisory. It resolves itself when 3.9 goes.
+#
+# Recorded here rather than left implicit in the requirements comment: this file
+# is now actually read -- ci.yml runs osv-scanner against it -- so an assessment
+# written down here is one the scan consults, instead of prose nothing consumes.
+[[IgnoredVulns]]
+id = "GHSA-6w46-j5rx-g56g"
+reason = "pytest is a CI-only test dependency, never shipped; the flaw needs a second local user, which a single-user ephemeral runner does not have. Pinned at 8.4.2 in the 3.9 row because pytest 9 requires Python >= 3.10."

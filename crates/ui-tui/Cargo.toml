@@ -18,6 +18,15 @@ documentation = "https://terminal.wickra.org"
 keywords.workspace = true
 categories.workspace = true
 
+# docs.rs builds every published crate, bin-only ones included, and it renders
+# default features unless told otherwise. This crate has no features today, so
+# the block changes nothing about the page -- it is here so the setting is
+# uniform across everything this workspace publishes, and so a feature added
+# later is documented from the first release that carries it rather than from
+# whichever one somebody notices.
+[package.metadata.docs.rs]
+all-features = true
+
 [lints]
 workspace = true
 
