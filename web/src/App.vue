@@ -16,6 +16,7 @@ import type {
 import { placementsFor, readLayout } from './layout'
 import { binWidth, peakOf } from './profile'
 import { parseIndicator } from './indicator'
+import { actionFor, isTyping, readKeybinds, type Keybinds } from './keybinds'
 import { drawChart } from './render/chart'
 import { openBinanceFeed } from './binance'
 
@@ -44,6 +45,9 @@ function defaultConfig(seed: number): string {
 
 const seed = ref(1)
 const symbol = ref('BTC/USDT')
+// Which market the keyboard acts on. The core owns focus; this mirrors it so a
+// key can move it without a round trip to ask where it is.
+const focusedSymbol = ref('BTC/USDT')
 const frame = ref<Frame>({ panels: [] })
 const chartCanvas = ref<HTMLCanvasElement | null>(null)
 
@@ -63,6 +67,15 @@ const catalogue = ref<string[]>([])
 const timeframe = ref('1m')
 const replayCursor = ref(0)
 const replayLength = ref(0)
+
+// The keymap the config declares. It exists so both renderers share one, and
+// until now only the TUI read it -- so rebinding a key moved half the product.
+const keybinds = ref<Keybinds>({})
+const indicatorField = ref<HTMLInputElement | null>(null)
+const symbolField = ref<HTMLInputElement | null>(null)
+const sourceField = ref<HTMLInputElement | null>(null)
+const timeframeField = ref<HTMLInputElement | null>(null)
+const catalogueField = ref<HTMLInputElement | null>(null)
 
 let terminal: Terminal | null = null
 let timer: number | undefined
@@ -260,6 +273,94 @@ function refreshReplayPosition(): void {
   }
 }
 
+/** Move focus to the next or previous watched market. */
+function cycleSymbol(forward: boolean): void {
+  const rows = watchlist.value?.rows ?? []
+  if (rows.length === 0) {
+    status.value = 'nothing subscribed to focus'
+    return
+  }
+  const at = rows.findIndex((row) => row.symbol === focusedSymbol.value)
+  const next = (((at < 0 ? 0 : at) + (forward ? 1 : -1)) % rows.length + rows.length) % rows.length
+  const row = rows[next]
+  if (send({ type: 'SetFocus', source: row.source, symbol: row.symbol })) {
+    focusedSymbol.value = row.symbol
+    status.value = `focus ${row.symbol}`
+  }
+}
+
+/**
+ * Apply the action a key was bound to.
+ *
+ * The actions that open a prompt in the TUI focus the matching field here --
+ * the same intent in the idiom each front-end has. `quit` is deliberately
+ * unhandled: a browser tab is not the terminal's to close, and a page that
+ * tried would be asking the user to confirm a dialog it had no business
+ * raising.
+ */
+function runAction(action: string): boolean {
+  switch (action) {
+    case 'next_symbol':
+      cycleSymbol(true)
+      return true
+    case 'prev_symbol':
+      cycleSymbol(false)
+      return true
+    case 'seek_back':
+      seekBy(-1)
+      return true
+    case 'seek_forward':
+      seekBy(1)
+      return true
+    case 'list_indicators':
+      catalogueField.value?.focus()
+      return true
+    case 'add_indicator':
+      indicatorField.value?.focus()
+      return true
+    case 'remove_indicator': {
+      const first = chart.value?.indicators[0]
+      if (first) {
+        removeIndicator(first.name)
+      } else {
+        status.value = 'no indicator to remove'
+      }
+      return true
+    }
+    case 'set_timeframe':
+      timeframeField.value?.focus()
+      return true
+    case 'source_menu':
+      sourceField.value?.focus()
+      return true
+    case 'add_symbol':
+      symbolField.value?.focus()
+      return true
+    case 'remove_symbol': {
+      const row = (watchlist.value?.rows ?? []).find((r) => r.symbol === focusedSymbol.value)
+      if (row) {
+        unsubscribe(row.source, row.symbol)
+      }
+      return true
+    }
+    default:
+      // quit, the panel-focus pair and the scroll pair: a browser tab is not
+      // ours to close, and the panels are scrollable boxes the browser already
+      // drives. Reporting them as unhandled leaves the key to the browser.
+      return false
+  }
+}
+
+function onKeydown(event: KeyboardEvent): void {
+  if (isTyping(event.target)) {
+    return
+  }
+  const action = actionFor(event, keybinds.value)
+  if (action !== null && runAction(action)) {
+    event.preventDefault()
+  }
+}
+
 function findPanel<T extends PanelView['panel']>(
   name: T,
 ): Extract<PanelView, { panel: T }> | undefined {
@@ -309,6 +410,7 @@ function start(): void {
     localStorage.setItem(CONFIG_KEY, cfg)
   }
   layout.value = readLayout(cfg)
+  keybinds.value = readKeybinds(cfg)
   terminal = new Terminal(cfg)
   terminal.command(
     JSON.stringify({ type: 'Subscribe', source: 0, symbol: symbol.value }),
@@ -340,8 +442,14 @@ watch(frame, () => {
   }
 })
 
-onMounted(start)
-onBeforeUnmount(stop)
+onMounted(() => {
+  start()
+  window.addEventListener('keydown', onKeydown)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown)
+  stop()
+})
 </script>
 
 <template>
@@ -357,6 +465,7 @@ onBeforeUnmount(stop)
     <div class="bar controls">
       <label>add source
         <input
+          ref="sourceField"
           type="text"
           v-model="sourceShorthand"
           placeholder="synth:2 | live:binance:ETH/USDT | replay:[…]"
@@ -364,21 +473,26 @@ onBeforeUnmount(stop)
       </label>
       <button @click="addSource">add</button>
       <label>subscribe src <input type="number" v-model.number="subSource" min="0" /></label>
-      <input type="text" v-model="subSymbol" />
+      <input ref="symbolField" type="text" v-model="subSymbol" />
       <button @click="subscribe">go</button>
       <span class="muted">{{ status }}</span>
     </div>
 
     <div class="bar controls">
       <label>indicator
-        <input type="text" v-model="indicatorShorthand" placeholder="Sma 20 | Beta 20 vs ETH/USDT" />
+        <input
+          ref="indicatorField"
+          type="text"
+          v-model="indicatorShorthand"
+          placeholder="Sma 20 | Beta 20 vs ETH/USDT"
+        />
       </label>
       <button @click="addIndicator">add</button>
 
-      <label>timeframe <input type="text" v-model="timeframe" size="4" /></label>
+      <label>timeframe <input ref="timeframeField" type="text" v-model="timeframe" size="4" /></label>
       <button @click="applyTimeframe">set</button>
 
-      <label>catalogue <input type="text" v-model="catalogueFilter" placeholder="filter" /></label>
+      <label>catalogue <input ref="catalogueField" type="text" v-model="catalogueFilter" placeholder="filter" /></label>
       <button @click="searchCatalogue">search</button>
 
       <!-- The time-machine. Disabled rather than hidden when the focused source

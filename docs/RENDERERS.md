@@ -56,6 +56,27 @@ bar. The keymap is data, shared by both renderers, so a rebinding moves both.
 person at a keyboard. The web renderer uses `Feed` exactly that way, from its
 Binance bridge.
 
+## One keymap, both renderers
+
+`layout.keybinds` is a map from action name to key name, and it sits in the
+config precisely so that rebinding a key moves both front-ends. Only the TUI
+read it, so that was true of the config and false of the product; the web
+renderer reads the same map now.
+
+The key names are the TUI's, because the config is shared: `backtab` means
+Shift+Tab in both, even though crossterm reports it as a key of its own and the
+browser reports Tab with a modifier. A key held with Ctrl, Cmd or Alt is left to
+the browser — a terminal that stole Ctrl+R would be a worse citizen than one
+with fewer shortcuts — and so is any key pressed inside a text field, or typing
+a symbol would fire the bindings on its way past.
+
+Where the two renderers differ, they differ in idiom rather than in meaning: an
+action that opens a modal prompt in the TUI focuses the matching field in the
+browser. Three do nothing in a browser and say so rather than pretending:
+`quit`, because a tab is not the terminal's to close, and the panel-focus and
+scroll pairs, because a web panel is a scrollable box the browser already
+drives.
+
 ## The two reference renderers
 
 | Renderer | Where | How it maps a `PanelView` |

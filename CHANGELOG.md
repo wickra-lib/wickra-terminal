@@ -204,6 +204,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `registry_drive` fuzz target found it in under a minute. The ceiling is a
   million -- a million one-minute bars is two years -- and the refusal names the
   indicator and the number.
+- The web renderer reads the shared keymap. `layout.keybinds` sits in the config
+  expressly so both front-ends share one, and only the TUI ever read it -- so
+  rebinding a key moved half the product. Key names are the TUI's, a key held
+  with Ctrl, Cmd or Alt is left to the browser, and a key pressed inside a field
+  is left to the field. `quit` and the panel-focus and scroll pairs are
+  deliberately unhandled in a browser, which the docs now say rather than leave
+  to be discovered.
 - Panels carry a configurable depth. Book levels, tape prints, footprint levels,
   chart points and bars per stream were `const` in the code, so a config could
   set exactly one thing per panel -- its rectangle. A `PanelSpec` now takes an
