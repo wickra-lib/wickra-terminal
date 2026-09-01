@@ -48,9 +48,17 @@ jobs:
       # that as success so re-runs of the workflow do not fail.
       - name: Publish wickra-terminal-core (idempotent)
         run: |
-          out=$(cargo publish -p wickra-terminal-core --token "$CARGO_REGISTRY_TOKEN" 2>&1) && echo "$out" \
-            || (echo "$out" | grep -q "already uploaded\|already exists" && echo "skip: already published" \
-                || (echo "$out"; exit 1))
+          # if/else rather than `A && B || C`: in that idiom C also runs when
+          # A succeeded and B failed, so a publish that worked could still be
+          # reported as an already-published skip -- or, worse, exit 1.
+          if out=$(cargo publish -p wickra-terminal-core --token "$CARGO_REGISTRY_TOKEN" 2>&1); then
+            echo "$out"
+          elif echo "$out" | grep -q "already uploaded\|already exists"; then
+            echo "skip: already published"
+          else
+            echo "$out"
+            exit 1
+          fi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -59,9 +67,17 @@ jobs:
 
       - name: Publish wickra-terminal (idempotent)
         run: |
-          out=$(cargo publish -p wickra-terminal --token "$CARGO_REGISTRY_TOKEN" 2>&1) && echo "$out" \
-            || (echo "$out" | grep -q "already uploaded\|already exists" && echo "skip: already published" \
-                || (echo "$out"; exit 1))
+          # if/else rather than `A && B || C`: in that idiom C also runs when
+          # A succeeded and B failed, so a publish that worked could still be
+          # reported as an already-published skip -- or, worse, exit 1.
+          if out=$(cargo publish -p wickra-terminal --token "$CARGO_REGISTRY_TOKEN" 2>&1); then
+            echo "$out"
+          elif echo "$out" | grep -q "already uploaded\|already exists"; then
+            echo "skip: already published"
+          else
+            echo "$out"
+            exit 1
+          fi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -292,7 +308,11 @@ jobs:
           fail=0
           publish_dir() {
             local dir=$1
-            local pkg=$(basename "$dir")
+            # Declared and assigned separately: `local x=$(...)` makes local's
+            # own exit status the command's, so a failure here would be
+            # invisible and the package name silently empty.
+            local pkg
+            pkg=$(basename "$dir")
             local pkgname="wickra-terminal-$pkg"
             local existing
             existing=$(npm view "$pkgname@$version" version 2>/dev/null)
@@ -422,9 +442,17 @@ jobs:
       - name: Publish wickra-terminal-wasm to npm (idempotent)
         working-directory: bindings/wasm/pkg
         run: |
-          out=$(npm publish --access public --provenance 2>&1) && echo "$out" \
-            || (echo "$out" | grep -q "You cannot publish over" && echo "skip: version already on npm" \
-                || (echo "$out"; exit 1))
+          # if/else rather than `A && B || C`: in that idiom C also runs when
+          # A succeeded and B failed, so a publish that worked could still be
+          # reported as a skip -- or, worse, exit 1.
+          if out=$(npm publish --access public --provenance 2>&1); then
+            echo "$out"
+          elif echo "$out" | grep -q "You cannot publish over"; then
+            echo "skip: version already on npm"
+          else
+            echo "$out"
+            exit 1
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -890,7 +918,10 @@ jobs:
           find artifacts -type f -name "*.cdx.json" -exec cp {} release-assets/ \;
           find artifacts -type f -name "*.nupkg" -exec cp {} release-assets/ \;
           ls -lh release-assets/
-          echo "asset-count=$(ls release-assets/ | wc -l)"
+          # find rather than ls: a filename with a newline in it would make ls
+          # miscount, and the number is what tells a reader whether every
+          # language's artefact arrived.
+          echo "asset-count=$(find release-assets/ -type f | wc -l)"
       - name: Create / update the draft GitHub Release with assets
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:

@@ -144,7 +144,13 @@ jobs:
         # compiled against the binding's sources directly.
         run: |
           mkdir -p target/jbench
-          javac -d target/jbench $(find bindings/java/src/main/java -name '*.java') bindings/java/benchmarks/Throughput.java
+          # The source list goes through a file rather than an unquoted
+          # expansion: javac needs one argument per file, so quoting the
+          # substitution would pass a single argument holding all of them, and
+          # leaving it unquoted splits on any space in a path.
+          find bindings/java/src/main/java -name '*.java' > target/jbench/sources.txt
+          echo bindings/java/benchmarks/Throughput.java >> target/jbench/sources.txt
+          javac -d target/jbench "@target/jbench/sources.txt"
           java --enable-native-access=ALL-UNNAMED -cp target/jbench \
             -Dnative.lib.dir=target/release Throughput "$TICKS"
 

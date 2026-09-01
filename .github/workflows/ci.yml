@@ -732,7 +732,11 @@ jobs:
           export WKTERM_INC="${WKTERM_INC//\\//}"
           export WKTERM_LIB="${WKTERM_LIB//\\//}"
           if command -v cygpath >/dev/null 2>&1; then
-            export PATH="$(cygpath -u "$WKTERM_LIB"):$PATH"
+            # Assigned first, then exported: `export x=$(...)` masks the
+            # command's exit status behind export's own, so a cygpath failure
+            # would go unnoticed and leave the loader path silently wrong.
+            wkterm_lib_unix=$(cygpath -u "$WKTERM_LIB")
+            export PATH="$wkterm_lib_unix:$PATH"
           else
             export LD_LIBRARY_PATH="$WKTERM_LIB:$LD_LIBRARY_PATH"
             export DYLD_LIBRARY_PATH="$WKTERM_LIB:$DYLD_LIBRARY_PATH"

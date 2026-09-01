@@ -162,6 +162,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The seven shell problems actionlint found on its first run, each real. Three
+  publish steps used `A && B || C`, where C also runs when A succeeded and B
+  failed -- so a publish that worked could report itself as an
+  already-published skip, or exit 1. Two used `local x=$(...)` / `export
+  x=$(...)`, which make the assignment's exit status the builtin's and hide a
+  failed command behind an empty variable. One counted release assets with `ls
+  | wc -l`, and one passed an unquoted `find` expansion to `javac`.
+
 - The README's Python example used a command shape the deserialiser rejects and
   ticked without subscribing; the cookbook's TOML was not valid TOML; and
   `docs/SOURCES.md` fed a source that cannot be fed. All three are now executed
