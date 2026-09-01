@@ -7,6 +7,14 @@
       "series": [
         20000.0
       ],
+      "forming": {
+        "open": 20000.0,
+        "high": 20000.0,
+        "low": 20000.0,
+        "close": 20000.0,
+        "volume": 0.25,
+        "timestamp": 0
+      },
       "indicators": [
         {
           "name": "Sma(20)",

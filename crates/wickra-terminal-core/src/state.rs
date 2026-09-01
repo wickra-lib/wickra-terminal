@@ -816,6 +816,14 @@ impl ProfileSet {
 /// with the session rather than with the screen.
 const ALT_BARS_KEPT: usize = 256;
 
+/// How many closed bars a market keeps for the chart.
+///
+/// Bounded for the same reason everything else here is: a terminal left running
+/// overnight must not grow without limit. 256 one-minute bars is four hours,
+/// which is more than any renderer draws at once and enough for the widest
+/// window a chart panel asks for.
+const OHLC_HISTORY: usize = 256;
+
 /// One named alternative bar stream and the bars it has completed.
 struct BarEntry {
     label: String,
@@ -1046,6 +1054,13 @@ pub struct SymbolState {
     pub history: VecDeque<Decimal>,
     /// Aggregates the trade stream into the bars the candle indicators read.
     pub candles: CandleBuilder,
+    /// The closed bars the chart draws, oldest first.
+    ///
+    /// Kept because the builder does not: it holds the bar in progress and
+    /// hands each closed one to the indicators, which read it and keep only
+    /// their own state. Without this ring a renderer could draw the last price
+    /// and nothing else -- which is what every renderer here did.
+    ohlc: VecDeque<wc::Candle>,
     /// What this market contributes to a market-wide cross-section.
     breadth: BreadthState,
     /// The derivatives microstructure of this market, folded from host updates.
@@ -1075,6 +1090,7 @@ impl SymbolState {
             last: Decimal::ZERO,
             history: VecDeque::with_capacity(512),
             candles: CandleBuilder::new(timeframe),
+            ohlc: VecDeque::with_capacity(OHLC_HISTORY),
             breadth: BreadthState::new(),
             derivatives: DerivativesState::default(),
         })
@@ -1089,6 +1105,23 @@ impl SymbolState {
 }
 
 impl SymbolState {
+    /// The most recent closed bars, oldest first, at most `n` of them.
+    ///
+    /// Closed only: the bar in progress is [`forming`](Self::forming), because
+    /// it is the one that will still change and a renderer draws it
+    /// differently.
+    #[must_use]
+    pub fn ohlc(&self, n: usize) -> Vec<wc::Candle> {
+        let skip = self.ohlc.len().saturating_sub(n);
+        self.ohlc.iter().skip(skip).copied().collect()
+    }
+
+    /// The bar still accumulating, or `None` before this market's first trade.
+    #[must_use]
+    pub fn forming(&self) -> Option<wc::Candle> {
+        self.candles.partial()
+    }
+
     /// A bounded recent price series (oldest first) for the chart.
     #[must_use]
     pub fn series(&self, n: usize) -> Vec<f64> {
@@ -1243,6 +1276,10 @@ impl AppState {
                 // declining several times inside one bar.
                 if let Some(bar) = closed.as_ref() {
                     state.breadth.update(bar);
+                    if state.ohlc.len() == OHLC_HISTORY {
+                        state.ohlc.pop_front();
+                    }
+                    state.ohlc.push_back(*bar);
                 }
                 // The taker flow is this terminal's own: the aggressor side
                 // is on every print, and the derivatives feeds do not carry
@@ -1420,6 +1457,11 @@ impl AppState {
         for state in self.symbols.values_mut() {
             state.candles = CandleBuilder::new(timeframe);
             state.indicators = IndicatorSet::from_specs(&self.indicators)?;
+            // The kept bars go too. They are bars of the *old* size, and a chart
+            // that drew them beside the new ones would show one series measured
+            // two ways -- the same reason the indicator set is rebuilt rather
+            // than continued.
+            state.ohlc.clear();
         }
         Ok(())
     }

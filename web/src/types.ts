@@ -23,10 +23,31 @@ export interface IndicatorValue {
   series?: number[]
 }
 
+/** One OHLCV bar of the configured timeframe. Distinct from `AltBar`, which the
+ *  bars panel carries: an alternative bar has a direction and no time, because a
+ *  Renko brick advances on price movement rather than on the clock. */
+export interface OhlcBar {
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+  /** The bar's opening timestamp, ms since the Unix epoch. */
+  timestamp: number
+}
+
 export interface ChartView {
   symbol: string
   last: number
+  /** One point per trade, so finer than the bars and not waiting for a close. */
   series: number[]
+  /** Closed bars, oldest first. Absent from the JSON until the first one
+   *  closes, which at an hourly timeframe is the first hour of a session. */
+  bars?: OhlcBar[]
+  /** The bar still accumulating. Kept apart from `bars` because it is the one
+   *  that will still change; a chart that omitted it would show the market
+   *  frozen at the last close for a whole bar. */
+  forming?: OhlcBar
   indicators: IndicatorValue[]
 }
 

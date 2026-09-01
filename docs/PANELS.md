@@ -10,7 +10,7 @@ because each renderer is only a mapping from `PanelView` to its own widget.
 
 | Kind | View-model | Shows |
 |------|------------|-------|
-| `Chart` | `ChartView` | a recent price series and the configured indicator overlays for the focused market |
+| `Chart` | `ChartView` | the bars of the configured timeframe, a tick-resolution price series, and the indicator readings for the focused market |
 | `Book` | `BookView` | the top of the L2 order book (bids and asks) and the spread |
 | `Tape` | `TapeView` | the most recent trade prints, coloured by aggressor side |
 | `Footprint` | `FootprintView` | per-price buy and sell volume (a volume profile) |
@@ -25,11 +25,35 @@ plain, language-neutral JSON document.
 This is the surface a binding consumer actually reads, so it is worth stating
 rather than leaving to be discovered from a sample frame.
 
-**`chart`** — `symbol`, `last`, `series` (up to 120 recent prices, oldest first),
-and `indicators`. Each indicator carries its `name` (the label from its spec,
+**`chart`** — `symbol`, `last`, `bars`, `forming`, `series` and `indicators`.
+
+`bars` is up to 120 closed bars of the configured timeframe, oldest first, each
+an `open`, `high`, `low`, `close`, `volume` and the bar's opening `timestamp`.
+It is omitted from the JSON until the first bar closes, which at an hourly
+timeframe is the first hour of a session.
+
+`forming` is the bar still accumulating, in the same shape. It is kept apart
+from `bars` rather than appended, because it is the one bar that will still
+change: an indicator never sees it — a reading that repainted as its bar filled
+would be a different number on every print — but a chart that omitted it would
+show the market frozen at the last close for a whole bar.
+
+`series` is up to 120 recent prices, oldest first, one point per trade. It is
+the finer of the two and does not wait for a bar to close, which is what makes
+it the right thing to draw before any bar has.
+
+Each entry in `indicators` carries its `name` (the label from its spec,
 `Sma(20)`), its primary `value` (`null` while warming up), an optional `fields`
 list for the multi-output ones, and an optional `series` of its own. See
 [INDICATORS.md](INDICATORS.md).
+
+> Both reference renderers draw the candles and report the indicators as
+> numbers, rather than drawing indicator lines over the candles. An indicator's
+> `series` is sampled once per tick and the bars are one per bar, so the two do
+> not share an x-axis; an average drawn on the candle axis would sit near, but
+> not on, the bar it was computed from. Overlays are drawn only in the
+> before-the-first-bar fallback, where the price series and the indicator series
+> do share an axis.
 
 **`book`** — `symbol`, `bids` and `asks` (up to 12 levels each, best first, every
 level a `price` and a `quantity`), and `spread` (`null` until both sides have a
@@ -88,7 +112,7 @@ renders exactly as fast as one that just started:
 
 | Panel | Bound | Where |
 |-------|-------|-------|
-| `chart` | 120 price points, 120 points per indicator | `SymbolState::history`, `IndicatorSet` |
+| `chart` | 120 bars of 256 kept, 120 price points, 120 points per indicator | `OHLC_HISTORY`, `SymbolState::history`, `IndicatorSet` |
 | `book` | 12 levels a side | `DEFAULT_DEPTH` |
 | `tape` | 24 rendered of 256 kept | `TapeRing` |
 | `footprint` | 12 levels | `DEFAULT_DEPTH` |

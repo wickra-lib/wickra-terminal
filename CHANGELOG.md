@@ -151,6 +151,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no attestation while the README badge claimed provenance for the release.
 - `[package.metadata.docs.rs] all-features = true` on `ui-tui`, so the setting is
   uniform across everything this workspace publishes.
+- The chart view-model carries the bars. `ChartView` gains `bars` -- up to 120
+  closed OHLCV bars of the configured timeframe -- and `forming`, the bar still
+  accumulating. Both are omitted from the JSON while empty, so a consumer
+  written against the earlier shape sees exactly the object it saw before. The
+  state keeps a bounded ring of 256 closed bars, which the candle builder did
+  not: it held the bar in progress and handed each closed one to the indicators,
+  which read it and kept only their own state, so a renderer could draw the last
+  price and nothing else.
 
 ### Changed
 
@@ -196,6 +204,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `registry_drive` fuzz target found it in under a minute. The ceiling is a
   million -- a million one-minute bars is two years -- and the refusal names the
   indicator and the number.
+- Both renderers draw candles. The TUI chart was two lines -- a sparkline of
+  eight block glyphs and a row of indicator text -- on the panel that occupies
+  seventy percent of the default layout: no axis, no price scale, no bar
+  structure. It now draws the bars on a braille canvas with a price scale beside
+  them, and the web canvas draws the same bars. Both fall back to the tick
+  series until the first bar closes, which at an hourly timeframe is the first
+  hour of a session.
+
+  Indicators stay a numeric readout rather than lines over the candles, and that
+  is deliberate: an indicator's series is sampled once per tick while the
+  candles are one per bar, so the two do not share an x-axis. Overlays are drawn
+  only in the fallback, where the price series and the indicator series do.
 - The web renderer knows all seven panels. `Profile` and `Bars` were added to
   the core, given view-models and TUI widgets, and never taught to the web
   front-end: `PanelKind` listed five kinds, `PanelView` had five variants, and
