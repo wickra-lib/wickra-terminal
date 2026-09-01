@@ -1,0 +1,29 @@
+# CodeQL analysis configuration, referenced from .github/workflows/codeql.yml.
+#
+# The list is short, and that is a property of this repository rather than an
+# oversight. The FFI surface here is three calls -- new, command, version -- so
+# no binding is generated per catalogue entry the way wickra's are; every
+# binding is a hand-written wrapper of a hundred lines or so, and all of it is
+# worth reading.
+#
+# What is left out is the napi glue. `bindings/node/index.js` and `index.d.ts`
+# are written by NAPI-RS on every `npm run build` and committed so consumers do
+# not need the toolchain; both stamp themselves as generated in their first
+# lines, and index.js carries the platform-resolution ladder -- a `require` per
+# target triple inside nested try/catch. CodeQL reads that as a chain of
+# unguarded dynamic requires, which is exactly what it is and exactly what napi
+# intends.
+#
+# `crates/wickra-terminal-core/src/registry.rs` is deliberately NOT here. It is
+# generated too, and it is 7,400 lines, but it is the only place the 497
+# construction arms and their parameter validation live -- real logic that a
+# finding could say something true about. A generator owning a file is not on
+# its own a reason to stop analysing it.
+#
+# The rule for adding to this list: a path belongs here when a generator owns
+# the file end to end and stamps it as such, AND the findings it produces are
+# about the generator's idiom rather than about this code. Never because a
+# finding was inconvenient.
+paths-ignore:
+  - bindings/node/index.js
+  - bindings/node/index.d.ts
