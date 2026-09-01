@@ -9,6 +9,7 @@ abstract: >-
 type: software
 authors:
   - alias: kingchenc
+    email: support@wickra.org
     website: "https://wickra.org"
 repository-code: "https://github.com/wickra-lib/wickra-terminal"
 url: "https://terminal.wickra.org"
