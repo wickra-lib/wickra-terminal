@@ -81,8 +81,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so the C ABI hub is held to the same corpus as the eight languages on it.
 - Python type stubs and the PEP 561 marker.
 - `docs/INDICATORS.md`.
+- `LICENSES/MIT.txt` and `LICENSES/Apache-2.0.txt` — the REUSE-conformant second
+  copy that licence tooling looks for, alongside the root full texts.
+- `docs/README.md`: the signpost to the per-binding reference at
+  terminal.wickra.org, and the reason the six guides beside the code stay there —
+  each describes a contract that changes in the same commit as the code it
+  documents.
+- Five further issue templates (detailed bug report, detailed feature request,
+  performance regression, documentation, question) and a long-form pull-request
+  template for changes that touch the core contract, several bindings at once or
+  the release pipeline.
 
 ### Changed
+
+- `CITATION.cff` carries `version` and `date-released`. GitHub's citation box and
+  Zenodo read both, and neither was there to read.
+- README section headings follow the fixed order the repository blueprint sets:
+  `## Performance` is now `## Benchmarks`, and `## Building from source` is now
+  `## Building everything from source`.
 
 - `wickra-core` tracked from `1`; the `wickra-exchange` git dependencies are
   pinned to an explicit `rev`.
