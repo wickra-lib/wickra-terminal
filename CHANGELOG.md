@@ -196,6 +196,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `registry_drive` fuzz target found it in under a minute. The ceiling is a
   million -- a million one-minute bars is two years -- and the refusal names the
   indicator and the number.
+- The web renderer knows all seven panels. `Profile` and `Bars` were added to
+  the core, given view-models and TUI widgets, and never taught to the web
+  front-end: `PanelKind` listed five kinds, `PanelView` had five variants, and
+  the frames for the other two arrived on every tick and were discarded without
+  an error anywhere. ARCHITECTURE.md says adding a panel to the core makes it
+  appear in every renderer at once, and for those two that was not true.
+  A guard in the core now reads its own `PanelKind` and fails when a renderer
+  has not been taught a panel — the golden corpus could not catch this, because
+  the frames were correct and it was the reader that was missing.
 
 - The seven shell problems actionlint found on its first run, each real. Three
   publish steps used `A && B || C`, where C also runs when A succeeded and B

@@ -2,16 +2,19 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Terminal } from 'wickra-terminal-wasm'
 import type {
+  BarsView,
   BookView,
   ChartView,
   FootprintView,
   Frame,
   PanelSpec,
   PanelView,
+  ProfileView,
   TapeView,
   WatchlistView,
 } from './types'
 import { placementsFor, readLayout } from './layout'
+import { binWidth, peakOf } from './profile'
 import { drawChart } from './render/chart'
 import { openBinanceFeed } from './binance'
 
@@ -165,6 +168,9 @@ const book = computed<BookView | undefined>(() => findPanel('book'))
 const tape = computed<TapeView | undefined>(() => findPanel('tape'))
 const watchlist = computed<WatchlistView | undefined>(() => findPanel('watchlist'))
 const footprint = computed<FootprintView | undefined>(() => findPanel('footprint'))
+const profile = computed<ProfileView | undefined>(() => findPanel('profile'))
+const bars = computed<BarsView | undefined>(() => findPanel('bars'))
+
 
 function stop(): void {
   if (timer !== undefined) {
@@ -291,6 +297,56 @@ onBeforeUnmount(stop)
             <td>{{ pr.price.toFixed(2) }}</td><td>{{ pr.quantity.toFixed(3) }}</td><td>{{ pr.side }}</td>
           </tr>
         </table>
+      </section>
+
+      <section class="panel profile" v-if="placements.Profile" :style="placements.Profile">
+        <h2>Profiles {{ profile?.symbol }}</h2>
+        <div v-for="row in profile?.profiles ?? []" :key="row.label" class="dist">
+          <h3>
+            {{ row.label }}
+            <span v-if="row.price_low !== undefined && row.price_high !== undefined" class="muted">
+              [{{ row.price_low.toFixed(2) }} – {{ row.price_high.toFixed(2) }}]
+            </span>
+          </h3>
+          <p v-if="row.bins.length === 0" class="muted">warming up</p>
+          <div v-else class="bins">
+            <div
+              v-for="(bin, i) in row.bins"
+              :key="i"
+              class="bin"
+              :style="{ width: binWidth(bin, peakOf(row.bins)) }"
+            ></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel bars" v-if="placements.Bars" :style="placements.Bars">
+        <h2>Bars {{ bars?.symbol }}</h2>
+        <div v-for="stream in bars?.streams ?? []" :key="stream.label" class="stream">
+          <h3>{{ stream.label }}</h3>
+          <p v-if="stream.bars.length === 0" class="muted">no bars completed yet</p>
+          <template v-else>
+            <!-- A mark per bar rather than a candle: these charts have no time
+                 axis, so the sequence of ups and downs and the length of each
+                 run is the whole shape. -->
+            <div class="marks">
+              <span
+                v-for="(bar, i) in stream.bars"
+                :key="i"
+                :class="bar.direction >= 0 ? 'up' : 'down'"
+              >{{ bar.direction >= 0 ? '▲' : '▼' }}</span>
+            </div>
+            <p class="muted last-bar">
+              {{ stream.bars[stream.bars.length - 1].open.toFixed(2) }}
+              &rarr; {{ stream.bars[stream.bars.length - 1].close.toFixed(2) }}
+              [{{ stream.bars[stream.bars.length - 1].low.toFixed(2) }}
+              {{ stream.bars[stream.bars.length - 1].high.toFixed(2) }}]
+              <template v-if="stream.bars[stream.bars.length - 1].volume !== undefined">
+                vol {{ stream.bars[stream.bars.length - 1].volume!.toFixed(3) }}
+              </template>
+            </p>
+          </template>
+        </div>
       </section>
 
       <section class="panel watchlist" v-if="placements.Watchlist" :style="placements.Watchlist">
