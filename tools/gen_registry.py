@@ -1231,6 +1231,14 @@ where
 
 
 PARAMS = '''
+/// The largest window an indicator may be asked for.
+///
+/// A period is a length and an indicator allocates it, so an unbounded one is an
+/// allocation the caller chooses. Past a million there is nothing to measure --
+/// a million one-minute bars is two years -- and below it the allocation stays
+/// in the megabytes.
+pub const MAX_PERIOD: usize = 1_000_000;
+
 /// Read a positional parameter as a count.
 fn usize_param(params: &[f64], idx: usize, kind: &str) -> Result<usize> {
     let value = params.get(idx).copied().ok_or_else(|| {
@@ -1239,6 +1247,19 @@ fn usize_param(params: &[f64], idx: usize, kind: &str) -> Result<usize> {
     if value < 0.0 || value.fract() != 0.0 {
         return Err(Error::Config(format!(
             "{kind}: parameter {idx} must be a non-negative whole number, got {value}"
+        )));
+    }
+    // An upper bound, because a period is a length and an indicator allocates
+    // it. Without this a config could name a window of 10^20: the cast to usize
+    // succeeds, the indicator asks for a Vec that size, and the process aborts
+    // on a capacity overflow it cannot catch. A fuzz run found it in under a
+    // minute, and the new indicator prompt made it a thing a user could type.
+    //
+    // A million is past any real window -- a million one-minute bars is two
+    // years -- and bounds the allocation at a few megabytes.
+    if value > MAX_PERIOD as f64 {
+        return Err(Error::Config(format!(
+            "{kind}: parameter {idx} is {value}, larger than the {MAX_PERIOD} maximum"
         )));
     }
     Ok(value as usize)

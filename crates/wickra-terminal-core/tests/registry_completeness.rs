@@ -37,6 +37,18 @@ fn build_any(kind: &str, params: &[f64]) -> Box<dyn wickra_terminal_core::TickIn
     built.unwrap_or_else(|err| panic!("{kind}: {err}"))
 }
 
+/// [`build_any`] without the unwrap, for the tests about refusals.
+fn build_any_result(
+    kind: &str,
+    params: &[f64],
+) -> wickra_terminal_core::Result<Box<dyn wickra_terminal_core::TickIndicator>> {
+    if PAIRWISE.contains(&kind) {
+        build_paired(kind, params, REFERENCE)
+    } else {
+        build(kind, params)
+    }
+}
+
 /// The reference market's price path.
 ///
 /// Deliberately not a scaled copy of `price_at`: two series in lockstep have a
@@ -1274,6 +1286,53 @@ fn an_indicator_that_reads_a_feed_declares_it() {
 /// What this holds is the contract a caller depends on: a bad parameter is
 /// reported, in a message naming the indicator, and the process survives. A
 /// panic here would abort the host of every binding on the C ABI.
+/// A period larger than anything real is refused rather than allocated.
+///
+/// Found by the `registry_drive` fuzz target in under a minute, and it was not a
+/// theoretical reach: a period is a length and the indicator allocates it, so a
+/// parameter of 10^20 cast cleanly to `usize`, the indicator asked for a `Vec`
+/// that size, and the process aborted on a capacity overflow no caller can
+/// catch. The TUI's indicator prompt made it something a person could type.
+#[test]
+fn an_absurd_period_is_refused_rather_than_allocated() {
+    use wickra_terminal_core::registry::MAX_PERIOD;
+
+    // Every parameterised kind, given a window past the ceiling. None may
+    // panic, and each must name itself in the refusal.
+    let mut checked = 0;
+    for (kind, defaults) in DEFAULTS {
+        if defaults.is_empty() {
+            continue;
+        }
+        let params: Vec<f64> = defaults.iter().map(|_| (MAX_PERIOD as f64) * 1e6).collect();
+        // A kind whose parameters are all floats has no window to bound, and
+        // wickra-core validates those itself, so accepting is correct there.
+        if let Err(err) = build_any_result(kind, &params) {
+            assert!(
+                err.to_string().contains(kind),
+                "{kind}: the refusal does not name it: {err}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked > 0,
+        "no parameterised kind refused an absurd window"
+    );
+}
+
+/// The ceiling itself, at the boundary: one past it is refused.
+#[test]
+fn the_period_ceiling_is_the_documented_one() {
+    use wickra_terminal_core::registry::MAX_PERIOD;
+
+    let message = match build_any_result("Sma", &[(MAX_PERIOD + 1) as f64]) {
+        Ok(_) => panic!("a window past the ceiling was accepted"),
+        Err(err) => err.to_string(),
+    };
+    assert!(message.contains("maximum"), "unhelpful refusal: {message}");
+}
+
 #[test]
 fn a_rejected_parameter_is_reported_rather_than_panicking() {
     // A period of zero, a negative window and a NaN: between them these are

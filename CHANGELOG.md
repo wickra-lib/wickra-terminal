@@ -189,6 +189,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An indicator period is bounded, so an absurd one is refused rather than
+  allocated. A period is a length and the indicator allocates it: a parameter of
+  10^20 cast cleanly to `usize`, the indicator asked for a `Vec` that size, and
+  the process aborted on a capacity overflow no caller can catch. The new
+  `registry_drive` fuzz target found it in under a minute. The ceiling is a
+  million -- a million one-minute bars is two years -- and the refusal names the
+  indicator and the number.
+
 - The seven shell problems actionlint found on its first run, each real. Three
   publish steps used `A && B || C`, where C also runs when A succeeded and B
   failed -- so a publish that worked could report itself as an
