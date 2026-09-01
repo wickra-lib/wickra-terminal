@@ -318,23 +318,66 @@ fn the_citation_abstract_states_the_real_indicator_count() {
     );
 }
 
-/// The citation must not date a release that has not happened.
+/// The first released section of the changelog, as `(version, date)`.
 ///
-/// `version` and `date-released` are what the citation widget and Zenodo present
-/// as the thing being cited. This file carried `0.1.0` and a date against zero
-/// tags and zero releases. Both keys are optional in CFF, and the wickra library
-/// omits them even though it has released thirty times, so omitting them here is
-/// the convention as well as the truth.
+/// `## [Unreleased]` carries no date and is skipped by the same pattern that
+/// finds a release: a released heading is `## [x.y.z] - YYYY-MM-DD`.
+fn released_in_changelog(root: &std::path::Path) -> Option<(String, String)> {
+    read(root, "CHANGELOG.md").lines().find_map(|line| {
+        let rest = line.strip_prefix("## [")?;
+        let (version, rest) = rest.split_once("] - ")?;
+        let date = rest.trim();
+        (date.len() == 10 && date.starts_with("20"))
+            .then(|| (version.to_string(), date.to_string()))
+    })
+}
+
+/// `version` and `date-released` say exactly one thing, and it has to be true.
+///
+/// They are what GitHub's citation box and Zenodo present as the thing being
+/// cited, so carrying them against zero releases dates something that never
+/// happened — which is why this file omitted both. The other side is just as
+/// real: once a release exists, a citation without them cites nothing in
+/// particular, and both keys are release touchpoints nobody would remember on
+/// their own.
+///
+/// So the rule is the pairing rather than either half of it. While the changelog
+/// shows no released section both keys must be absent; the moment one is cut,
+/// both must be present and agree with it. Cutting a release therefore fails
+/// here until the citation is brought along, rather than shipping a stale one.
 #[test]
-fn the_citation_claims_no_release() {
+fn the_citation_matches_the_release_state() {
     let root = repo_root();
     let text = read(&root, "CITATION.cff");
     // Line-anchored: `cff-version:` is the schema version and belongs here.
-    for key in ["version:", "date-released:"] {
-        assert!(
-            !text.lines().any(|line| line.starts_with(key)),
-            "CITATION.cff carries {key}, which cites a release that does not exist"
-        );
+    let value_of = |key: &str| -> Option<String> {
+        text.lines()
+            .find(|line| line.starts_with(key))?
+            .split_once(':')
+            .map(|(_, v)| v.trim().trim_matches('"').to_string())
+    };
+
+    match released_in_changelog(&root) {
+        None => {
+            for key in ["version:", "date-released:"] {
+                assert!(
+                    value_of(key).is_none(),
+                    "CITATION.cff carries {key}, which cites a release that does not exist"
+                );
+            }
+        }
+        Some((version, date)) => {
+            assert_eq!(
+                value_of("version:").as_deref(),
+                Some(version.as_str()),
+                "CHANGELOG released {version}; CITATION.cff does not cite it"
+            );
+            assert_eq!(
+                value_of("date-released:").as_deref(),
+                Some(date.as_str()),
+                "CHANGELOG dates the release {date}; CITATION.cff does not"
+            );
+        }
     }
 }
 

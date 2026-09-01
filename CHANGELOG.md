@@ -94,8 +94,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `CITATION.cff` carries `version` and `date-released`. GitHub's citation box and
-  Zenodo read both, and neither was there to read.
+- `CITATION.cff` names the maintainer address the other repositories carry.
+- The citation guard now checks the pairing rather than one half of it.
+  `version` and `date-released` are what GitHub's citation box and Zenodo
+  present as the thing being cited: while the changelog shows no released
+  section both keys must be absent, and the moment one is cut both must be
+  present and agree with it. Cutting a release now fails until the citation is
+  brought along, instead of shipping one that dates nothing.
 - README section headings follow the fixed order the repository blueprint sets:
   `## Performance` is now `## Benchmarks`, and `## Building from source` is now
   `## Building everything from source`.
