@@ -33,6 +33,25 @@ const SEEK_STEPS: usize = 20;
 use crate::input::Action;
 use crate::spec;
 
+/// Write a recording into `dir`, returning the status line to show.
+///
+/// Takes the directory rather than reading the current one, so a test can point
+/// it at a temporary path instead of changing the process's working directory --
+/// which is shared by every test thread and would make this one race the rest.
+///
+/// Named by the wall clock rather than overwriting one path: what a person saves
+/// is a moment they want to keep, and the next keypress must not take it away.
+fn write_recording(dir: &std::path::Path, json: &str, count: usize) -> String {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    let path = dir.join(format!("wickra-recording-{stamp}.json"));
+    match std::fs::write(&path, json) {
+        Ok(()) => format!("wrote {count} events to {}", path.display()),
+        Err(err) => format!("could not write {}: {err}", path.display()),
+    }
+}
+
 /// How many rows a panel view carries, for clamping a scroll offset.
 ///
 /// The panels with no row list -- the chart, which is a plot, and the profile,
@@ -410,14 +429,7 @@ impl App {
                 return;
             }
         };
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |since| since.as_secs());
-        let path = std::path::PathBuf::from(format!("wickra-recording-{stamp}.json"));
-        self.status = match std::fs::write(&path, json) {
-            Ok(()) => format!("wrote {count} events to {}", path.display()),
-            Err(err) => format!("could not write {}: {err}", path.display()),
-        };
+        self.status = write_recording(std::path::Path::new("."), &json, count);
     }
 
     /// Scroll the focused panel, clamped to what that panel carries.
@@ -854,6 +866,160 @@ mod tests {
             "scrolled to {} of {rows} rows",
             app.scroll[tape]
         );
+    }
+
+    #[test]
+    fn every_prompt_has_a_label() {
+        // The footer is the only place a user reads what a prompt is asking for.
+        // A prompt with no label of its own is a blinking cursor over nothing.
+        let mut app = synth_app();
+        for (action, expected) in [
+            (Action::SourceMenu, "add source"),
+            (Action::AddSymbol, "add symbol"),
+            (Action::AddIndicator, "add indicator"),
+            (Action::RemoveIndicator, "remove indicator"),
+            (Action::SetTimeframe, "timeframe"),
+            (Action::ListIndicators, "catalogue"),
+        ] {
+            app.on_action(action);
+            assert!(
+                app.footer().contains(expected),
+                "{action:?} prompts with {:?}",
+                app.footer()
+            );
+            app.input_cancel();
+        }
+    }
+
+    #[test]
+    fn a_catalogue_search_that_matches_many_reports_the_count() {
+        // Five hundred names do not fit a status line, so a broad filter has to
+        // say how many it found rather than printing what fits and stopping.
+        let mut app = synth_app();
+        app.on_action(Action::ListIndicators);
+        type_and_submit(&mut app, "");
+        assert!(
+            app.status.contains("match, first"),
+            "status: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn removing_an_indicator_that_is_not_tracked_says_so() {
+        let mut app = synth_app();
+        app.on_action(Action::RemoveIndicator);
+        type_and_submit(&mut app, "NotTracked(3)");
+        assert!(
+            app.status.contains("remove failed"),
+            "status: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn seeking_with_nothing_focused_says_so() {
+        // A terminal with a source and no subscription: the keypress has to
+        // report that rather than looking like a seek that did nothing.
+        let mut app = synth_app();
+        app.on_action(Action::SeekBack);
+        assert!(
+            app.status.contains("nothing focused"),
+            "status: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn saving_without_recording_says_how_to_turn_it_on() {
+        // Recording is off by default, so this is the message a user meets
+        // first -- and "nothing happened" would send them looking for a bug.
+        let mut app = synth_app();
+        app.on_action(Action::SaveRecording);
+        assert!(
+            app.status.contains("recording is off"),
+            "status: {}",
+            app.status
+        );
+        assert!(
+            app.status.contains("record"),
+            "it does not say what to set: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn saving_with_recording_on_but_nothing_yet_says_so() {
+        let mut config = Config::default_layout();
+        config.sources = vec![SourceSpec::Synth { seed: 1 }];
+        config.record = Some(64);
+        let mut app = App::new(Terminal::new(&config).unwrap());
+        app.on_action(Action::SaveRecording);
+        assert!(
+            app.status.contains("nothing recorded"),
+            "status: {}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn a_recording_is_written_where_it_can_be_replayed() {
+        // The file has to be exactly what Replay { dataset } takes, because that
+        // is the whole point: the terminal could rewind a recording and had no
+        // way to make one.
+        let mut config = Config::default_layout();
+        config.sources = vec![SourceSpec::Synth { seed: 1 }];
+        config.record = Some(256);
+        let mut terminal = Terminal::new(&config).unwrap();
+        terminal.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
+        for _ in 0..5 {
+            terminal.tick();
+        }
+        let json = terminal
+            .command_json(r#"{"type":"ExportRecording"}"#)
+            .expect("export");
+        assert!(terminal.recording_len() > 0, "nothing was recorded");
+
+        let dir = std::env::temp_dir().join("wickra-terminal-recording-test");
+        std::fs::create_dir_all(&dir).expect("a writable temp directory");
+        let status = write_recording(&dir, &json, terminal.recording_len());
+        assert!(status.starts_with("wrote "), "status: {status}");
+
+        let path = status
+            .split_once(" to ")
+            .map(|(_, path)| std::path::PathBuf::from(path))
+            .expect("the status names the file");
+        let body = std::fs::read_to_string(&path).expect("read the recording back");
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            body.starts_with('['),
+            "not a JSON array: {}",
+            &body[..body.len().min(60)]
+        );
+
+        // And it replays: the file goes straight back in as a dataset.
+        let mut replay = Config::default_layout();
+        replay.sources = vec![SourceSpec::Replay { dataset: body }];
+        let mut second = Terminal::new(&replay).expect("the recording is a valid feed");
+        second.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
+        second.tick();
+        assert!(
+            second
+                .state()
+                .get(&(0, Symbol::new("BTC", "USDT")))
+                .is_some(),
+            "the written recording did not replay"
+        );
+    }
+
+    #[test]
+    fn a_recording_that_cannot_be_written_reports_the_reason() {
+        // A directory that is not one: the status has to name the path and the
+        // error rather than claiming a write that did not happen.
+        let missing = std::env::temp_dir().join("wickra-no-such-directory-here");
+        let _ = std::fs::remove_dir_all(&missing);
+        let status = write_recording(&missing, "[]", 0);
+        assert!(status.starts_with("could not write"), "status: {status}");
     }
 
     #[test]

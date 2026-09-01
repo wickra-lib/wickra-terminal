@@ -122,6 +122,58 @@ mod tests {
     }
 
     #[test]
+    fn every_default_binding_resolves_to_an_action() {
+        // Every arm of the keymap, driven from the default `Keybinds` rather
+        // than a list written here: a binding added to the config and forgotten
+        // in this match resolves to `Action::None`, which is a key that looks
+        // bound and does nothing -- exactly what panel focus was for months.
+        let binds = Keybinds::default();
+        for (action, bound) in &binds.bindings {
+            let code = match bound.as_str() {
+                "tab" => KeyCode::Tab,
+                "backtab" => KeyCode::BackTab,
+                "left" => KeyCode::Left,
+                "right" => KeyCode::Right,
+                "up" => KeyCode::Up,
+                "down" => KeyCode::Down,
+                "enter" => KeyCode::Enter,
+                "esc" => KeyCode::Esc,
+                other => KeyCode::Char(
+                    other
+                        .chars()
+                        .next()
+                        .unwrap_or_else(|| panic!("{action} is bound to an empty key")),
+                ),
+            };
+            assert_ne!(
+                map_key(key(code), &binds),
+                Action::None,
+                "{action} is bound to {bound:?} and the keymap does not resolve it"
+            );
+        }
+    }
+
+    #[test]
+    fn the_actions_added_for_the_registry_and_the_recording_resolve() {
+        // Named individually as well, because the sweep above would still pass
+        // if two of them resolved to each other's action.
+        let binds = Keybinds::default();
+        for (code, expected) in [
+            (KeyCode::Char('i'), Action::AddIndicator),
+            (KeyCode::Char('k'), Action::RemoveIndicator),
+            (KeyCode::Char('t'), Action::SetTimeframe),
+            (KeyCode::Char('l'), Action::ListIndicators),
+            (KeyCode::Char(','), Action::SeekBack),
+            (KeyCode::Char('.'), Action::SeekForward),
+            (KeyCode::Up, Action::ScrollUp),
+            (KeyCode::Down, Action::ScrollDown),
+            (KeyCode::Char('w'), Action::SaveRecording),
+        ] {
+            assert_eq!(map_key(key(code), &binds), expected, "for {code:?}");
+        }
+    }
+
+    #[test]
     fn uppercase_maps_like_lowercase() {
         let binds = Keybinds::default();
         assert_eq!(map_key(key(KeyCode::Char('Q')), &binds), Action::Quit);

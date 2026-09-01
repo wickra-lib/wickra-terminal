@@ -10,6 +10,7 @@
  *   cmake --build examples/c/build --config Release
  *   ./examples/c/build/time_machine
  */
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -18,27 +19,57 @@
 #define TRADES 6
 #define CONFIG_CAP 4096
 
+/* Append to a buffer, refusing to walk past its end.
+ *
+ * snprintf returns the length it *would* have written, not what it did, so
+ * accumulating that return value walks the offset past the buffer on
+ * truncation -- and `cap - *at` then underflows to an enormous size_t, handing
+ * the next call a length far larger than the space that is left. Returning
+ * failure instead is the whole of the fix.
+ */
+static int append(char *buf, size_t cap, size_t *at, const char *fmt, ...) {
+    if (*at >= cap) {
+        return -1;
+    }
+    va_list args;
+    va_start(args, fmt);
+    const int written = vsnprintf(buf + *at, cap - *at, fmt, args);
+    va_end(args);
+    if (written < 0 || (size_t)written >= cap - *at) {
+        return -1;
+    }
+    *at += (size_t)written;
+    return 0;
+}
+
 /* The recorded feed, escaped into the `dataset` string field. Written by hand
  * rather than with a serialiser: this example deliberately links nothing but
  * the C ABI header. */
-static void build_config(char *out, size_t cap) {
+static int build_config(char *out, size_t cap) {
     char feed[2048];
     size_t at = 0;
-    at += (size_t)snprintf(feed + at, sizeof feed - at, "[");
-    for (int i = 0; i < TRADES; i++) {
-        at += (size_t)snprintf(feed + at, sizeof feed - at,
-                               "%s{\\\"type\\\":\\\"trade\\\","
-                               "\\\"symbol\\\":{\\\"base\\\":\\\"BTC\\\",\\\"quote\\\":\\\"USDT\\\"},"
-                               "\\\"price\\\":\\\"%d\\\",\\\"quantity\\\":\\\"1\\\","
-                               "\\\"aggressor\\\":\\\"Buy\\\",\\\"timestamp\\\":%d}",
-                               i == 0 ? "" : ",", 100 + i, i + 1);
+    if (append(feed, sizeof feed, &at, "[") != 0) {
+        return -1;
     }
-    snprintf(feed + at, sizeof feed - at, "]");
-    snprintf(out, cap,
-             "{\"sources\":[{\"Replay\":{\"dataset\":\"%s\"}}],"
-             "\"layout\":{\"panels\":[{\"kind\":\"Chart\","
-             "\"rect\":{\"x\":0,\"y\":0,\"w\":100,\"h\":100}}]}}",
-             feed);
+    for (int i = 0; i < TRADES; i++) {
+        if (append(feed, sizeof feed, &at,
+                   "%s{\\\"type\\\":\\\"trade\\\","
+                   "\\\"symbol\\\":{\\\"base\\\":\\\"BTC\\\",\\\"quote\\\":\\\"USDT\\\"},"
+                   "\\\"price\\\":\\\"%d\\\",\\\"quantity\\\":\\\"1\\\","
+                   "\\\"aggressor\\\":\\\"Buy\\\",\\\"timestamp\\\":%d}",
+                   i == 0 ? "" : ",", 100 + i, i + 1) != 0) {
+            return -1;
+        }
+    }
+    if (append(feed, sizeof feed, &at, "]") != 0) {
+        return -1;
+    }
+    size_t written = 0;
+    return append(out, cap, &written,
+                  "{\"sources\":[{\"Replay\":{\"dataset\":\"%s\"}}],"
+                  "\"layout\":{\"panels\":[{\"kind\":\"Chart\","
+                  "\"rect\":{\"x\":0,\"y\":0,\"w\":100,\"h\":100}}]}}",
+                  feed);
 }
 
 /* The chart panel's `last`, read without a JSON parser: the ABI returns the
@@ -67,7 +98,10 @@ static char *apply(WickraTerminal *term, const char *command) {
 
 int main(void) {
     char config[CONFIG_CAP];
-    build_config(config, sizeof config);
+    if (build_config(config, sizeof config) != 0) {
+        fprintf(stderr, "the config did not fit its buffer\n");
+        return 1;
+    }
 
     WickraTerminal *term = wickra_terminal_new(config);
     if (!term) {

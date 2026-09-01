@@ -197,6 +197,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A buffer overflow in the C examples, found by CodeQL's
+  `cpp/overflowing-snprintf` on the first run after C/C++ entered the analysis
+  matrix. `snprintf` returns the length it *would* have written, so accumulating
+  that return value walks the offset past the buffer on truncation -- and
+  `sizeof buf - at` then underflows to an enormous `size_t`, handing the next
+  call a length far larger than the space that is left. Both files use a guarded
+  append that refuses instead.
+
 - An indicator period is bounded, so an absurd one is refused rather than
   allocated. A period is a length and the indicator allocates it: a parameter of
   10^20 cast cleanly to `usize`, the indicator asked for a `Vec` that size, and

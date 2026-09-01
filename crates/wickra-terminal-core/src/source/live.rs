@@ -133,12 +133,7 @@ impl LiveSource {
         // at all -- which left the whole derivatives side of the catalogue with
         // no market to watch, before the question of a funding feed even
         // arises.
-        let kind = match market {
-            Market::Spot => MarketType::Spot,
-            Market::UsdMFutures => MarketType::UsdMFutures,
-            Market::CoinMFutures => MarketType::CoinMFutures,
-            Market::Margin => MarketType::Margin,
-        };
+        let kind = market_type(market);
         let options = if testnet {
             ExchangeOptions::testnet(kind)
         } else {
@@ -203,6 +198,20 @@ impl DataSource for LiveSource {
         let events = self.client.poll_events();
         self.backoff.observe(&events, now);
         forwarded(events, &self.subscribed)
+    }
+}
+
+/// The exchange layer's market kind for a config's.
+///
+/// Its own function rather than a `match` inside `connect`, because `connect`
+/// needs a venue and this does not -- and a mapping that silently sent every
+/// market to the spot book is exactly the bug this replaces.
+fn market_type(market: Market) -> MarketType {
+    match market {
+        Market::Spot => MarketType::Spot,
+        Market::UsdMFutures => MarketType::UsdMFutures,
+        Market::CoinMFutures => MarketType::CoinMFutures,
+        Market::Margin => MarketType::Margin,
     }
 }
 
@@ -394,6 +403,36 @@ mod tests {
         subscribed.insert(btc);
         let out = forwarded(vec![Event::Disconnected, Event::Reconnected], &subscribed);
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn every_market_maps_to_its_own_book() {
+        // The mapping was a hard-coded Spot, so a perpetual could not be opened
+        // at all. A mapping that quietly sent two markets to the same book would
+        // be the same bug wearing a config field, so each is named.
+        assert_eq!(market_type(Market::Spot), MarketType::Spot);
+        assert_eq!(market_type(Market::UsdMFutures), MarketType::UsdMFutures);
+        assert_eq!(market_type(Market::CoinMFutures), MarketType::CoinMFutures);
+        assert_eq!(market_type(Market::Margin), MarketType::Margin);
+    }
+
+    #[test]
+    fn a_venue_candle_crosses_the_version_gap() {
+        // The exchange pins wickra-core 0.9 and this crate builds against 1, so
+        // the compiler sees two identical structs as unrelated types. The
+        // conversion re-validates rather than trusting the shape.
+        let bar = wickra_exchange::Candle::new(100.0, 110.0, 95.0, 105.0, 7.0, 42)
+            .expect("a valid venue candle");
+        let core = into_core(&bar).expect("a valid candle converts");
+        // Bit-for-bit, not within a tolerance: the conversion copies fields, and
+        // a copy that changed a value would be the bug worth catching.
+        let same = |a: f64, b: f64| (a - b).abs() < f64::EPSILON;
+        assert!(same(core.open, 100.0), "open: {}", core.open);
+        assert!(same(core.high, 110.0), "high: {}", core.high);
+        assert!(same(core.low, 95.0), "low: {}", core.low);
+        assert!(same(core.close, 105.0), "close: {}", core.close);
+        assert!(same(core.volume, 7.0), "volume: {}", core.volume);
+        assert_eq!(core.timestamp, 42);
     }
 
     #[test]
