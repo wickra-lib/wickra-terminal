@@ -3,8 +3,8 @@
 //! This guards the trait shapes the renderers and bindings rely on.
 
 use wickra_terminal_core::{
-    build_panel, build_source, DataSource, Panel, PanelKind, PanelSpec, RectSpec, SourceKind,
-    SourceSpec,
+    build_panel, build_source, DataSource, Market, Panel, PanelKind, PanelSpec, RectSpec,
+    SourceKind, SourceSpec,
 };
 
 const KINDS: [PanelKind; 5] = [
@@ -65,6 +65,7 @@ fn live_source_is_object_safe_and_reports_its_kind() {
             venue: "binance".to_string(),
             symbol: "BTC/USDT".to_string(),
             testnet: false,
+            market: Market::Spot,
         },
     )
     .unwrap();
@@ -83,6 +84,7 @@ fn live_source_rejects_an_unknown_venue() {
             venue: "not-a-venue".to_string(),
             symbol: "BTC/USDT".to_string(),
             testnet: false,
+            market: Market::Spot,
         },
     );
     assert!(err.is_err());

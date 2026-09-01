@@ -21,7 +21,7 @@ and never reach the state fold.
 
 | Kind | Spec | Feeds from |
 |------|------|-----------|
-| `Live` | `Live { venue, symbol, testnet }` | the ten-venue [wickra-exchange](https://github.com/wickra-lib/wickra-exchange) connectivity layer (native builds only — the `live` feature). |
+| `Live` | `Live { venue, symbol, testnet, market }` | the ten-venue [wickra-exchange](https://github.com/wickra-lib/wickra-exchange) connectivity layer (native builds only — the `live` feature). |
 | `Replay` | `Replay { dataset }` | a recorded feed (a JSON array of events) with a movable cursor (the time-machine). Filesystem-free, so it runs in the browser too. |
 | `Synth` | `Synth { seed }` | a deterministic synthetic feed — no network, reproducible, the default demo source. |
 | `Manual` | `"Manual"` | a host-fed source: the core opens no connection; the host pushes events in through the `Feed` command. The browser bridges an exchange WebSocket into it. |
@@ -56,6 +56,47 @@ config opened. These examples assume the config opened one, so it holds id 0.
 {"type":"Unsubscribe","source":2,"symbol":"BTC/USDT"}
 {"type":"RemoveSource","id":1}
 ```
+
+## Which market, and how much history
+
+`market` picks the venue's book: `Spot` (the default), `UsdMFutures`,
+`CoinMFutures` or `Margin`. It was hard-coded to spot, so a perpetual could not
+be opened at all — which left the whole derivatives side of the catalogue with
+no market to watch, before the question of a funding feed even arises. The
+source shorthand takes it as a third segment:
+
+```text
+live:binance:BTC/USDT          spot
+live:binance:BTC/USDT:usdm     USD-margined perpetual
+live:binance:BTC/USDT:coinm    coin-margined
+```
+
+A symbol carries a slash and never a colon, so a second colon can only be the
+market's — and a word there that is not a market name is reported rather than
+folded into the symbol, which is what used to happen and produced a message
+about an unknown symbol for what was a typo in the market.
+
+`backfill` is how many historical bars a fresh subscription fetches, 200 by
+default and 0 to turn it off. Without it every bar came from ticks the terminal
+saw itself: `Atr(14)` on an hourly timeframe was silent for fourteen hours, and
+the chart opened empty on a market that has traded since 2017. The bars seed the
+chart, the price history and every bar-derived indicator; the book, the tape and
+the footprint are not seeded, because a bar records that trading happened rather
+than the prints it was made of, and inventing those would put numbers on screen
+that no venue published.
+
+A failed backfill is not a failed subscription. The venue may not carry the
+interval, the request may time out, or the market may be too new to have a
+history — and the right outcome in each is a terminal that starts with no
+history, not one that refuses to open the market.
+
+> **Funding and open interest still have no live feed, and that is upstream.**
+> `wickra-exchange-core` defines `DerivativesFeed` and `DerivativesTickBuilder`,
+> but no venue implements them and the `Exchange` trait exposes no way to
+> subscribe to one. So the `DerivativesTick` indicator family can only be driven
+> through the `FeedDerivatives` command, from a host with its own source — which
+> is why that command exists. Opening a perpetual is now possible; streaming its
+> funding is not, and will not be until the exchange layer grows the channel.
 
 ## Making a recording
 

@@ -13,6 +13,7 @@
 //! offline unit tests.
 
 use super::{event_symbol, DataSource, SourceId, SourceKind, Symbol};
+use crate::config::Market;
 use crate::error::{Error, Result};
 use std::collections::HashSet;
 use std::str::FromStr;
@@ -121,11 +122,27 @@ impl LiveSource {
     ///
     /// Returns [`Error::Exchange`] if the venue is unknown or the HTTP client
     /// cannot be constructed.
-    pub fn connect(id: SourceId, venue: &str, _symbol: &str, testnet: bool) -> Result<Self> {
+    pub fn connect(
+        id: SourceId,
+        venue: &str,
+        _symbol: &str,
+        testnet: bool,
+        market: Market,
+    ) -> Result<Self> {
+        // The market was hard-coded to Spot, so a perpetual could not be opened
+        // at all -- which left the whole derivatives side of the catalogue with
+        // no market to watch, before the question of a funding feed even
+        // arises.
+        let kind = match market {
+            Market::Spot => MarketType::Spot,
+            Market::UsdMFutures => MarketType::UsdMFutures,
+            Market::CoinMFutures => MarketType::CoinMFutures,
+            Market::Margin => MarketType::Margin,
+        };
         let options = if testnet {
-            ExchangeOptions::testnet(MarketType::Spot)
+            ExchangeOptions::testnet(kind)
         } else {
-            ExchangeOptions::mainnet(MarketType::Spot)
+            ExchangeOptions::mainnet(kind)
         };
         let client = connect(venue, Credentials::new("", ""), &options)
             .map_err(|e| Error::Exchange(e.to_string()))?;
@@ -165,6 +182,19 @@ impl DataSource for LiveSource {
         self.subscribed.remove(sym);
     }
 
+    fn backfill(&mut self, sym: &Symbol, interval: &str, limit: usize) -> Vec<wickra_core::Candle> {
+        let limit = u32::try_from(limit).unwrap_or(u32::MAX);
+        // A failed backfill is not a failed subscription. The venue may not
+        // carry this interval, the request may time out, or the market may be
+        // too new to have a history -- and in every one of those the right
+        // outcome is a terminal that starts with no history rather than one that
+        // refuses to open the market at all.
+        self.client
+            .klines(sym, interval, limit)
+            .map(|bars| bars.iter().filter_map(into_core).collect())
+            .unwrap_or_default()
+    }
+
     fn poll(&mut self) -> Vec<(Symbol, Event)> {
         let now = Instant::now();
         if !self.backoff.ready(now) {
@@ -174,6 +204,30 @@ impl DataSource for LiveSource {
         self.backoff.observe(&events, now);
         forwarded(events, &self.subscribed)
     }
+}
+
+/// The exchange's candle as this crate's core sees it.
+///
+/// They are the same struct from two versions of wickra-core: the exchange pins
+/// 0.9 and this crate builds against 1, so the compiler sees two unrelated
+/// types with identical fields. Copying them across is the whole of the
+/// conversion, and `Candle::new` re-validates rather than trusting the shape --
+/// cheap, and the one place a malformed bar from a venue would otherwise reach
+/// an indicator.
+///
+/// When the exchange moves to wickra-core 1 this becomes an identity and can go.
+/// Until then it is where the duplicate costs something, which is better than
+/// having it cost a little everywhere.
+fn into_core(bar: &wickra_exchange::Candle) -> Option<wickra_core::Candle> {
+    wickra_core::Candle::new(
+        bar.open,
+        bar.high,
+        bar.low,
+        bar.close,
+        bar.volume,
+        bar.timestamp,
+    )
+    .ok()
 }
 
 /// The events a poll forwards: those that name a market, and only markets still

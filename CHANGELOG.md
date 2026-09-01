@@ -204,6 +204,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `registry_drive` fuzz target found it in under a minute. The ceiling is a
   million -- a million one-minute bars is two years -- and the refusal names the
   indicator and the number.
+- Historical backfill. A fresh subscription fetches bars from the venue and
+  seeds the chart, the price history and every bar-derived indicator with them.
+  Without it every bar came from ticks the terminal saw itself, so `Atr(14)` on
+  an hourly timeframe was silent for fourteen hours and the chart opened empty
+  on a market that has traded since 2017. 200 bars by default, 0 to turn it off,
+  and a failed fetch is not a failed subscription.
+
+  The book, the tape and the footprint are not seeded: a bar records that
+  trading happened rather than the prints it was made of, and inventing those
+  would put numbers on screen no venue published.
+- A live source can open a derivatives book. `market` picks spot, USD-margined,
+  coin-margined or margin, and the shorthand takes it as a third segment
+  (`live:binance:BTC/USDT:usdm`). It was hard-coded to spot, so a perpetual
+  could not be opened at all. Funding and open interest still have no live feed
+  and that is upstream: `wickra-exchange-core` defines `DerivativesFeed` but no
+  venue implements it and the `Exchange` trait exposes no subscription, so the
+  `FeedDerivatives` command remains the only path -- which is why it exists.
 - A recorder, so the time-machine has something to rewind. `Replay` takes a feed
   and nothing in the repository could produce one: no session was ever written
   out, and `dataset` takes the events themselves rather than a path, so the only

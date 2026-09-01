@@ -30,6 +30,13 @@ pub enum SourceSpec {
         /// Use the venue testnet/sandbox host.
         #[serde(default)]
         testnet: bool,
+        /// Which market of that venue: spot, or one of the derivatives books.
+        ///
+        /// Spot by default, which is what this was hard-coded to: a perpetual
+        /// could not be opened at all, so the whole derivatives side of the
+        /// catalogue had no market to watch even before the feed question.
+        #[serde(default)]
+        market: Market,
     },
     /// A recorded feed replayed from a named dataset (a JSON array of events).
     Replay {
@@ -46,6 +53,24 @@ pub enum SourceSpec {
     /// exchange WebSocket into the WASM core (which cannot open native sockets),
     /// and how any embedder drives the terminal from its own feed.
     Manual,
+}
+
+/// Which of a venue's markets a live source opens.
+///
+/// Mirrors the exchange layer's own `MarketType`, rather than re-exporting it,
+/// so a config is written in the terminal's vocabulary and does not move when
+/// the exchange crate renames one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Market {
+    /// The spot book.
+    #[default]
+    Spot,
+    /// USD-margined linear perpetuals and futures.
+    UsdMFutures,
+    /// Coin-margined inverse perpetuals and futures.
+    CoinMFutures,
+    /// Cross or isolated margin spot.
+    Margin,
 }
 
 /// A rectangle in grid units (percent of the screen), `0..=100` on each axis.
@@ -303,6 +328,43 @@ pub struct Config {
     /// job.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub record: Option<usize>,
+    /// How many historical bars to fetch when a market is first subscribed.
+    ///
+    /// A live venue has years of history and the terminal used none of it: every
+    /// bar was built from ticks it saw itself, so a bar indicator was silent for
+    /// its whole warmup in wall-clock time -- fourteen hours for `Atr(14)` at an
+    /// hourly timeframe -- and the chart opened empty on a market that has
+    /// traded since 2017.
+    ///
+    /// On by default, because the alternative is a terminal that looks broken
+    /// for its first hour. Zero turns it off. Sources with no history to offer
+    /// -- synthetic, replay, host-fed -- ignore it.
+    #[serde(
+        default = "default_backfill",
+        skip_serializing_if = "is_default_backfill"
+    )]
+    pub backfill: usize,
+}
+
+/// How many bars a fresh subscription fetches unless the config says otherwise.
+///
+/// Two hundred covers the longest warmup in the catalogue with room over, and is
+/// what venues serve in one request without paging.
+fn default_backfill() -> usize {
+    200
+}
+
+/// Whether a config leaves the backfill at its default.
+///
+/// Skipped from the serialised form when it does, like every other field that
+/// has one: a config file is what a person writes, and writing the defaults back
+/// into it turns a four-line config into a page.
+/// Takes a reference because that is the signature serde's
+/// `skip_serializing_if` requires; clippy would rather have the `usize` by
+/// value, and serde would not call it.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_default_backfill(value: &usize) -> bool {
+    *value == default_backfill()
 }
 
 /// The most events a recording may keep.
@@ -350,6 +412,7 @@ impl Default for Config {
             profiles: Vec::new(),
             bars: Vec::new(),
             record: None,
+            backfill: default_backfill(),
         }
     }
 }

@@ -2,7 +2,7 @@
 //! [`SourceSpec`]. Shared by the CLI and the interactive source menu.
 
 use wickra_terminal_core::source::live::parse_live_shorthand;
-use wickra_terminal_core::{IndicatorSpec, SourceSpec};
+use wickra_terminal_core::{IndicatorSpec, Market, SourceSpec};
 
 /// Parse `synth:<seed>`, `live:<venue>:<BASE/QUOTE>` or `replay:<json>`.
 ///
@@ -18,17 +18,52 @@ pub(crate) fn parse_source(spec: &str) -> Result<SourceSpec, String> {
             seed: rest.parse().map_err(|e| format!("bad seed: {e}"))?,
         }),
         "live" => {
+            // An optional market after the symbol: `live:binance:BTC/USDT:usdm`.
+            // A symbol carries a slash and never a colon, so a second colon in
+            // `rest` can only be the market's -- and if the word after it is not
+            // a market name, that is a typo rather than part of the symbol.
+            //
+            // Letting it fall through was the previous reading and it was worse
+            // than an error: `parse_live_shorthand` splits on the first colon,
+            // so `binance:BTC/USDT:usdn` became the market `USDT:usdn`, which
+            // the venue then rejected with a message about an unknown symbol.
+            let (rest, market) = match rest.rsplit_once(':') {
+                Some((head, tail)) if head.contains(':') => match parse_market(tail) {
+                    Some(market) => (head, market),
+                    None => {
+                        return Err(format!(
+                            "unknown market {tail:?} (spot | usdm | coinm | margin)"
+                        ))
+                    }
+                },
+                _ => (rest, Market::Spot),
+            };
             let (venue, symbol) = parse_live_shorthand(rest).map_err(|e| e.to_string())?;
             Ok(SourceSpec::Live {
                 venue,
                 symbol,
                 testnet: false,
+                market,
             })
         }
         "replay" => Ok(SourceSpec::Replay {
             dataset: rest.to_string(),
         }),
         other => Err(format!("unknown source kind: {other}")),
+    }
+}
+
+/// The market names the source shorthand accepts.
+///
+/// Short forms rather than the enum's own spelling: these are typed at a prompt,
+/// and `usdm` is what a trader calls the linear book.
+fn parse_market(text: &str) -> Option<Market> {
+    match text {
+        "spot" => Some(Market::Spot),
+        "usdm" | "perp" | "futures" => Some(Market::UsdMFutures),
+        "coinm" | "inverse" => Some(Market::CoinMFutures),
+        "margin" => Some(Market::Margin),
+        _ => None,
     }
 }
 
@@ -100,6 +135,60 @@ mod tests {
                 venue: "binance".to_string(),
                 symbol: "BTC/USDT".to_string(),
                 testnet: false,
+                market: Market::Spot,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_source_live_takes_a_market() {
+        // The market was hard-coded to spot, so a perpetual could not be opened
+        // at all -- and adding it to the config alone would have left it
+        // unreachable from the prompt, which is the mistake this repository
+        // keeps making.
+        assert_eq!(
+            parse_source("live:binance:BTC/USDT:usdm").unwrap(),
+            SourceSpec::Live {
+                venue: "binance".to_string(),
+                symbol: "BTC/USDT".to_string(),
+                testnet: false,
+                market: Market::UsdMFutures,
+            }
+        );
+        assert_eq!(
+            parse_source("live:binance:BTC/USDT:coinm").unwrap(),
+            SourceSpec::Live {
+                venue: "binance".to_string(),
+                symbol: "BTC/USDT".to_string(),
+                testnet: false,
+                market: Market::CoinMFutures,
+            }
+        );
+    }
+
+    #[test]
+    fn a_trailing_word_that_is_not_a_market_is_reported() {
+        // Not merely rejected -- reported usefully. Falling through was the
+        // previous reading, and it made `binance:BTC/USDT:usdn` a request for
+        // the market `USDT:usdn`, which the venue answered with a message about
+        // an unknown symbol.
+        let err = parse_source("live:binance:BTC/USDT:nonsense").unwrap_err();
+        assert!(err.contains("unknown market"), "unhelpful: {err}");
+        assert!(
+            err.contains("usdm"),
+            "the message does not list the names: {err}"
+        );
+    }
+
+    #[test]
+    fn a_two_part_live_shorthand_still_means_spot() {
+        assert_eq!(
+            parse_source("live:binance:BTC/USDT").unwrap(),
+            SourceSpec::Live {
+                venue: "binance".to_string(),
+                symbol: "BTC/USDT".to_string(),
+                testnet: false,
+                market: Market::Spot,
             }
         );
     }

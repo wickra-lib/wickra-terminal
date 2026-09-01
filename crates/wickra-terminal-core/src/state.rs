@@ -1105,6 +1105,44 @@ impl SymbolState {
 }
 
 impl SymbolState {
+    /// Seed this market from historical bars, oldest first.
+    ///
+    /// What a fresh subscription to a live venue starts with, and what the
+    /// terminal had no way to use: every bar was built from ticks it saw itself,
+    /// so a bar indicator was silent for its whole warmup in wall-clock time --
+    /// fourteen hours for `Atr(14)` at an hourly timeframe -- and the chart
+    /// opened empty on a market that has traded for years.
+    ///
+    /// The bars drive the same tick the live fold drives, with the close as the
+    /// price: that is all a bar carries, and it is what every charting platform
+    /// warms an indicator on. Only the bar-derived state is seeded. The book,
+    /// the tape and the footprint are not: a bar records that trading happened,
+    /// not the prints it was made of, and inventing those would put numbers on
+    /// screen that no venue ever published.
+    pub(crate) fn seed_bars(&mut self, bars: &[wc::Candle]) {
+        for bar in bars {
+            if self.ohlc.len() == OHLC_HISTORY {
+                self.ohlc.pop_front();
+            }
+            self.ohlc.push_back(*bar);
+
+            if self.history.len() == 512 {
+                self.history.pop_front();
+            }
+            if let Some(close) = Decimal::from_f64_retain(bar.close) {
+                self.history.push_back(close);
+                self.last = close;
+            }
+
+            self.breadth.update(bar);
+            let mut tick = TickInput::price(bar.close);
+            tick.candle = Some(*bar);
+            self.indicators.update(&tick);
+            self.profiles.update(&tick);
+            self.bars.update(&tick);
+        }
+    }
+
     /// The most recent closed bars, oldest first, at most `n` of them.
     ///
     /// Closed only: the bar in progress is [`forming`](Self::forming), because

@@ -474,11 +474,41 @@ impl Terminal {
         if !self.state.symbols.contains_key(&key) {
             let fresh = self.state.fresh_market();
             self.state.symbols.insert(key.clone(), fresh);
+            // Fetched after the market exists and before anything else looks at
+            // it, so the first frame already carries a history. A source with
+            // none to offer returns an empty list and this costs a call.
+            //
+            // Only on a market the terminal did not already hold: re-subscribing
+            // one that is already open must not replay its history into state
+            // that has moved on since.
+            let bars = self.backfill(id, sym);
+            if !bars.is_empty() {
+                if let Some(state) = self.state.symbols.get_mut(&key) {
+                    state.seed_bars(&bars);
+                }
+            }
         }
         if self.state.focus.is_none() {
             self.state.focus = Some(key);
         }
         Ok(())
+    }
+
+    /// The historical bars a source offers for a market, or an empty list.
+    ///
+    /// Split out so the borrow of the source ends before the state is written:
+    /// both live on `self`, and seeding while the source is borrowed would not
+    /// compile.
+    fn backfill(&mut self, id: SourceId, sym: &Symbol) -> Vec<wickra_core::Candle> {
+        if self.config.backfill == 0 {
+            return Vec::new();
+        }
+        let interval = self.config.timeframe.label();
+        let limit = self.config.backfill;
+        self.state
+            .source_mut(id)
+            .map(|source| source.backfill(sym, &interval, limit))
+            .unwrap_or_default()
     }
 
     /// Unsubscribe a market, dropping its state and repairing focus.
@@ -811,6 +841,131 @@ mod tests {
         term.unsubscribe(0, &btc);
         // Focus falls back to the remaining subscription.
         assert_eq!(term.state().focus, Some((0, eth)));
+    }
+
+    /// A source that offers history and nothing else, so the seeding can be
+    /// tested without a venue.
+    ///
+    /// `LiveSource` is the only source that has a backfill and the only one that
+    /// needs a socket to produce it, which would otherwise leave the seeding
+    /// path untested — and the seeding, not the HTTP call, is what has the
+    /// interesting failure modes.
+    #[derive(Debug)]
+    struct HistorySource {
+        id: SourceId,
+        bars: Vec<wickra_core::Candle>,
+        asked: usize,
+    }
+
+    impl crate::source::DataSource for HistorySource {
+        fn id(&self) -> SourceId {
+            self.id
+        }
+        fn kind(&self) -> crate::source::SourceKind {
+            crate::source::SourceKind::Synth
+        }
+        fn subscribe(&mut self, _sym: &Symbol) -> Result<()> {
+            Ok(())
+        }
+        fn unsubscribe(&mut self, _sym: &Symbol) {}
+        fn poll(&mut self) -> Vec<(Symbol, Event)> {
+            Vec::new()
+        }
+        fn backfill(
+            &mut self,
+            _sym: &Symbol,
+            _interval: &str,
+            limit: usize,
+        ) -> Vec<wickra_core::Candle> {
+            self.asked = limit;
+            self.bars.clone()
+        }
+    }
+
+    fn rising_bars(n: usize) -> Vec<wickra_core::Candle> {
+        (0..n)
+            .map(|i| {
+                let open = 100.0 + i as f64;
+                let ts = i64::try_from(i).expect("a small test index");
+                wickra_core::Candle::new(open, open + 2.0, open - 1.0, open + 1.0, 5.0, ts)
+                    .expect("a rising bar is valid")
+            })
+            .collect()
+    }
+
+    /// A terminal with one history-bearing source already open.
+    fn seeded(bars: Vec<wickra_core::Candle>, backfill: usize) -> Terminal {
+        let mut config = Config::default_layout();
+        config.indicators = vec![IndicatorSpec::new("Atr", vec![5.0])];
+        config.backfill = backfill;
+        let mut terminal = Terminal::new(&config).expect("the default config builds");
+        terminal.state.sources.push(Box::new(HistorySource {
+            id: 0,
+            bars,
+            asked: 0,
+        }));
+        terminal
+    }
+
+    #[test]
+    fn a_fresh_subscription_is_seeded_from_history() {
+        // Without this every bar came from ticks the terminal saw itself, so
+        // Atr(5) at an hourly timeframe was silent for five hours and the chart
+        // opened empty on a market that has traded for years.
+        let mut terminal = seeded(rising_bars(30), 200);
+        terminal.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
+
+        let PanelView::Chart(chart) = terminal
+            .frame()
+            .panels
+            .into_iter()
+            .find(|p| matches!(p, PanelView::Chart(_)))
+            .expect("the default layout has a chart")
+        else {
+            unreachable!("matched on the chart variant")
+        };
+        assert_eq!(chart.bars.len(), 30, "the history did not reach the chart");
+        assert!(chart.last > 0.0, "the last price was not seeded");
+        assert!(
+            chart.indicators.iter().any(|i| i.value.is_some()),
+            "no indicator warmed up on the history"
+        );
+    }
+
+    #[test]
+    fn backfill_zero_fetches_nothing() {
+        let mut terminal = seeded(rising_bars(30), 0);
+        terminal.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
+        let PanelView::Chart(chart) = terminal
+            .frame()
+            .panels
+            .into_iter()
+            .find(|p| matches!(p, PanelView::Chart(_)))
+            .expect("the default layout has a chart")
+        else {
+            unreachable!("matched on the chart variant")
+        };
+        assert!(chart.bars.is_empty(), "history was fetched with backfill 0");
+    }
+
+    #[test]
+    fn re_subscribing_does_not_replay_the_history() {
+        // State that has moved on since must not have its past folded into it a
+        // second time.
+        let mut terminal = seeded(rising_bars(30), 200);
+        let sym = Symbol::new("BTC", "USDT");
+        terminal.subscribe(0, &sym).unwrap();
+        terminal.subscribe(0, &sym).unwrap();
+        let PanelView::Chart(chart) = terminal
+            .frame()
+            .panels
+            .into_iter()
+            .find(|p| matches!(p, PanelView::Chart(_)))
+            .expect("the default layout has a chart")
+        else {
+            unreachable!("matched on the chart variant")
+        };
+        assert_eq!(chart.bars.len(), 30, "the history was seeded twice");
     }
 
     /// A replay config over a short recorded feed.
