@@ -115,6 +115,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `timeout-minutes` on every job of `codeql`, `links`, `scorecard`,
   `sync-metadata` and `zizmor`, which were unbounded and could hang for
   GitHub's six-hour default.
+- `scripts/check_version_sync.py`, wired into CI: the version lives in 23
+  declarations across six package managers, and a bump that misses one
+  publishes an npm package pinning a native binary that was never built --
+  which surfaces at install time, on a user's machine, after the tag is
+  irreversible.
+- `scripts/check_readme_links.py`, wired into CI: each binding README is the
+  long description of a published package, so a link that leaves the package
+  resolves on GitHub and nowhere else, and nothing else in the build would say
+  so, because the file it points at does exist.
 
 ### Changed
 
@@ -170,5 +179,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   all; the dead `RUSTSEC-2024-0436` suppression was removed from both files.
 - The gated live-integration test fails on no data instead of passing, so the
   nightly job can report a real result.
+- `scripts/update-lockfiles.sh` no longer pipes `astral.sh/uv/install.sh` into a
+  shell. That ran whatever was behind the URL at that moment, with the
+  privileges of everyone who regenerated a lockfile. uv is now installed by hand
+  or, with `WICKRA_BOOTSTRAP_UV=1`, fetched as one pinned release archive that is
+  refused unless its checksum matches.
 
 [Unreleased]: https://github.com/wickra-lib/wickra-terminal/commits/main

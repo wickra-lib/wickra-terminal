@@ -134,7 +134,7 @@ jobs:
   binding-surface:
     name: Binding surface parity
     runs-on: ubuntu-latest
-    timeout-minutes: 10 # a static check; if it is not done in ten minutes it is stuck
+    timeout-minutes: 10 # static checks; if they are not done in ten minutes they are stuck
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -145,6 +145,20 @@ jobs:
       # no test to fail. This holds every language to the header instead.
       - name: Compare every binding's surface with the C ABI
         run: python3 scripts/check_binding_surface.py
+
+      # The version lives in twenty-odd declarations across six package
+      # managers. A bump that misses one publishes, say, an npm package pinning
+      # a native binary that was never built -- which surfaces at install time,
+      # on a user's machine, after the tag is already irreversible.
+      - name: Every version declaration agrees
+        run: python3 scripts/check_version_sync.py
+
+      # Each bindings/*/README.md is the long description of a published
+      # package: PyPI, NuGet, pkg.go.dev and r-universe render them. A link that
+      # leaves the package resolves on GitHub and nowhere else, and nothing else
+      # in the build would say so, because the file it points at does exist.
+      - name: Binding READMEs link only to what travels with them
+        run: python3 scripts/check_readme_links.py
 
   supply-chain:
     name: Supply-chain (cargo-deny + osv-scanner)
