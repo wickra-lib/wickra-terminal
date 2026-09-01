@@ -34,19 +34,41 @@ requests.
 11. **Indicators** — tick-to-OHLCV aggregation and a generated registry of <!--indicator-count-->497<!--/indicator-count-->
     `wickra-core` indicators, configurable and changeable at run time from every
     binding. ✅
+12. **The renderers catch up with the core** — candles with a price scale in both
+    front-ends, all seven panels in both, every command the boundary carries
+    bound to a key or a control, panel depth in the config and panel-local
+    scrolling, one keymap read by both, a recorder feeding the time-machine, and
+    a live subscription that starts with the venue's history. ✅
 
 ## Next
 
 Nothing here is scheduled. These are the openings the current shape leaves, in
 roughly the order they would pay off.
 
-- **The remaining indicator families.** 1 of the 504 in `wickra-core` are not
-  reachable, and the reason is now the same for nearly all of them:
-  [`docs/INDICATORS.md`](docs/INDICATORS.md) lists them. Derivatives-tick (17),
-  cross-section (15) and trade-quote (3) need feeds this repository has no source
-  for, so they are blocked on a data source rather than on wiring. The remaining eight
-  are output shapes the registry's fixed named-field model does not carry -- the
-  profile and level outputs, whose bin lists change length bar to bar.
+- **The one indicator that is not reachable.** Exactly one of the indicators in
+  `wickra-core` has no registry entry, and it is `Footprint`:
+  [`docs/INDICATORS.md`](docs/INDICATORS.md) says why. It answers with a list of
+  price levels, each with its own bid and ask volume, which the registry's fixed
+  named-field model does not carry -- and the terminal already renders a
+  footprint from its own per-price state, so registering it would be a second
+  implementation of a view that exists.
+
+  The profiles and the alternative bars are *not* in that count. They have
+  surfaces of their own, alongside the registry rather than inside it, because a
+  histogram and a bar are not a reading; `ListIndicators` lists all three.
+
+  This paragraph used to say something else, and it was two claims that could
+  not both be true: "1 of the 504 are not reachable", and then a list of
+  seventeen derivatives-tick, fifteen cross-section, three trade-quote and eight
+  profile outputs. The number had been corrected and the sentence under it had
+  not.
+- **A live feed for funding and open interest.** The `DerivativesTick` family is
+  registered and drivable, and no source in this repository can drive it: the
+  exchange layer defines `DerivativesFeed` and `DerivativesTickBuilder`, no
+  venue implements them, and the `Exchange` trait exposes no way to subscribe to
+  one. So the family is reachable only through the `FeedDerivatives` command,
+  from a host with its own source -- which is why that command exists. The work
+  is in `wickra-exchange`, not here.
 - **First release.** Blocked, and not on a decision — on a dependency. The chain,
   in full, because it has one link and no way round it:
 
@@ -73,16 +95,12 @@ roughly the order they would pay off.
   shipping a tree that is not the one that was tested, which trades a visible
   blocker for an invisible one.
 
-  Two things have to be in place before that tag is worth pushing, and neither is
-  today. The workflow itself audits clean — every action pinned to a full SHA,
-  every job with a timeout, `contents: read` at the top with write granted only
-  to the two jobs that attach release assets, and no checkout leaving credentials
-  on disk. What is missing is credentials and an environment: `release.yml`
-  references eight repository secrets (`CARGO_REGISTRY_TOKEN`, `PYPI_API_TOKEN`,
-  `NPM_TOKEN`, `GO_MIRROR_TOKEN`, `CENTRAL_USERNAME`, `CENTRAL_PASSWORD`,
-  `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE`) and a `release` environment, and the
-  repository has none of them. Every publish job would fail on authentication
-  even if the dependency chain above were resolved.
+  The workflow itself audits clean — every action pinned to a full SHA, every job
+  with a timeout, `contents: read` at the top with write granted only to the two
+  jobs that attach release assets, and no checkout leaving credentials on disk.
+  The credentials it needs now live at organisation level rather than in this
+  repository, so a publish would authenticate; the dependency above is what is
+  left.
 
   So the pipeline has never run, and a dispatch would not tell us much: it would
   stop at its first job. It is verified structurally instead, which is what
@@ -96,8 +114,6 @@ roughly the order they would pay off.
   `release.yml`, so the claim becomes true at exactly the moment the rest do. They
   are added together, in the `.github` profile repository where the badge assets
   live, when the release actually happens.
-- **Panel-local keys.** Panel focus moves and is drawn; nothing acts on it yet —
-  scrolling the tape or the book would be the first use.
 
 ## Not planned
 
