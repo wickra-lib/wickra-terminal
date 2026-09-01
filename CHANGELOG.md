@@ -219,5 +219,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   privileges of everyone who regenerated a lockfile. uv is now installed by hand
   or, with `WICKRA_BOOTSTRAP_UV=1`, fetched as one pinned release archive that is
   refused unless its checksum matches.
+- `osv-scanner.toml` records the pytest tmpdir advisory (GHSA-6w46-j5rx-g56g)
+  with its assessment. pytest is a CI-only dependency that never reaches a
+  published wheel, and the flaw needs a second local user on the machine, which
+  an ephemeral single-user runner does not have. It cannot simply be upgraded:
+  pytest 9 requires Python >= 3.10 while the 3.9 row exists to test the abi3
+  floor, so only that row stays at 8.4.2. Written here rather than left as prose
+  in the requirements file, because this file is now actually read.
 
 [Unreleased]: https://github.com/wickra-lib/wickra-terminal/commits/main
