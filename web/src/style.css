@@ -172,3 +172,16 @@ td {
 .last-bar {
   margin: 4px 0 0;
 }
+
+/* The catalogue strip: a chip per matching indicator name, clicking one drops
+   it into the add field. Five hundred names only become useful once filtered. */
+.catalogue {
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chip {
+  font-size: 11px;
+  padding: 2px 6px;
+  cursor: pointer;
+}

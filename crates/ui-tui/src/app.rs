@@ -4,14 +4,31 @@
 //! core synchronously each frame (the pull-based sources are drained per tick);
 //! the core owns the feed, so the renderer stays a thin driver.
 //!
-//! A small modal input layer drives the runtime module toggle: `s` opens a
-//! prompt to add a source, `a` a prompt to subscribe a symbol, and `d` / `x`
-//! remove the focused symbol / source. Sources can be added, removed and
-//! hot-swapped while the terminal runs, and multiple sources coexist.
+//! A small modal input layer drives everything the core's command surface
+//! offers: `s` adds a source, `a` subscribes a symbol, `d` / `x` remove the
+//! focused symbol / source, `i` / `k` add and remove an indicator, `t` changes
+//! the timeframe, `l` searches the registry catalogue, and `,` / `.` scrub a
+//! recording.
+//!
+//! That list used to stop at the sources. Five of the core's commands --
+//! `AddIndicator`, `RemoveIndicator`, `SetTimeframe`, `ListIndicators` and
+//! `Seek` -- were
+//! reachable from no renderer at all, which meant the registry could only be
+//! configured from a file and the time-machine had no key anywhere. The
+//! keymap is data, so both renderers read the same names from the config.
 
 use std::str::FromStr;
 
-use wickra_terminal_core::{Frame, Symbol, Terminal};
+use wickra_terminal_core::registry::KINDS;
+use wickra_terminal_core::{Frame, Symbol, Terminal, Timeframe};
+
+/// How many catalogue names the status line shows before it just reports the
+/// count. A terminal row holds about a dozen of them.
+const CATALOGUE_SHOWN: usize = 12;
+
+/// How many steps one traversal of a recording takes, so a keypress moves a
+/// twentieth of the feed however long it is.
+const SEEK_STEPS: usize = 20;
 
 use crate::input::Action;
 use crate::spec;
@@ -23,6 +40,14 @@ pub(crate) enum InputKind {
     AddSource,
     /// Subscribe a symbol on the focused source.
     AddSymbol,
+    /// Add an indicator from a shorthand (`Sma 20`, `Beta 20 vs ETH/USDT`).
+    AddIndicator,
+    /// Remove the indicator with this label (`Sma(20)`).
+    RemoveIndicator,
+    /// Change the bar size (`1m`, `4h`).
+    SetTimeframe,
+    /// Filter the registry catalogue.
+    ListIndicators,
 }
 
 /// The current interaction mode.
@@ -58,7 +83,7 @@ impl App {
             should_quit: false,
             frame: Frame { panels: Vec::new() },
             mode: Mode::Normal,
-            status: "s add source · a add symbol · d unsub · x remove source · ←/→ symbol · tab panel · q quit"
+            status: "s source · a symbol · d unsub · x drop source · i/k indicator · t timeframe · l catalogue · ,/. seek · ←/→ symbol · tab panel · q quit"
                 .to_string(),
             focused_panel: 0,
         }
@@ -81,6 +106,12 @@ impl App {
             Action::RemoveSource => self.remove_focused_source(),
             Action::NextPanel => self.cycle_panel(true),
             Action::PrevPanel => self.cycle_panel(false),
+            Action::AddIndicator => self.begin_input(InputKind::AddIndicator),
+            Action::RemoveIndicator => self.begin_input(InputKind::RemoveIndicator),
+            Action::SetTimeframe => self.begin_input(InputKind::SetTimeframe),
+            Action::ListIndicators => self.begin_input(InputKind::ListIndicators),
+            Action::SeekBack => self.seek_by(-1),
+            Action::SeekForward => self.seek_by(1),
             Action::None => {}
         }
     }
@@ -124,6 +155,10 @@ impl App {
         match kind {
             InputKind::AddSource => self.add_source(&buffer),
             InputKind::AddSymbol => self.add_symbol(&buffer),
+            InputKind::AddIndicator => self.add_indicator(&buffer),
+            InputKind::RemoveIndicator => self.remove_indicator(&buffer),
+            InputKind::SetTimeframe => self.set_timeframe(&buffer),
+            InputKind::ListIndicators => self.list_indicators(&buffer),
         }
     }
 
@@ -141,6 +176,12 @@ impl App {
                 let label = match kind {
                     InputKind::AddSource => "add source (synth:N | live:venue:SYM | replay:JSON)",
                     InputKind::AddSymbol => "add symbol (BASE/QUOTE)",
+                    InputKind::AddIndicator => "add indicator (Sma 20 | Beta 20 vs ETH/USDT)",
+                    InputKind::RemoveIndicator => "remove indicator (the label, e.g. Sma(20))",
+                    InputKind::SetTimeframe => "timeframe (1m | 5m | 1h | 4h)",
+                    InputKind::ListIndicators => {
+                        "search the catalogue (a substring, blank for all)"
+                    }
                 };
                 format!("{label}: {buffer}\u{2588}")
             }
@@ -211,6 +252,97 @@ impl App {
         if let Some((source, _)) = self.terminal.state().focus.clone() {
             self.terminal.remove_source(source);
             self.status = format!("removed source {source}");
+        }
+    }
+
+    /// Add an indicator to every market from a shorthand.
+    fn add_indicator(&mut self, shorthand: &str) {
+        let spec = match spec::parse_indicator(shorthand) {
+            Ok(spec) => spec,
+            Err(err) => {
+                self.status = format!("bad indicator: {err}");
+                return;
+            }
+        };
+        let label = spec.label();
+        match self.terminal.add_indicator(&spec) {
+            Ok(()) => self.status = format!("tracking {label}"),
+            Err(err) => self.status = format!("add failed: {err}"),
+        }
+    }
+
+    /// Stop tracking the indicator with this label.
+    fn remove_indicator(&mut self, label: &str) {
+        let label = label.trim();
+        match self.terminal.remove_indicator(label) {
+            Ok(()) => self.status = format!("removed {label}"),
+            Err(err) => self.status = format!("remove failed: {err}"),
+        }
+    }
+
+    /// Change the bar size the candle indicators are fed at.
+    fn set_timeframe(&mut self, text: &str) {
+        let timeframe = match Timeframe::parse(text.trim()) {
+            Ok(timeframe) => timeframe,
+            Err(err) => {
+                self.status = format!("bad timeframe: {err}");
+                return;
+            }
+        };
+        match self.terminal.set_timeframe(timeframe) {
+            Ok(()) => self.status = format!("timeframe {}", timeframe.label()),
+            Err(err) => self.status = format!("timeframe failed: {err}"),
+        }
+    }
+
+    /// Search the registry catalogue and report the matches in the status line.
+    ///
+    /// A status line rather than a scrollable overlay, and the reason is the
+    /// number: the catalogue is five hundred entries, so a list is only useful
+    /// once it is filtered, and once it is filtered it fits on a line. What a
+    /// user needs from it is the exact spelling of a name they half remember,
+    /// which is what this answers.
+    fn list_indicators(&mut self, filter: &str) {
+        let filter = filter.trim().to_ascii_lowercase();
+        let matches: Vec<&str> = KINDS
+            .iter()
+            .copied()
+            .filter(|kind| filter.is_empty() || kind.to_ascii_lowercase().contains(&filter))
+            .collect();
+        self.status = match matches.len() {
+            0 => format!("no indicator matches {filter:?}"),
+            n if n <= CATALOGUE_SHOWN => format!("{n}: {}", matches.join(" ")),
+            n => format!(
+                "{n} match, first {CATALOGUE_SHOWN}: {}",
+                matches[..CATALOGUE_SHOWN].join(" ")
+            ),
+        };
+    }
+
+    /// Step the focused source's replay cursor -- the time-machine.
+    ///
+    /// A proportional step rather than a fixed number of events: a recording is
+    /// whatever length it is, and stepping one event at a time through a feed of
+    /// fifty thousand is not scrubbing. Sources that cannot be replayed report
+    /// so rather than doing nothing silently.
+    fn seek_by(&mut self, direction: i64) {
+        let Some((source, _)) = self.terminal.state().focus.clone() else {
+            self.status = "nothing focused to seek".to_string();
+            return;
+        };
+        let Some((cursor, length)) = self.terminal.replay_position(source) else {
+            self.status = format!("source {source} is not replayable");
+            return;
+        };
+        let step = (length / SEEK_STEPS).max(1);
+        let offset = direction * i64::try_from(step).unwrap_or(i64::MAX);
+        let target = i64::try_from(cursor)
+            .unwrap_or(i64::MAX)
+            .saturating_add(offset);
+        let target = usize::try_from(target.max(0)).unwrap_or(0).min(length);
+        match self.terminal.seek(source, target) {
+            Ok(()) => self.status = format!("replay {target}/{length}"),
+            Err(err) => self.status = format!("seek failed: {err}"),
         }
     }
 
@@ -380,6 +512,168 @@ mod tests {
         assert!(
             app.status.contains(&format!("{kind:?}")),
             "status {:?} does not name {kind:?}",
+            app.status
+        );
+    }
+
+    /// Type into an open prompt and submit it.
+    fn type_and_submit(app: &mut App, text: &str) {
+        for ch in text.chars() {
+            app.input_push(ch);
+        }
+        app.input_submit();
+    }
+
+    #[test]
+    fn an_indicator_can_be_added_and_removed_from_the_keyboard() {
+        // The registry is the headline feature and was reachable only from a
+        // config file: neither renderer bound AddIndicator to anything.
+        let mut app = synth_app();
+        app.terminal
+            .subscribe(0, &Symbol::new("BTC", "USDT"))
+            .unwrap();
+        let before = app.terminal.config().indicators.len();
+
+        app.on_action(Action::AddIndicator);
+        assert!(app.is_input());
+        type_and_submit(&mut app, "Rsi 14");
+        assert_eq!(app.terminal.config().indicators.len(), before + 1);
+        assert!(app.status.contains("Rsi(14)"), "status: {}", app.status);
+
+        app.on_action(Action::RemoveIndicator);
+        type_and_submit(&mut app, "Rsi(14)");
+        assert_eq!(app.terminal.config().indicators.len(), before);
+    }
+
+    #[test]
+    fn a_pairwise_indicator_takes_its_reference_from_the_prompt() {
+        // `vs` is split off before the parameters, so a market with digits in it
+        // is never read as one.
+        let mut app = synth_app();
+        app.terminal
+            .subscribe(0, &Symbol::new("BTC", "USDT"))
+            .unwrap();
+        app.on_action(Action::AddIndicator);
+        type_and_submit(&mut app, "Beta 20 vs ETH/USDT");
+        let spec = app.terminal.config().indicators.last().unwrap();
+        assert_eq!(spec.kind, "Beta");
+        assert_eq!(spec.params, vec![20.0]);
+        assert_eq!(spec.reference.as_deref(), Some("ETH/USDT"));
+    }
+
+    #[test]
+    fn a_bad_indicator_reports_rather_than_being_dropped() {
+        let mut app = synth_app();
+        app.on_action(Action::AddIndicator);
+        type_and_submit(&mut app, "NoSuchIndicator 3");
+        assert!(app.status.contains("failed"), "status: {}", app.status);
+    }
+
+    #[test]
+    fn the_timeframe_can_be_changed_from_the_keyboard() {
+        let mut app = synth_app();
+        app.on_action(Action::SetTimeframe);
+        type_and_submit(&mut app, "5m");
+        assert_eq!(app.terminal.config().timeframe.label(), "5m");
+        assert!(app.status.contains("5m"), "status: {}", app.status);
+
+        app.on_action(Action::SetTimeframe);
+        type_and_submit(&mut app, "not a timeframe");
+        assert!(
+            app.status.contains("bad timeframe"),
+            "status: {}",
+            app.status
+        );
+        assert_eq!(
+            app.terminal.config().timeframe.label(),
+            "5m",
+            "kept the old"
+        );
+    }
+
+    #[test]
+    fn the_catalogue_can_be_searched() {
+        // What a user needs from five hundred names is the exact spelling of one
+        // they half remember, which is a filter rather than a list.
+        let mut app = synth_app();
+        app.on_action(Action::ListIndicators);
+        type_and_submit(&mut app, "bollinger");
+        assert!(
+            app.status.contains("BollingerBands"),
+            "status: {}",
+            app.status
+        );
+
+        app.on_action(Action::ListIndicators);
+        type_and_submit(&mut app, "zzzz");
+        assert!(
+            app.status.contains("no indicator"),
+            "status: {}",
+            app.status
+        );
+    }
+
+    /// A recorded feed of `n` trades, as the JSON a `Replay` source takes.
+    ///
+    /// Written out rather than serialised: the shape is the one the golden
+    /// corpus already pins, and building it here would mean three dev
+    /// dependencies (`serde_json`, `rust_decimal`, the exchange types) for one
+    /// test.
+    fn replay_feed(n: u32) -> String {
+        let events: Vec<String> = (0..n)
+            .map(|i| {
+                format!(
+                    r#"{{"type":"trade","symbol":{{"base":"BTC","quote":"USDT"}},"price":"{}","quantity":"1","aggressor":"Buy","timestamp":{}}}"#,
+                    20_000 + i,
+                    i64::from(i) * 1000
+                )
+            })
+            .collect();
+        format!("[{}]", events.join(","))
+    }
+
+    #[test]
+    fn seeking_moves_a_replay_and_says_where_it_is() {
+        // The time-machine had no key in either renderer, so the one thing that
+        // makes a recording more than a slow synthetic feed was unreachable.
+        let mut config = Config::default_layout();
+        config.sources = vec![SourceSpec::Replay {
+            dataset: replay_feed(40),
+        }];
+        let mut app = App::new(Terminal::new(&config).unwrap());
+        app.terminal
+            .subscribe(0, &Symbol::new("BTC", "USDT"))
+            .unwrap();
+        app.update();
+        app.update();
+
+        let (_, length) = app.terminal.replay_position(0).unwrap();
+        assert_eq!(length, 40);
+
+        app.on_action(Action::SeekBack);
+        assert!(app.status.starts_with("replay "), "status: {}", app.status);
+        let (rewound, _) = app.terminal.replay_position(0).unwrap();
+
+        app.on_action(Action::SeekForward);
+        let (moved, _) = app.terminal.replay_position(0).unwrap();
+        assert!(
+            moved >= rewound,
+            "forward went backwards: {rewound} -> {moved}"
+        );
+    }
+
+    #[test]
+    fn seeking_a_source_that_cannot_replay_says_so() {
+        // Silently doing nothing is the failure this reports: a synth feed looks
+        // identical to a recording until you try to scrub it.
+        let mut app = synth_app();
+        app.terminal
+            .subscribe(0, &Symbol::new("BTC", "USDT"))
+            .unwrap();
+        app.on_action(Action::SeekBack);
+        assert!(
+            app.status.contains("not replayable"),
+            "status: {}",
             app.status
         );
     }

@@ -428,8 +428,8 @@ fn every_binding_readme_documents_every_command() {
         .collect();
     assert_eq!(
         variants.len(),
-        13,
-        "expected thirteen commands, found {variants:?}"
+        14,
+        "expected fourteen commands, found {variants:?}"
     );
 
     for rel in BINDING_READMES {

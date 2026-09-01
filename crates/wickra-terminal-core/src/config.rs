@@ -97,6 +97,12 @@ impl Default for Keybinds {
             ("remove_source", "x"),
             ("next_symbol", "right"),
             ("prev_symbol", "left"),
+            ("add_indicator", "i"),
+            ("remove_indicator", "k"),
+            ("set_timeframe", "t"),
+            ("list_indicators", "l"),
+            ("seek_back", ","),
+            ("seek_forward", "."),
         ]
         .into_iter()
         .map(|(a, k)| (a.to_string(), k.to_string()))

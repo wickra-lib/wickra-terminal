@@ -86,6 +86,16 @@ enum Command {
     /// Answer with the registry catalogue instead of a frame: every indicator
     /// name this build accepts, with the parameters wickra itself uses.
     ListIndicators,
+    /// Answer with a replayable source's position instead of a frame, so a
+    /// renderer can draw a time-machine scrubber.
+    ///
+    /// Its own command rather than a field on the frame: the position belongs to
+    /// a source, not to a panel, and putting it in every frame would put it in
+    /// front of every consumer that has no replay at all.
+    ReplayPosition {
+        /// The source id.
+        source: SourceId,
+    },
     /// Push an externally sourced market event into a host-fed (`Manual`) source,
     /// to be folded on the next tick. The event carries its own market.
     Feed {
@@ -110,6 +120,19 @@ enum Command {
         /// The channels that arrived.
         update: DerivativesUpdate,
     },
+}
+
+/// A replayable source's position: what `ReplayPosition` answers with.
+///
+/// A source that cannot be replayed answers `0/0` rather than an error. That is
+/// the honest reading -- a live feed has no recorded length -- and it lets a
+/// renderer ask about whatever is focused without first knowing what it is.
+#[derive(Debug, Serialize)]
+pub struct ReplayPosition {
+    /// How many recorded events have been folded.
+    pub cursor: usize,
+    /// How many events the recording holds. Zero when it is not a recording.
+    pub length: usize,
 }
 
 /// The registry catalogue: what `ListIndicators` answers with.
@@ -459,6 +482,65 @@ impl Terminal {
         self.state.focus = Some((id, sym.clone()));
     }
 
+    /// Track one more indicator on every market, now and on markets opened
+    /// later. It starts cold and warms up from the next tick.
+    ///
+    /// The typed twin of the `AddIndicator` command, and what that command calls
+    /// -- so the config stays in step either way. Without it a Rust embedder had
+    /// to assemble JSON to reach its own registry, which is why neither renderer
+    /// ever did.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Config`] if the spec names no registered kind, if its
+    /// parameters are refused, or if a pairwise kind carries no reference.
+    pub fn add_indicator(&mut self, spec: &IndicatorSpec) -> Result<()> {
+        self.state.add_indicator(spec)?;
+        self.config.indicators.push(spec.clone());
+        Ok(())
+    }
+
+    /// Stop tracking the indicator with this label (`Sma(20)`, `Rsi(14)`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Command`] if no tracked indicator carries that label.
+    pub fn remove_indicator(&mut self, label: &str) -> Result<()> {
+        if !self.state.remove_indicator(label) {
+            return Err(Error::Command(format!("no such indicator: {label}")));
+        }
+        self.config.indicators.retain(|s| s.label() != label);
+        Ok(())
+    }
+
+    /// Change the bar size the candle-input indicators are fed at.
+    ///
+    /// Restarts the bar-derived state: each market opens a new bar, the kept
+    /// bars are dropped and the indicator set is rebuilt. The price history,
+    /// tape, book and footprint are untouched, since none comes from bars.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Config`] if an indicator cannot be rebuilt.
+    pub fn set_timeframe(&mut self, timeframe: Timeframe) -> Result<()> {
+        self.state.set_timeframe(timeframe)?;
+        self.config.timeframe = timeframe;
+        Ok(())
+    }
+
+    /// A replayable source's position and recorded length, for a time-machine
+    /// scrubber. `None` for a source that cannot be replayed.
+    ///
+    /// The trait has carried `cursor` and `event_count` from the start and
+    /// nothing read them, so neither renderer could show where in a recording it
+    /// was -- or offer to move.
+    #[must_use]
+    pub fn replay_position(&self, id: SourceId) -> Option<(usize, usize)> {
+        let source = self.state.sources.iter().find(|s| s.id() == id)?;
+        let length = source.event_count();
+        (length > 0).then(|| (source.cursor(), length))
+    }
+
     /// Pump every source and build the next frame.
     pub fn tick(&mut self) -> Frame {
         self.state.pump();
@@ -523,24 +605,23 @@ impl Terminal {
                 self.feed_derivatives(source, &symbol, &update)?;
             }
             Command::AddIndicator { spec } => {
-                self.state.add_indicator(&spec)?;
-                self.config.indicators.push(spec);
+                self.add_indicator(&spec)?;
             }
             Command::RemoveIndicator { label } => {
-                if !self.state.remove_indicator(&label) {
-                    return Err(Error::Command(format!("no such indicator: {label}")));
-                }
-                self.config.indicators.retain(|s| s.label() != label);
+                self.remove_indicator(&label)?;
             }
             Command::SetTimeframe { timeframe } => {
-                self.state.set_timeframe(timeframe)?;
-                self.config.timeframe = timeframe;
+                self.set_timeframe(timeframe)?;
             }
             // The one command that answers rather than renders: every other
             // command changes state and gets the new frame back, so returning a
             // frame here would mean the catalogue had nowhere to go.
             Command::ListIndicators => {
                 return Ok(serde_json::to_string(&Catalogue::current())?);
+            }
+            Command::ReplayPosition { source } => {
+                let (cursor, length) = self.replay_position(source).unwrap_or((0, 0));
+                return Ok(serde_json::to_string(&ReplayPosition { cursor, length })?);
             }
         }
         Ok(serde_json::to_string(&self.frame())?)

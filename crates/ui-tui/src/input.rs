@@ -28,6 +28,18 @@ pub(crate) enum Action {
     NextSymbol,
     /// Focus the previous watched symbol.
     PrevSymbol,
+    /// Prompt for an indicator to add to every market.
+    AddIndicator,
+    /// Prompt for the label of an indicator to stop tracking.
+    RemoveIndicator,
+    /// Prompt for the bar size the candle indicators are fed at.
+    SetTimeframe,
+    /// Prompt for a filter over the registry catalogue.
+    ListIndicators,
+    /// Rewind a replayable source (the time-machine).
+    SeekBack,
+    /// Advance a replayable source.
+    SeekForward,
     /// No bound action for this key.
     None,
 }
@@ -70,6 +82,12 @@ pub(crate) fn map_key(key: KeyEvent, binds: &Keybinds) -> Action {
         Some("remove_source") => Action::RemoveSource,
         Some("next_symbol") => Action::NextSymbol,
         Some("prev_symbol") => Action::PrevSymbol,
+        Some("add_indicator") => Action::AddIndicator,
+        Some("remove_indicator") => Action::RemoveIndicator,
+        Some("set_timeframe") => Action::SetTimeframe,
+        Some("list_indicators") => Action::ListIndicators,
+        Some("seek_back") => Action::SeekBack,
+        Some("seek_forward") => Action::SeekForward,
         _ => Action::None,
     }
 }

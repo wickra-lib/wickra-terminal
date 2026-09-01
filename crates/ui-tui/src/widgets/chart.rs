@@ -352,7 +352,11 @@ mod tests {
         let buffer = crate::widgets::harness::draw(40, 12, |frame, area| {
             render(frame, area, &view, false);
         });
-        let text: String = buffer.content().iter().map(ratatui::buffer::Cell::symbol).collect();
+        let text: String = buffer
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect();
         assert!(
             text.contains("130.00"),
             "the high is not labelled on the scale"
@@ -378,7 +382,11 @@ mod tests {
         let buffer = crate::widgets::harness::draw(30, 6, |frame, area| {
             render(frame, area, &view, false);
         });
-        let text: String = buffer.content().iter().map(ratatui::buffer::Cell::symbol).collect();
+        let text: String = buffer
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect();
         assert!(
             text.contains(LEVELS[LEVELS.len() - 1]),
             "no sparkline drawn for a market with no closed bars"
@@ -400,7 +408,11 @@ mod tests {
         let buffer = crate::widgets::harness::draw(40, 12, |frame, area| {
             render(frame, area, &view, false);
         });
-        let text: String = buffer.content().iter().map(ratatui::buffer::Cell::symbol).collect();
+        let text: String = buffer
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect();
         assert!(
             text.contains("500.00"),
             "the scale ignores the forming bar, so it is not being drawn"
@@ -425,7 +437,11 @@ mod tests {
         let buffer = crate::widgets::harness::draw(40, 12, |frame, area| {
             render(frame, area, &view, false);
         });
-        let text: String = buffer.content().iter().map(ratatui::buffer::Cell::symbol).collect();
+        let text: String = buffer
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect();
         assert!(text.contains("Sma(20)=110.50"), "readout missing: {text}");
     }
 }
