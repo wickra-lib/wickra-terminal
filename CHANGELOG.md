@@ -204,6 +204,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `registry_drive` fuzz target found it in under a minute. The ceiling is a
   million -- a million one-minute bars is two years -- and the refusal names the
   indicator and the number.
+- Every command the boundary carries is now reachable from both renderers.
+  `AddIndicator`, `RemoveIndicator`, `SetTimeframe`, `ListIndicators` and `Seek`
+  were bound to nothing in either front-end, so the registry could only be
+  configured from a file and the time-machine had no control anywhere. The TUI
+  binds `i`, `k`, `t`, `l` and `,` / `.`; the web renderer gets a second control
+  bar with the same five. The keymap is data and shared, so a rebinding moves
+  both. `Feed` and `FeedDerivatives` stay unbound on purpose -- they are how a
+  host pushes its own feed in, so their caller is an embedder rather than a
+  person at a keyboard.
+- `Terminal::add_indicator`, `remove_indicator`, `set_timeframe` and
+  `replay_position`. The first three existed only inside `command_json`, so a
+  Rust embedder had to assemble JSON to reach its own registry; `command_json`
+  now calls them, and the config stays in step either way.
+- A `ReplayPosition` command, the second that answers rather than renders. The
+  `DataSource` trait has carried `cursor` and `event_count` from the start and
+  nothing read them, so no renderer could show where in a recording it stood. A
+  source that is not a recording answers `0/0` rather than an error.
 - Both renderers draw candles. The TUI chart was two lines -- a sparkline of
   eight block glyphs and a row of indicator text -- on the panel that occupies
   seventy percent of the default layout: no axis, no price scale, no bar
