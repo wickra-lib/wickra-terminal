@@ -187,7 +187,7 @@ frame = json.loads(term.command(json.dumps({"type": "Tick"})))
 print(frame["panels"][0])          # the chart panel's view-model
 ```
 
-## Performance
+## Benchmarks
 
 The frame budget is dominated by the terminal's own CPU work — folding events and
 building view-models — not by rendering. Criterion medians on a Windows x86-64
@@ -220,7 +220,7 @@ examples/              one runnable example per language
 docs/                  indicators, panels, sources, renderers, streaming, cookbook
 ```
 
-## Building from source
+## Building everything from source
 
 ```bash
 # Rust core + tests + lints
