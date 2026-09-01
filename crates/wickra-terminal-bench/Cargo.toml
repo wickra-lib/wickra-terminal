@@ -16,7 +16,12 @@ workspace = true
 wickra-terminal-core = { workspace = true }
 
 [dev-dependencies]
-criterion.workspace = true
+# Not the workspace criterion: this is CodSpeed's drop-in replacement, pulled in
+# under the name `criterion` so the benches keep their `use criterion::{...}`
+# imports unchanged. Outside a CodSpeed runner it behaves as criterion does, so
+# `cargo bench` locally is unaffected -- and inside one, the benches actually
+# report. Without the alias codspeed.yml runs them and measures nothing.
+criterion = { package = "codspeed-criterion-compat", version = "5.0.1", features = ["html_reports"] }
 rust_decimal.workspace = true
 wickra-exchange-core.workspace = true
 

@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
 
 permissions:
   contents: read
@@ -133,7 +134,7 @@ jobs:
   binding-surface:
     name: Binding surface parity
     runs-on: ubuntu-latest
-    timeout-minutes: 10 # a static check; if it is not done in ten minutes it is stuck
+    timeout-minutes: 10 # static checks; if they are not done in ten minutes they are stuck
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -145,10 +146,24 @@ jobs:
       - name: Compare every binding's surface with the C ABI
         run: python3 scripts/check_binding_surface.py
 
+      # The version lives in twenty-odd declarations across six package
+      # managers. A bump that misses one publishes, say, an npm package pinning
+      # a native binary that was never built -- which surfaces at install time,
+      # on a user's machine, after the tag is already irreversible.
+      - name: Every version declaration agrees
+        run: python3 scripts/check_version_sync.py
+
+      # Each bindings/*/README.md is the long description of a published
+      # package: PyPI, NuGet, pkg.go.dev and r-universe render them. A link that
+      # leaves the package resolves on GitHub and nowhere else, and nothing else
+      # in the build would say so, because the file it points at does exist.
+      - name: Binding READMEs link only to what travels with them
+        run: python3 scripts/check_readme_links.py
+
   supply-chain:
-    name: cargo-deny
+    name: Supply-chain (cargo-deny + osv-scanner)
     runs-on: ubuntu-latest
-    timeout-minutes: 15 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
+    timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -158,6 +173,103 @@ jobs:
         with:
           tool: cargo-deny
       - run: cargo deny check
+
+      # osv-scanner.toml existed and nothing ran it. The file records advisories
+      # assessed as not affecting this project, with the reasoning next to each
+      # -- and that assessment was load-bearing for nobody, because no workflow
+      # ever consulted it.
+      #
+      # cargo-deny above covers the Rust graph only. This covers the other six
+      # ecosystems -- npm, PyPI, Maven, NuGet, Go modules, R -- which had no
+      # vulnerability scanning in CI at all.
+      #
+      # --no-resolve turns off transitive resolution of *manifests*. The default
+      # enricher resolves each pom.xml against Maven Central, and ours depends on
+      # org.wickra:wickra-terminal at the version in the tree -- which does not
+      # exist there until the release publishes it. Without the flag every
+      # version bump makes this job fail on a lookup for the artefact the bump
+      # exists to create. A check that goes red for a reason other than the one
+      # it checks teaches people to ignore it.
+      #
+      # Everything pinned in a lockfile -- Cargo.lock, package-lock.json, go.mod
+      # -- is still scanned in full and transitively, because a lockfile needs no
+      # resolution.
+      - name: osv-scanner
+        uses: google/osv-scanner-action/osv-scanner-action@6e4298ebc4db23e847df9b2e2de2939d6f066c67 # v2.5.1
+        with:
+          scan-args: |-
+            --recursive
+            --no-resolve
+            --config=osv-scanner.toml
+            ./
+
+  # The published API is a promise, and the two crates that carry it --
+  # wickra-terminal-core and wickra-terminal -- are what ten language bindings
+  # sit on top of. Nothing checked that a patch release leaves the surface
+  # alone.
+  #
+  # The baseline is the newest version already on crates.io, fetched by the tool
+  # itself. Neither crate is published yet (see ROADMAP: the release is blocked
+  # on wickra-exchange reaching crates.io), and cargo-semver-checks fails rather
+  # than passes when it cannot find a baseline -- so the probe below decides
+  # which of the two situations we are in and says so out loud. It is a no-op
+  # today and becomes a real gate the moment 0.1.0 publishes, without anyone
+  # having to remember to come back and enable it.
+  semver:
+    name: Public API (cargo-semver-checks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # backstop: it builds rustdoc JSON for each crate and its baseline
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: ./.github/actions/setup-rust
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
+        timeout-minutes: 6
+
+      # The sparse index answers 404 for a crate that has never been published,
+      # which is the only way to tell "no baseline yet" from "the registry is
+      # unreachable" -- and those two must not be treated alike.
+      - name: Is there a baseline on crates.io yet?
+        id: baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          published=yes
+          for crate in wickra-terminal-core wickra-terminal; do
+            url="https://index.crates.io/wi/ck/${crate}"
+            code=$(curl -s -o /dev/null -w '%{http_code}' --retry 5 --retry-all-errors "$url")
+            case "$code" in
+              200) ;;
+              404) published=no ;;
+              *) echo "::error::crates.io index returned $code for $crate"; exit 1 ;;
+            esac
+          done
+          echo "published=$published" >> "$GITHUB_OUTPUT"
+
+      - name: Not published yet, so there is nothing to compare against
+        if: steps.baseline.outputs.published == 'no'
+        run: |
+          echo "::notice::wickra-terminal-core and wickra-terminal are not on crates.io, so cargo-semver-checks has no baseline. This job becomes a real gate with the first release."
+
+      - name: Install cargo-semver-checks
+        if: steps.baseline.outputs.published == 'yes'
+        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
+        timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
+        with:
+          tool: cargo-semver-checks
+
+      # Named explicitly rather than --workspace: the bench crate and the four
+      # binding crates are `publish = false`, so they have no baseline to compare
+      # against and nothing to promise.
+      - name: Check the published crates
+        if: steps.baseline.outputs.published == 'yes'
+        run: |
+          cargo semver-checks check-release -p wickra-terminal-core -p wickra-terminal
 
   python:
     name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
@@ -620,7 +732,11 @@ jobs:
           export WKTERM_INC="${WKTERM_INC//\\//}"
           export WKTERM_LIB="${WKTERM_LIB//\\//}"
           if command -v cygpath >/dev/null 2>&1; then
-            export PATH="$(cygpath -u "$WKTERM_LIB"):$PATH"
+            # Assigned first, then exported: `export x=$(...)` masks the
+            # command's exit status behind export's own, so a cygpath failure
+            # would go unnoticed and leave the loader path silently wrong.
+            wkterm_lib_unix=$(cygpath -u "$WKTERM_LIB")
+            export PATH="$wkterm_lib_unix:$PATH"
           else
             export LD_LIBRARY_PATH="$WKTERM_LIB:$LD_LIBRARY_PATH"
             export DYLD_LIBRARY_PATH="$WKTERM_LIB:$DYLD_LIBRARY_PATH"

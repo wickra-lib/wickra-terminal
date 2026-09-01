@@ -91,6 +91,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   performance regression, documentation, question) and a long-form pull-request
   template for changes that touch the core contract, several bindings at once or
   the release pipeline.
+- `actionlint.yml`: the workflow files are now checked for whether they work at
+  all -- unknown contexts, invalid `needs`, dead matrix keys -- and, through the
+  bundled shellcheck, so is the shell inside every `run:` block. zizmor reads
+  the same files for security; nothing read them for correctness.
+- `codspeed.yml`: instruction counts on every pull request, so a performance
+  regression is reported when it lands rather than found weeks later by someone
+  re-measuring by hand.
+- `.github/codeql/codeql-config.yml`, and CodeQL now analyses Go, C/C++, C# and
+  Java as well -- the four bindings that hold a native handle or hand a pointer
+  to C, and so the only four where a memory mistake is possible at all. All four
+  are compiled rather than read as source, because without a build no call
+  resolves and the analysis is reported as low quality.
+- An `osv-scanner` step in the supply-chain job. `osv-scanner.toml` recorded
+  advisories assessed as not affecting this project and no workflow ever read
+  it; cargo-deny covers the Rust graph only, and npm, PyPI, Maven, NuGet, Go and
+  R had no vulnerability scanning at all.
+- A `semver` job holding the two published crates to their public surface. It
+  probes the crates.io index first: with no release yet there is no baseline, so
+  it says so and passes, and becomes a real gate with the first publish.
+- A dependabot entry for `/fuzz`. The fuzz targets are their own cargo
+  workspace, so the root entry never reached `fuzz/Cargo.lock`.
+- `timeout-minutes` on every job of `codeql`, `links`, `scorecard`,
+  `sync-metadata` and `zizmor`, which were unbounded and could hang for
+  GitHub's six-hour default.
+- `scripts/check_version_sync.py`, wired into CI: the version lives in 23
+  declarations across six package managers, and a bump that misses one
+  publishes an npm package pinning a native binary that was never built --
+  which surfaces at install time, on a user's machine, after the tag is
+  irreversible.
+- `scripts/check_readme_links.py`, wired into CI: each binding README is the
+  long description of a published package, so a link that leaves the package
+  resolves on GitHub and nowhere else, and nothing else in the build would say
+  so, because the file it points at does exist.
 
 ### Changed
 
@@ -104,6 +137,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README section headings follow the fixed order the repository blueprint sets:
   `## Performance` is now `## Benchmarks`, and `## Building from source` is now
   `## Building everything from source`.
+- `ci.yml` builds pull requests against `main` only. It had no branch filter, so
+  a pull request against any branch started the full matrix.
+- `criterion` in `wickra-terminal-bench` resolves to `codspeed-criterion-compat`.
+  Outside a CodSpeed runner it behaves exactly as criterion does; inside one it
+  is the difference between the benches reporting and running silently.
 
 - `wickra-core` tracked from `1`; the `wickra-exchange` git dependencies are
   pinned to an explicit `rev`.
@@ -124,6 +162,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The seven shell problems actionlint found on its first run, each real. Three
+  publish steps used `A && B || C`, where C also runs when A succeeded and B
+  failed -- so a publish that worked could report itself as an
+  already-published skip, or exit 1. Two used `local x=$(...)` / `export
+  x=$(...)`, which make the assignment's exit status the builtin's and hide a
+  failed command behind an empty variable. One counted release assets with `ls
+  | wc -l`, and one passed an unquoted `find` expansion to `javac`.
+
 - The README's Python example used a command shape the deserialiser rejects and
   ticked without subscribing; the cookbook's TOML was not valid TOML; and
   `docs/SOURCES.md` fed a source that cannot be fed. All three are now executed
@@ -141,5 +187,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   all; the dead `RUSTSEC-2024-0436` suppression was removed from both files.
 - The gated live-integration test fails on no data instead of passing, so the
   nightly job can report a real result.
+- `scripts/update-lockfiles.sh` no longer pipes `astral.sh/uv/install.sh` into a
+  shell. That ran whatever was behind the URL at that moment, with the
+  privileges of everyone who regenerated a lockfile. uv is now installed by hand
+  or, with `WICKRA_BOOTSTRAP_UV=1`, fetched as one pinned release archive that is
+  refused unless its checksum matches.
 
 [Unreleased]: https://github.com/wickra-lib/wickra-terminal/commits/main
