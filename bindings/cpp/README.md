@@ -151,6 +151,7 @@ the same JSON in all of them:
 | `SetTimeframe` | Set the bar size the candle-input indicators are fed at |
 | `ListIndicators` | The catalogue: every indicator, profile and bar type this build accepts, each with its default parameters |
 | `ReplayPosition` | Where a replayable source stands, for a time-machine scrubber. Answers `0/0` for a source that is not a recording |
+| `ExportRecording` / `SetRecording` | Save the recorded events in the shape `Replay` takes, and turn recording on or off |
 
 `ListIndicators` is the one command that answers rather than renders, and each
 row carries `needs_reference`, which marks the pairwise indicators that compare

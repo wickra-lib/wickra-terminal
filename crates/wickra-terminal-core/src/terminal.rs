@@ -86,6 +86,22 @@ enum Command {
     /// Answer with the registry catalogue instead of a frame: every indicator
     /// name this build accepts, with the parameters wickra itself uses.
     ListIndicators,
+    /// Answer with the recorded events instead of a frame, in exactly the shape
+    /// `Replay` takes — so a session can be saved and played back.
+    ///
+    /// The core is filesystem-free, because it has to be to run in a browser, so
+    /// it records into a bounded ring and hands the events over; writing them
+    /// anywhere is the host's job.
+    ExportRecording,
+    /// Turn recording on with a capacity, or off.
+    ///
+    /// Clears what is already held either way: a capacity change that kept the
+    /// old events would leave a recording that is part one size and part
+    /// another.
+    SetRecording {
+        /// How many recent events to keep, or `null` to stop recording.
+        capacity: Option<usize>,
+    },
     /// Answer with a replayable source's position instead of a frame, so a
     /// renderer can draw a time-machine scrubber.
     ///
@@ -287,13 +303,14 @@ impl Terminal {
         // profile that is not one should say so here, not on the first bar.
         ProfileSet::from_specs(&config.profiles)?;
         BarSet::from_specs(&config.bars)?;
-        let state = AppState {
+        let mut state = AppState {
             indicators: config.indicators.clone(),
             profiles: config.profiles.clone(),
             bars: config.bars.clone(),
             timeframe: config.timeframe,
             ..AppState::default()
         };
+        state.set_recording(config.record);
         let mut terminal = Self {
             state,
             config: config.clone(),
@@ -528,6 +545,30 @@ impl Terminal {
         Ok(())
     }
 
+    /// The recorded events, oldest first, in the shape `Replay` takes.
+    ///
+    /// Empty unless recording is on. The typed twin of `ExportRecording`.
+    #[must_use]
+    pub fn recording(&self) -> Vec<Event> {
+        self.state.recording()
+    }
+
+    /// How many events the recording holds. Cheaper than counting
+    /// [`recording`](Self::recording), which clones the whole ring.
+    #[must_use]
+    pub fn recording_len(&self) -> usize {
+        self.state.recorded.len()
+    }
+
+    /// Turn recording on with a capacity, or off.
+    ///
+    /// Clears what is already held either way, so a capacity change never leaves
+    /// a recording that is part one size and part another.
+    pub fn set_recording(&mut self, capacity: Option<usize>) {
+        self.state.set_recording(capacity);
+        self.config.record = capacity;
+    }
+
     /// A replayable source's position and recorded length, for a time-machine
     /// scrubber. `None` for a source that cannot be replayed.
     ///
@@ -618,6 +659,13 @@ impl Terminal {
             // frame here would mean the catalogue had nowhere to go.
             Command::ListIndicators => {
                 return Ok(serde_json::to_string(&Catalogue::current())?);
+            }
+            Command::ExportRecording => {
+                return Ok(serde_json::to_string(&self.state.recording())?);
+            }
+            Command::SetRecording { capacity } => {
+                self.state.set_recording(capacity);
+                self.config.record = capacity;
             }
             Command::ReplayPosition { source } => {
                 let (cursor, length) = self.replay_position(source).unwrap_or((0, 0));
@@ -763,6 +811,115 @@ mod tests {
         term.unsubscribe(0, &btc);
         // Focus falls back to the remaining subscription.
         assert_eq!(term.state().focus, Some((0, eth)));
+    }
+
+    /// A replay config over a short recorded feed.
+    fn recording_config(record: Option<usize>) -> Config {
+        let feed = (0..6)
+            .map(|i| {
+                format!(
+                    r#"{{"type":"trade","symbol":{{"base":"BTC","quote":"USDT"}},"price":"{}","quantity":"1","aggressor":"Buy","timestamp":{}}}"#,
+                    100 + i,
+                    i + 1
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut config = Config::default_layout();
+        config.sources = vec![SourceSpec::Replay {
+            dataset: format!("[{feed}]"),
+        }];
+        config.record = record;
+        config
+    }
+
+    #[test]
+    fn nothing_is_recorded_unless_recording_is_on() {
+        // Off by default, and it has to be: a terminal left running overnight
+        // must not fill memory with a feed nobody asked it to keep.
+        let mut terminal = Terminal::new(&recording_config(None)).unwrap();
+        terminal.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
+        for _ in 0..6 {
+            terminal.tick();
+        }
+        assert_eq!(terminal.recording_len(), 0);
+    }
+
+    #[test]
+    fn a_recording_comes_back_in_the_shape_replay_takes() {
+        // The whole point: the terminal could rewind a recording and had no way
+        // to make one, because Replay takes the feed as JSON rather than a path.
+        // So what comes out has to go straight back in.
+        let mut terminal = Terminal::new(&recording_config(Some(64))).unwrap();
+        terminal.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
+        for _ in 0..6 {
+            terminal.tick();
+        }
+        assert_eq!(terminal.recording_len(), 6);
+
+        let exported = terminal
+            .command_json(r#"{"type":"ExportRecording"}"#)
+            .unwrap();
+        let mut replayed = Config::default_layout();
+        replayed.sources = vec![SourceSpec::Replay { dataset: exported }];
+        let mut second = Terminal::new(&replayed).unwrap();
+        second.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
+        for _ in 0..6 {
+            second.tick();
+        }
+        assert!(
+            second
+                .state()
+                .get(&(0, Symbol::new("BTC", "USDT")))
+                .is_some(),
+            "the exported recording did not replay"
+        );
+    }
+
+    #[test]
+    fn a_seek_does_not_double_the_recording() {
+        // The trap this design exists around: `fold` is also how a seek re-folds
+        // a recording, so recording there would append the replayed events back
+        // onto the recording and every rewind would double it.
+        let mut terminal = Terminal::new(&recording_config(Some(64))).unwrap();
+        terminal.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
+        for _ in 0..6 {
+            terminal.tick();
+        }
+        let before = terminal.recording_len();
+        terminal.seek(0, 2).unwrap();
+        assert_eq!(
+            terminal.recording_len(),
+            before,
+            "a seek grew the recording"
+        );
+    }
+
+    #[test]
+    fn the_recording_is_bounded_and_keeps_the_newest() {
+        let mut terminal = Terminal::new(&recording_config(Some(2))).unwrap();
+        terminal.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
+        for _ in 0..6 {
+            terminal.tick();
+        }
+        assert_eq!(terminal.recording_len(), 2);
+    }
+
+    #[test]
+    fn turning_recording_on_or_off_clears_what_is_held() {
+        // A capacity change that kept the old events would leave a recording
+        // that is part one size and part another.
+        let mut terminal = Terminal::new(&recording_config(Some(64))).unwrap();
+        terminal.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
+        for _ in 0..6 {
+            terminal.tick();
+        }
+        assert_eq!(terminal.recording_len(), 6);
+        terminal.set_recording(Some(10));
+        assert_eq!(terminal.recording_len(), 0);
+        assert_eq!(terminal.config().record, Some(10));
+        terminal.set_recording(None);
+        assert_eq!(terminal.config().record, None);
     }
 
     #[test]

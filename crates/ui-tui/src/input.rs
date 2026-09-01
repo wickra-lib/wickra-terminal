@@ -44,6 +44,8 @@ pub(crate) enum Action {
     ScrollUp,
     /// Scroll the focused panel towards the bottom.
     ScrollDown,
+    /// Write the recorded events to a file.
+    SaveRecording,
     /// No bound action for this key.
     None,
 }
@@ -94,6 +96,7 @@ pub(crate) fn map_key(key: KeyEvent, binds: &Keybinds) -> Action {
         Some("seek_forward") => Action::SeekForward,
         Some("scroll_up") => Action::ScrollUp,
         Some("scroll_down") => Action::ScrollDown,
+        Some("save_recording") => Action::SaveRecording,
         _ => Action::None,
     }
 }

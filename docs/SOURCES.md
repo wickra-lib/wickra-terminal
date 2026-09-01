@@ -57,6 +57,44 @@ config opened. These examples assume the config opened one, so it holds id 0.
 {"type":"RemoveSource","id":1}
 ```
 
+## Making a recording
+
+`Replay` takes a feed and there was no way to produce one: nothing in the
+repository wrote a session out, and the `dataset` field takes the events
+themselves rather than a path, so the only way to get a recording was to already
+have one. The terminal could rewind and could not record.
+
+Set a capacity and it keeps that many recent events:
+
+```json
+{ "sources": [{ "Live": { "venue": "binance", "symbol": "BTC/USDT" } }], "record": 50000 }
+```
+
+Off by default, and deliberately a ring rather than a log: a terminal left
+running overnight must not grow without limit, and what a person reaches for a
+recorder for is the last few minutes rather than the whole session.
+
+```json
+{"type":"ExportRecording"}
+{"type":"SetRecording","capacity":50000}
+{"type":"SetRecording","capacity":null}
+```
+
+`ExportRecording` answers with the events in exactly the shape `Replay` takes,
+so the output goes straight back in as a `dataset`. The core stays
+filesystem-free — it has to, to run in a browser — so it records into memory and
+hands the events over; writing them anywhere is the host's job. The TUI binds
+`w` to writing them beside itself, named by the wall clock rather than
+overwriting one path, because what a person saves is a moment they want to keep.
+
+`SetRecording` clears what is already held, on and off alike: a capacity change
+that kept the old events would leave a recording that is part one size and part
+another.
+
+Events are recorded as they are polled, not as they are folded. `fold` is also
+how a seek re-folds a recording, so recording there would append the replayed
+events back onto the recording and every rewind would double it.
+
 `Feed` pushes an external market event into a `Manual` source; it is folded on
 the next `Tick`, exactly like a pulled event. The event must be for a market
 subscribed on that source.

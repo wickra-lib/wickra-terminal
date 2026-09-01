@@ -107,7 +107,7 @@ impl App {
             should_quit: false,
             frame: Frame { panels: Vec::new() },
             mode: Mode::Normal,
-            status: "s source · a symbol · d unsub · x drop source · i/k indicator · t timeframe · l catalogue · ,/. seek · ↑/↓ scroll · ←/→ symbol · tab panel · q quit"
+            status: "s source · a symbol · d unsub · x drop source · i/k indicator · t timeframe · l catalogue · ,/. seek · w save · ↑/↓ scroll · ←/→ symbol · tab panel · q quit"
                 .to_string(),
             focused_panel: 0,
             scroll: vec![0; panels],
@@ -144,6 +144,7 @@ impl App {
             Action::SeekForward => self.seek_by(1),
             Action::ScrollUp => self.scroll_by(-1),
             Action::ScrollDown => self.scroll_by(1),
+            Action::SaveRecording => self.save_recording(),
             Action::None => {}
         }
     }
@@ -376,6 +377,47 @@ impl App {
             Ok(()) => self.status = format!("replay {target}/{length}"),
             Err(err) => self.status = format!("seek failed: {err}"),
         }
+    }
+
+    /// Write the recorded events beside the terminal, ready to be replayed.
+    ///
+    /// The core records into a bounded ring and is deliberately
+    /// filesystem-free -- it has to be, to run in a browser -- so writing is
+    /// this renderer's job. The file is exactly what `Replay { dataset }` takes,
+    /// which is the whole point: the terminal could rewind a recording and had
+    /// no way to make one.
+    ///
+    /// Named by the wall clock rather than overwriting one path, because the
+    /// thing a person saves is a moment they want to keep and the next keypress
+    /// must not take it away.
+    fn save_recording(&mut self) {
+        if self.terminal.config().record.is_none() {
+            self.status = "recording is off; set `record` in the config to keep events".to_string();
+            return;
+        }
+        let count = self.terminal.recording_len();
+        if count == 0 {
+            self.status = "nothing recorded yet".to_string();
+            return;
+        }
+        // Through the command boundary rather than serialising here: the format
+        // is the core's to decide, and this way the file is byte-for-byte what
+        // `ExportRecording` hands any other binding.
+        let json = match self.terminal.command_json(r#"{"type":"ExportRecording"}"#) {
+            Ok(json) => json,
+            Err(err) => {
+                self.status = format!("could not export the recording: {err}");
+                return;
+            }
+        };
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_secs());
+        let path = std::path::PathBuf::from(format!("wickra-recording-{stamp}.json"));
+        self.status = match std::fs::write(&path, json) {
+            Ok(()) => format!("wrote {count} events to {}", path.display()),
+            Err(err) => format!("could not write {}: {err}", path.display()),
+        };
     }
 
     /// Scroll the focused panel, clamped to what that panel carries.

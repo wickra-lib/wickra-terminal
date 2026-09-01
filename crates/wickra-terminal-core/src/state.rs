@@ -15,7 +15,7 @@ use wickra_core::{self as wc, Indicator};
 use wickra_exchange_core::{BookDelta, BookLevel, Event, OrderBookSnapshot, OrderSide, TradePrint};
 
 use crate::candle::{CandleBuilder, Timeframe};
-use crate::config::IndicatorSpec;
+use crate::config::{IndicatorSpec, MAX_RECORDING};
 use crate::error::{Error, Result};
 use crate::registry::{self, TickIndicator, TickInput};
 use crate::source::{DataSource, SourceId, Symbol};
@@ -1158,6 +1158,14 @@ pub struct AppState {
     pub bars: Vec<IndicatorSpec>,
     /// The bar size the candle-input indicators are fed at.
     pub timeframe: Timeframe,
+    /// How many recent events to keep for export, or `None` to record nothing.
+    ///
+    /// Crate-visible rather than public: a caller sets it through
+    /// [`set_recording`](Self::set_recording), which clamps the capacity and
+    /// clears what is held, so the two can never disagree.
+    pub(crate) record_capacity: Option<usize>,
+    /// The recorded events, oldest first, in the shape `Replay` takes.
+    pub(crate) recorded: VecDeque<Event>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -1173,6 +1181,11 @@ impl std::fmt::Debug for AppState {
             .field("profiles", &self.profiles)
             .field("bars", &self.bars)
             .field("timeframe", &self.timeframe)
+            .field("record_capacity", &self.record_capacity)
+            // By count, like `sources`: a reader wants to know a recording is
+            // running and how long it is, not to have thousands of trades
+            // printed into a panic message.
+            .field("recorded", &self.recorded.len())
             .finish()
     }
 }
@@ -1491,9 +1504,39 @@ impl AppState {
         }
         let folded = batch.len();
         for (id, sym, ev) in batch {
+            self.record(&ev);
             self.fold(id, &sym, &ev);
         }
         folded
+    }
+
+    /// Keep an event for export, if recording is on.
+    ///
+    /// Recorded here rather than inside `fold`, because `fold` is also how a
+    /// seek re-folds a recording: recording there would append the replayed
+    /// events back onto the recording, and every rewind would double it.
+    fn record(&mut self, event: &Event) {
+        let Some(capacity) = self.record_capacity else {
+            return;
+        };
+        if self.recorded.len() == capacity {
+            self.recorded.pop_front();
+        }
+        self.recorded.push_back(event.clone());
+    }
+
+    /// The recorded events, oldest first, in the shape `Replay` takes.
+    #[must_use]
+    pub fn recording(&self) -> Vec<Event> {
+        self.recorded.iter().cloned().collect()
+    }
+
+    /// Turn recording on with a capacity, or off with `None`. Clears what is
+    /// already held either way, so a capacity change never leaves a recording
+    /// that is part one size and part another.
+    pub fn set_recording(&mut self, capacity: Option<usize>) {
+        self.record_capacity = capacity.map(|c| c.clamp(1, MAX_RECORDING));
+        self.recorded = VecDeque::new();
     }
 
     /// Get the state for a key, if present.

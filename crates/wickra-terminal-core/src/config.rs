@@ -149,6 +149,7 @@ impl Default for Keybinds {
             ("seek_forward", "."),
             ("scroll_up", "up"),
             ("scroll_down", "down"),
+            ("save_recording", "w"),
         ]
         .into_iter()
         .map(|(a, k)| (a.to_string(), k.to_string()))
@@ -286,7 +287,29 @@ pub struct Config {
     /// that unevenness is the character of the chart rather than a defect.
     #[serde(default)]
     pub bars: Vec<IndicatorSpec>,
+    /// How many recent events to keep for export, or `None` to record nothing.
+    ///
+    /// The terminal could rewind a recording and had no way to make one: nothing
+    /// in the repository wrote a session out, and `Replay` takes the feed as a
+    /// JSON string rather than a path, so the only way to get one was to have it
+    /// already. This is the missing half, and it is deliberately a ring rather
+    /// than a log: a terminal left running overnight must not grow without
+    /// limit, and what a person reaches for a recorder for is the last few
+    /// minutes, not the whole session.
+    ///
+    /// The core stays filesystem-free — it has to, to run in a browser — so it
+    /// records into memory and `ExportRecording` hands the events back in
+    /// exactly the shape `Replay` takes. Writing them anywhere is the renderer's
+    /// job.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record: Option<usize>,
 }
+
+/// The most events a recording may keep.
+///
+/// A quarter of a million trades is minutes of a busy market and a few tens of
+/// megabytes; past that a config is asking for a heap rather than a recording.
+pub const MAX_RECORDING: usize = 250_000;
 
 impl Config {
     /// Parse a config from its TOML form.
@@ -326,6 +349,7 @@ impl Default for Config {
             timeframe: Timeframe::default(),
             profiles: Vec::new(),
             bars: Vec::new(),
+            record: None,
         }
     }
 }

@@ -204,6 +204,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `registry_drive` fuzz target found it in under a minute. The ceiling is a
   million -- a million one-minute bars is two years -- and the refusal names the
   indicator and the number.
+- A recorder, so the time-machine has something to rewind. `Replay` takes a feed
+  and nothing in the repository could produce one: no session was ever written
+  out, and `dataset` takes the events themselves rather than a path, so the only
+  way to get a recording was to already have one. A config now sets `record` to
+  a capacity and the terminal keeps that many recent events; `ExportRecording`
+  hands them back in exactly the shape `Replay` takes, and `SetRecording` turns
+  it on or off at run time. The TUI binds `w` to writing them beside itself.
+
+  A ring rather than a log, because a terminal left running overnight must not
+  grow without limit. Recorded as events are polled rather than folded, because
+  `fold` is also how a seek re-folds a recording -- recording there would append
+  the replayed events back on and every rewind would double it.
 - The web renderer reads the shared keymap. `layout.keybinds` sits in the config
   expressly so both front-ends share one, and only the TUI ever read it -- so
   rebinding a key moved half the product. Key names are the TUI's, a key held
