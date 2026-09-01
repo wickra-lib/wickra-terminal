@@ -4,7 +4,9 @@
   "description": "Native binding for wickra-terminal (Windows arm64 MSVC). Installed automatically as an optional dependency of wickra-terminal on matching platforms.",
   "main": "wickra-terminal.win32-arm64-msvc.node",
   "files": [
-    "wickra-terminal.win32-arm64-msvc.node"
+    "wickra-terminal.win32-arm64-msvc.node",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
   ],
   "license": "MIT OR Apache-2.0",
   "engines": {
