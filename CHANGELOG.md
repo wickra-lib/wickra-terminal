@@ -124,6 +124,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   long description of a published package, so a link that leaves the package
   resolves on GitHub and nowhere else, and nothing else in the build would say
   so, because the file it points at does exist.
+- `scripts/check_license_copies.py`, wired into CI, and the copies it demands:
+  `LICENSE-MIT` and `LICENSE-APACHE` inside `wickra-terminal-core`, `ui-tui` and
+  `bindings/python`. Every manifest declared `MIT OR Apache-2.0`, but an SPDX
+  expression is a reference to two documents rather than the documents, so each
+  published package left whoever received it with terms to go and find. Cargo
+  decides what to package from git, so the copies have to be committed --
+  and committed copies drift, which is what the check watches.
+- The npm packages stage the same two texts at publish time and name them in
+  `files`. Both halves are needed: npm silently drops a file its `files` list
+  does not mention, and the pack dry-run in `release.yml` now proves each of the
+  seven packages would carry them.
+- A CI check that the committed napi loader still matches what napi generates.
+  `bindings/node/index.js` and `index.d.ts` are generated and committed so
+  consumers need no toolchain, and nothing compared the two -- napi rewrites
+  them only when somebody rebuilds, and a rebuild is not part of committing.
+- `java-publish` uploads the jar it just deployed, so the release page carries a
+  Java artefact like every other language, and provenance has it to attest.
+- `go-mirror` builds and runs the module before pushing it. The tree is
+  assembled by copying files and rewriting an import path, and was published to
+  pkg.go.dev on that basis alone -- a wrong header, a missing library or a
+  botched rewrite would have surfaced on a user's machine. A smoke test now
+  constructs a terminal, subscribes, ticks and reads a frame against the staged
+  Linux library.
+- Build provenance covers the `.nupkg` and the `.jar`. Both were published with
+  no attestation while the README badge claimed provenance for the release.
+- `[package.metadata.docs.rs] all-features = true` on `ui-tui`, so the setting is
+  uniform across everything this workspace publishes.
 
 ### Changed
 
