@@ -212,6 +212,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `registry_drive` fuzz target found it in under a minute. The ceiling is a
   million -- a million one-minute bars is two years -- and the refusal names the
   indicator and the number.
+- `upstream-drift.yml`, which watches whether the generated registry has fallen
+  behind the wickra-core it was made from. It had: the lockfile sat on 1.0.1
+  while crates.io carried 1.0.4, so ten indicators existed upstream that the
+  generator had never seen, and the repository's own guard catches shrinking
+  only -- growth upstream was invisible by construction.
+
+  A weekly notice that opens and edits one issue, rather than a check on every
+  pull request, and that is deliberate: following upstream is blocked on
+  wickra-exchange, which pins wickra-core 0.9, so bumping this side while that
+  stands compiles two copies of the indicator library into one binary. A gate
+  that failed every pull request until somebody else's release landed would be
+  turned off within a week, and then it would be watching nothing. It reports
+  both copies, because the duplicate is the blocker.
 - A second scenario in every language's examples: `time_machine` plays a
   recorded feed to its end, rewinds to the second trade and shows the frame the
   forward pass had at that point. One scenario per language showed how to open a

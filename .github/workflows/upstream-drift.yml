@@ -1,0 +1,144 @@
+name: Upstream drift
+
+# The registry is generated from a snapshot of wickra-core's indicator set, and
+# nothing watched whether that snapshot had fallen behind. It had: the lockfile
+# sat on 1.0.1 while crates.io carried 1.0.4, so ten indicators existed upstream
+# that the generator had never seen — and the repository's own guard,
+# `the_registry_has_not_silently_shrunk`, catches shrinking only. Growth upstream
+# was invisible by construction.
+#
+# This is a notice rather than a gate, and that is deliberate rather than
+# lenient. Following upstream is blocked on a different repository:
+# wickra-exchange pins wickra-core 0.9, so bumping this side to 1.x while that
+# stands compiles two copies of the indicator library into one binary. A check
+# that failed every pull request until somebody else's release landed would be
+# turned off within a week, and then it would be watching nothing.
+#
+# So it runs on a schedule, opens one issue and keeps editing it. The number in
+# that issue is the thing that must not drift quietly; a red pull request is not.
+on:
+  schedule:
+    - cron: "0 5 * * 1" # Mondays 05:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-drift
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: wickra-core, locked against published
+    runs-on: ubuntu-latest
+    timeout-minutes: 10 # backstop against a hung job, not a budget
+    permissions:
+      contents: read
+      issues: write # open and update the one drift issue
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The sparse index rather than the API: it is the same source cargo
+      # resolves against, it needs no token, and its last line is the newest
+      # version. Yanked releases are skipped, because a yanked version is not one
+      # this repository could move to.
+      - name: Read the locked and the published versions
+        id: versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Every wickra-core in the lockfile, not the first one: there are two.
+          # wickra-exchange pins 0.9 and this crate builds against 1, so the
+          # lock carries both and the registry is generated against the higher.
+          # Reporting only the first would name the copy the registry has
+          # nothing to do with.
+          versions=$(awk '
+            /^name = "wickra-core"$/ { found = 1; next }
+            found && /^version = / { gsub(/[",]/, "", $3); print $3; found = 0 }
+          ' Cargo.lock | sort -V)
+          test -n "$versions" || { echo "::error::no wickra-core in Cargo.lock"; exit 1; }
+          locked=$(echo "$versions" | tail -n1)
+          copies=$(echo "$versions" | wc -l | tr -d ' ')
+          echo "copies=$copies" >> "$GITHUB_OUTPUT"
+          if [ "$copies" -gt 1 ]; then
+            joined=$(echo "$versions" | paste -sd' ' -)
+            echo "::warning::the lockfile carries $copies copies of wickra-core: $joined"
+          fi
+
+          published=$(curl -fsSL --retry 5 --retry-all-errors \
+            https://index.crates.io/wi/ck/wickra-core \
+            | jq -r 'select(.yanked == false) | .vers' | tail -n1)
+          test -n "$published" || { echo "::error::crates.io index returned nothing"; exit 1; }
+
+          echo "locked=$locked" >> "$GITHUB_OUTPUT"
+          echo "published=$published" >> "$GITHUB_OUTPUT"
+          if [ "$locked" = "$published" ]; then
+            echo "behind=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "behind=yes" >> "$GITHUB_OUTPUT"
+          fi
+          echo "::notice::wickra-core locked at $locked, published $published"
+
+      - name: Open or update the drift issue
+        if: steps.versions.outputs.behind == 'yes'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LOCKED: ${{ steps.versions.outputs.locked }}
+          PUBLISHED: ${{ steps.versions.outputs.published }}
+          COPIES: ${{ steps.versions.outputs.copies }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          title="wickra-core is at $PUBLISHED, this repository builds against $LOCKED"
+          body=$(cat <<EOF
+          The generated registry is a snapshot of the indicator set in the
+          wickra-core this repository builds against. That version is behind the
+          published one, so any indicator added upstream since is unreachable
+          here and no test can see it: the registry guard catches shrinking, not
+          falling behind.
+
+          - locked: \`$LOCKED\`
+          - published: \`$PUBLISHED\`
+          - copies of wickra-core in the lockfile: \`$COPIES\`
+
+          Following it is blocked on wickra-exchange, which pins wickra-core 0.9.
+          Bumping this side while that stands compiles two copies of the
+          indicator library into one binary. Once the exchange moves to 1.x:
+
+          1. raise \`wickra-core\` in \`Cargo.toml\`,
+          2. regenerate with \`tools/gen_registry.py\`,
+          3. re-sync the counts \`sync-metadata.py\` owns.
+
+          Opened by \`upstream-drift.yml\`, which edits this issue rather than
+          opening another.
+          EOF
+          )
+          existing=$(gh issue list --state open --label upstream-drift \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --title "$title" --body "$body"
+            echo "::notice::updated issue #$existing"
+          else
+            gh issue create --title "$title" --body "$body" \
+              --label upstream-drift || \
+              gh issue create --title "$title" --body "$body"
+            echo "::notice::opened a drift issue"
+          fi
+
+      - name: Close the drift issue once it is no longer true
+        if: steps.versions.outputs.behind == 'no'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          existing=$(gh issue list --state open --label upstream-drift \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue close "$existing" \
+              --comment "The lockfile now matches the published wickra-core."
+          fi
+          echo "::notice::the locked wickra-core is the published one"
