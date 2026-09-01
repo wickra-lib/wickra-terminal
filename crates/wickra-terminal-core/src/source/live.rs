@@ -405,6 +405,225 @@ mod tests {
         assert!(out.is_empty());
     }
 
+    /// An exchange that answers from memory, so the source's own logic can be
+    /// tested without a venue.
+    ///
+    /// The module header says the network round-trip is not unit-testable, and
+    /// that stays true. What *is* testable is everything this source does around
+    /// it — which markets it forwards, what it does with a backfill, what a
+    /// subscribe records — and that is where the bugs were: `unsubscribe` did
+    /// nothing at all, and a dropped market was folded for the rest of the
+    /// session.
+    ///
+    /// The execution half of the trait refuses. The terminal connects with empty
+    /// credentials and reads public market data; a stub that answered an order
+    /// would be modelling something this source cannot do.
+    #[derive(Default)]
+    struct StubState {
+        bars: Vec<wickra_exchange::Candle>,
+        events: Vec<Event>,
+        subscribed: Vec<Symbol>,
+        klines_asked: Option<(String, u32)>,
+        klines_fail: bool,
+    }
+
+    /// The stub and the test share one state, so the test can queue events and
+    /// read back what was asked for after the source has taken ownership of the
+    /// client. A handle rather than an accessor on `LiveSource`: the source has
+    /// no business growing a method that exists for a test.
+    #[derive(Clone, Default)]
+    struct StubExchange {
+        state: std::rc::Rc<std::cell::RefCell<StubState>>,
+    }
+
+    impl StubExchange {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn queue(&self, events: Vec<Event>) {
+            self.state.borrow_mut().events = events;
+        }
+
+        fn klines_asked(&self) -> Option<(String, u32)> {
+            self.state.borrow().klines_asked.clone()
+        }
+    }
+
+    impl wickra_exchange::MarketData for StubExchange {
+        fn ticker(&mut self, _symbol: &Symbol) -> wickra_exchange::Result<wickra_exchange::Ticker> {
+            Err(wickra_exchange::Error::InvalidOrder("stub"))
+        }
+
+        fn klines(
+            &mut self,
+            _symbol: &Symbol,
+            interval: &str,
+            limit: u32,
+        ) -> wickra_exchange::Result<Vec<wickra_exchange::Candle>> {
+            let mut state = self.state.borrow_mut();
+            state.klines_asked = Some((interval.to_string(), limit));
+            if state.klines_fail {
+                return Err(wickra_exchange::Error::InvalidSymbol("stub".to_string()));
+            }
+            Ok(state.bars.clone())
+        }
+
+        fn order_book(
+            &mut self,
+            _symbol: &Symbol,
+            _depth: u32,
+        ) -> wickra_exchange::Result<wickra_exchange::OrderBookSnapshot> {
+            Err(wickra_exchange::Error::InvalidOrder("stub"))
+        }
+
+        fn subscribe_trades(&mut self, symbol: &Symbol) -> wickra_exchange::Result<()> {
+            self.state.borrow_mut().subscribed.push(symbol.clone());
+            Ok(())
+        }
+
+        fn subscribe_book(&mut self, _symbol: &Symbol) -> wickra_exchange::Result<()> {
+            Ok(())
+        }
+
+        fn subscribe_ticker(&mut self, _symbol: &Symbol) -> wickra_exchange::Result<()> {
+            Ok(())
+        }
+
+        fn poll_events(&mut self) -> Vec<Event> {
+            std::mem::take(&mut self.state.borrow_mut().events)
+        }
+    }
+
+    impl wickra_exchange::Execution for StubExchange {
+        fn place_order(
+            &mut self,
+            _request: &wickra_exchange::OrderRequest,
+        ) -> wickra_exchange::Result<wickra_exchange::Order> {
+            Err(wickra_exchange::Error::InvalidCredentials("read-only"))
+        }
+
+        fn cancel_order(&mut self, _symbol: &Symbol, _id: &str) -> wickra_exchange::Result<()> {
+            Err(wickra_exchange::Error::InvalidCredentials("read-only"))
+        }
+
+        fn query_order(
+            &mut self,
+            _symbol: &Symbol,
+            _id: &str,
+        ) -> wickra_exchange::Result<wickra_exchange::Order> {
+            Err(wickra_exchange::Error::InvalidCredentials("read-only"))
+        }
+
+        fn open_orders(
+            &mut self,
+            _symbol: Option<&Symbol>,
+        ) -> wickra_exchange::Result<Vec<wickra_exchange::Order>> {
+            Err(wickra_exchange::Error::InvalidCredentials("read-only"))
+        }
+
+        fn balances(&mut self) -> wickra_exchange::Result<Vec<wickra_exchange::Balance>> {
+            Err(wickra_exchange::Error::InvalidCredentials("read-only"))
+        }
+    }
+
+    impl wickra_exchange::Exchange for StubExchange {
+        fn name(&self) -> &'static str {
+            "stub"
+        }
+    }
+
+    /// A source over a stub exchange, with no socket anywhere.
+    fn stubbed(stub: &StubExchange) -> LiveSource {
+        LiveSource {
+            id: 0,
+            client: Box::new(stub.clone()),
+            backoff: ReconnectBackoff::new(),
+            subscribed: HashSet::new(),
+        }
+    }
+
+    #[test]
+    fn subscribing_records_the_market_and_unsubscribing_drops_it() {
+        // unsubscribe was a comment and an empty body. The fold creates state
+        // for whatever market an event names, so the dropped market came back on
+        // the next poll and was folded for the rest of the session.
+        let btc = Symbol::new("BTC", "USDT");
+        let stub = StubExchange::new();
+        let mut source = stubbed(&stub);
+
+        source.subscribe(&btc).expect("the stub accepts");
+        assert_eq!(source.poll().len(), 0, "no events queued yet");
+
+        stub.queue(vec![print(&btc, 100)]);
+        assert_eq!(source.poll().len(), 1, "a subscribed market is forwarded");
+
+        source.unsubscribe(&btc);
+        stub.queue(vec![print(&btc, 101)]);
+        assert!(
+            source.poll().is_empty(),
+            "an unsubscribed market is still being folded"
+        );
+    }
+
+    #[test]
+    fn a_backfill_asks_for_the_timeframe_and_limit_it_was_given() {
+        // The interval is the timeframe in the venue's own notation, and a
+        // source that asked for the wrong one would return bars of a size the
+        // indicators are not being fed at -- which looks like data, not a bug.
+        let stub = StubExchange::new();
+        stub.state.borrow_mut().bars = vec![
+            wickra_exchange::Candle::new(100.0, 110.0, 95.0, 105.0, 1.0, 0).expect("valid"),
+            wickra_exchange::Candle::new(105.0, 115.0, 100.0, 110.0, 1.0, 60_000).expect("valid"),
+        ];
+        let mut source = stubbed(&stub);
+
+        let bars = source.backfill(&Symbol::new("BTC", "USDT"), "4h", 200);
+        assert_eq!(bars.len(), 2);
+        assert_eq!(stub.klines_asked(), Some(("4h".to_string(), 200)));
+    }
+
+    #[test]
+    fn a_failed_backfill_is_not_a_failed_subscription() {
+        // The venue may not carry the interval, the request may time out, or the
+        // market may be too new to have a history. In each the right outcome is a
+        // terminal that starts with no history, not one that refuses the market.
+        let stub = StubExchange::new();
+        stub.state.borrow_mut().klines_fail = true;
+        let mut source = stubbed(&stub);
+        assert!(source
+            .backfill(&Symbol::new("BTC", "USDT"), "1m", 200)
+            .is_empty());
+    }
+
+    #[test]
+    fn a_backfill_limit_past_a_u32_is_clamped_rather_than_wrapping() {
+        let stub = StubExchange::new();
+        let mut source = stubbed(&stub);
+        source.backfill(&Symbol::new("BTC", "USDT"), "1m", usize::MAX);
+        assert_eq!(stub.klines_asked(), Some(("1m".to_string(), u32::MAX)));
+    }
+
+    #[test]
+    fn a_dropped_socket_stops_the_next_poll() {
+        // The backoff reads the raw events, before the symbol filter drops the
+        // lifecycle ones -- so a disconnect has to reach it through a real poll,
+        // not only through the unit test above.
+        let btc = Symbol::new("BTC", "USDT");
+        let stub = StubExchange::new();
+        let mut source = stubbed(&stub);
+        source.subscribe(&btc).expect("the stub accepts");
+
+        stub.queue(vec![Event::Disconnected]);
+        assert!(source.poll().is_empty(), "a disconnect carries no market");
+
+        stub.queue(vec![print(&btc, 100)]);
+        assert!(
+            source.poll().is_empty(),
+            "the source polled again inside its own backoff"
+        );
+    }
+
     #[test]
     fn every_market_maps_to_its_own_book() {
         // The mapping was a hard-coded Spot, so a perpetual could not be opened
