@@ -911,6 +911,15 @@ jobs:
         run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu config_parse -- -max_total_time=30
         working-directory: fuzz
 
+      # The registry is the largest thing here and was the least fuzzed: 7,400
+      # generated lines, one construction arm per indicator, and no target that
+      # reached them. Sixty seconds rather than thirty because one iteration
+      # picks a kind and then drives it, so the corpus has three surfaces and
+      # five hundred entries to work through rather than one parser.
+      - name: Fuzz registry_drive (60 s)
+        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu registry_drive -- -max_total_time=60
+        working-directory: fuzz
+
   # Early heads-up on link rot while reviewing a PR. Non-blocking on purpose:
   # external link failure is non-deterministic (third-party sites go down,
   # rate-limit or move), and a transient outage must never gate a merge. The
