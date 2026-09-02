@@ -35,10 +35,43 @@ requests.
     `wickra-core` indicators, configurable and changeable at run time from every
     binding. ✅
 12. **The renderers catch up with the core** — candles with a price scale in both
-    front-ends, all seven panels in both, every command the boundary carries
-    bound to a key or a control, panel depth in the config and panel-local
-    scrolling, one keymap read by both, a recorder feeding the time-machine, and
-    a live subscription that starts with the venue's history. ✅
+    front-ends, all seven panels in both, panel depth in the config and
+    panel-local scrolling, one keymap read by both, a recorder feeding the
+    time-machine, and a live subscription that starts with the venue's history. ✅
+
+    This entry also claimed *every command the boundary carries bound to a key or
+    a control*, and that was not true when it was written. `SetRecording` was
+    bound in neither front-end, so the recorder could only be armed by a config
+    field read once at start-up; `RemoveSource` and `ExportRecording` were
+    answered by the terminal and dropped into the browser's catch-all. The
+    sentence is not repaired by deleting it — the claim is worth making, so it is
+    made where a build can check it instead:
+    `docs_examples::every_bound_action_reaches_a_renderer` fails if a bound
+    action is answered by neither renderer, and requires the browser's
+    deliberate refusals to be written down rather than read out of its silence.
+
+    The same entry said *a live subscription that starts with the venue's
+    history* while that was true of the native source alone. The browser fed a
+    `Manual` source, which has no backfill, and it did not reconnect, subscribe a
+    ticker or guard its parse either. It does all four now, and
+    `docs/RENDERERS.md` records what is still genuinely different between the two
+    — the browser bridge speaks one venue's dialect where the native source
+    reaches ten.
+
+13. **Panels at run time** — `AddPanel`, `RemovePanel` and `MovePanel`, bound in
+    both renderers and held to byte parity across the nine language suites by a
+    corpus scenario. The layout used to be read once when the terminal was built
+    and never again, so a terminal opened with the wrong panels had to be
+    restarted with a different config. ✅
+
+14. **The bindings drive what the READMEs promise** — the recorder, the
+    time-machine cursor and the host feeds are exercised by every binding suite,
+    not just by Rust, and every example is run rather than parsed. Four commands
+    had been documented in nine READMEs and executed nowhere but Rust; five
+    languages had their examples byte-compiled, which a script that dies on its
+    first call also survives.
+    `docs_examples::every_documented_command_is_driven_by_a_binding_suite` keeps
+    the first of those closed. ✅
 
 ## Next
 
@@ -62,6 +95,24 @@ roughly the order they would pay off.
   seventeen derivatives-tick, fifteen cross-section, three trade-quote and eight
   profile outputs. The number had been corrected and the sentence under it had
   not.
+- **The browser reaches one venue.** The native source dispatches on the venue
+  name and opens any of ten through `wickra-exchange`; the browser cannot use
+  that client at all -- it is native code with a socket and an HTTP stack -- so
+  it opens the venue's public stream itself and feeds a `Manual` source. That
+  bridge is hand-written and speaks Binance spot. Adding a venue means writing
+  its stream dialect again in TypeScript, which is real work rather than a
+  missing switch. The limit is stated in `docs/RENDERERS.md`, in
+  `web/README.md`, in the app's own placeholder and in the message that refuses
+  any other venue, so it is met where a user reads rather than found on the
+  second venue they try.
+
+- **Two copies of the indicator library in one binary.** `wickra-exchange` pins
+  `wickra-core 0.9` and this crate builds against 1.x, so the lockfile carries
+  both and cargo compiles both. Nothing is wrong at run time -- the version gap
+  is crossed explicitly, by `into_core` in the live source and its test -- but it
+  is a larger binary and a second set of the same types. It closes when
+  `wickra-exchange` follows to 1.x; the work is there, not here.
+
 - **A live feed for funding and open interest.** The `DerivativesTick` family is
   registered and drivable, and no source in this repository can drive it: the
   exchange layer defines `DerivativesFeed` and `DerivativesTickBuilder`, no

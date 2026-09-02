@@ -347,23 +347,27 @@ impl App {
     /// Take the focused panel off the layout.
     fn remove_focused_panel(&mut self) {
         let at = self.focused_panel;
-        let kind = self
+        // The kind is read before the removal, because afterwards there is
+        // nothing to read it from -- and the same lookup answers whether there
+        // is a panel there at all. One question, so there is no arm for the
+        // combination where the kind is missing and the removal succeeds, which
+        // is a state neither answer can produce.
+        let Some(kind) = self
             .terminal
             .config()
             .layout
             .panels
             .get(at)
-            .map(|spec| spec.kind);
-        match self.terminal.remove_panel(at) {
-            Ok(()) => {
-                self.sync_panels();
-                self.status = match kind {
-                    Some(kind) => format!("removed {kind:?}"),
-                    None => format!("removed panel {at}"),
-                };
-            }
-            Err(err) => self.status = format!("remove failed: {err}"),
-        }
+            .map(|spec| spec.kind)
+        else {
+            self.status = format!("no panel at {at} to remove");
+            return;
+        };
+        self.terminal
+            .remove_panel(at)
+            .expect("the lookup above found a panel at this index");
+        self.sync_panels();
+        self.status = format!("removed {kind:?}");
     }
 
     /// Move the focused panel to a new rectangle.
@@ -1442,11 +1446,15 @@ mod tests {
         app.on_action(Action::ScrollDown);
         app.on_action(Action::NextPanel);
         app.on_action(Action::RemovePanel);
-        assert!(
-            app.status.starts_with("remove failed"),
-            "status: {}",
-            app.status
-        );
+        let status = app.status.clone();
+        assert!(status.starts_with("no panel at 0"), "status: {status}");
+
+        // A move against an empty layout is the core's refusal reaching the
+        // status line: the shorthand parses, and there is nothing to move.
+        app.on_action(Action::MovePanel);
+        type_and_submit(&mut app, "0 0 50 50");
+        let status = app.status.clone();
+        assert!(status.starts_with("move failed"), "status: {status}");
     }
 
     /// A shorthand that does not parse is reported and changes nothing.
