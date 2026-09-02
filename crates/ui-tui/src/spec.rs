@@ -1,8 +1,13 @@
-//! Parse a source shorthand (`--source` flag or the runtime source menu) into a
-//! [`SourceSpec`]. Shared by the CLI and the interactive source menu.
+//! Shorthands: the terse forms a person types at a prompt or passes on the
+//! command line, parsed into the specs the core takes.
+//!
+//! A source (`--source` and the runtime source menu), an indicator, a panel and
+//! a rectangle. Each is a shape a config can also express in full; these exist
+//! because nobody types JSON at a prompt.
 
+use wickra_terminal_core::panels::PanelKind;
 use wickra_terminal_core::source::live::parse_live_shorthand;
-use wickra_terminal_core::{IndicatorSpec, Market, SourceSpec};
+use wickra_terminal_core::{IndicatorSpec, Market, PanelSpec, RectSpec, SourceSpec};
 
 /// Parse `synth:<seed>`, `live:<venue>:<BASE/QUOTE>` or `replay:<json>`.
 ///
@@ -65,6 +70,82 @@ fn parse_market(text: &str) -> Option<Market> {
         "margin" => Some(Market::Margin),
         _ => None,
     }
+}
+
+/// Parse a rectangle: four grid numbers, `x y w h`, each a percent of the
+/// screen.
+///
+/// # Errors
+///
+/// Returns a human-readable message if there are not four numbers, if one is
+/// not a number, or if the rectangle would leave the grid.
+pub(crate) fn parse_rect(text: &str) -> Result<RectSpec, String> {
+    let mut numbers = Vec::new();
+    for word in text.split_whitespace() {
+        let value: u16 = word
+            .parse()
+            .map_err(|_| format!("{word:?} is not a grid number (0-100)"))?;
+        numbers.push(value);
+    }
+    let [x, y, w, h] = numbers.as_slice() else {
+        return Err(format!(
+            "expected four numbers x y w h, got {}",
+            numbers.len()
+        ));
+    };
+    // Refused here rather than drawn clipped: a rectangle running off the grid
+    // is a typo every time, and a renderer that silently trimmed it would leave
+    // a panel the config says is one size and the screen says is another.
+    if x + w > 100 || y + h > 100 {
+        return Err(format!(
+            "{x} {y} {w} {h} runs off the grid (x+w and y+h must not pass 100)"
+        ));
+    }
+    if *w == 0 || *h == 0 {
+        return Err("a panel with no width or no height would draw nothing".to_string());
+    }
+    Ok(RectSpec::new(*x, *y, *w, *h))
+}
+
+/// Parse a panel shorthand into a [`PanelSpec`].
+///
+/// `Book 70 0 30 35`, or `Tape 0 70 100 30 48` with the depth it carries. The
+/// kind is case-insensitive, because this is what a person types at a prompt.
+///
+/// # Errors
+///
+/// Returns a human-readable message if the kind is missing or unknown, if the
+/// rectangle is not four numbers, or if the depth is not a count.
+pub(crate) fn parse_panel(text: &str) -> Result<PanelSpec, String> {
+    let text = text.trim();
+    let (kind, rest) = text
+        .split_once(char::is_whitespace)
+        .ok_or_else(|| "expected a kind and a rectangle (Book 70 0 30 35)".to_string())?;
+    let kind: PanelKind = kind.parse()?;
+
+    // The depth is a fifth number, so the rectangle is the first four and
+    // whatever is left is the depth. Split that way rather than by counting
+    // words, so a bad fifth word is reported as a depth rather than as a
+    // rectangle of the wrong length.
+    let words: Vec<&str> = rest.split_whitespace().collect();
+    let (rect_words, depth_words) = words.split_at(words.len().min(4));
+    let rect = parse_rect(&rect_words.join(" "))?;
+    let depth = match depth_words {
+        [] => None,
+        [word] => Some(
+            word.parse::<usize>()
+                .map_err(|_| format!("{word:?} is not a depth (a row count)"))?,
+        ),
+        _ => {
+            return Err(format!(
+                "expected at most a depth after the rectangle, got {depth_words:?}"
+            ))
+        }
+    };
+    if depth == Some(0) {
+        return Err("a depth of 0 carries no rows; leave it out for the default".to_string());
+    }
+    Ok(PanelSpec { kind, rect, depth })
 }
 
 /// Parse an indicator shorthand into an [`IndicatorSpec`].
@@ -244,5 +325,68 @@ mod tests {
     fn parse_indicator_trims_the_reference_market() {
         let spec = parse_indicator("Beta 20 vs   ETH/USDT").expect("a pairwise spec");
         assert_eq!(spec.reference.as_deref(), Some("ETH/USDT"));
+    }
+
+    #[test]
+    fn parse_panel_reads_a_kind_and_a_rectangle() {
+        assert_eq!(
+            parse_panel("Book 70 0 30 35").unwrap(),
+            PanelSpec::new(PanelKind::Book, RectSpec::new(70, 0, 30, 35))
+        );
+        // Case-insensitive, because this is what a person types at a prompt.
+        assert_eq!(
+            parse_panel("tape 0 0 100 100").unwrap().kind,
+            PanelKind::Tape
+        );
+    }
+
+    #[test]
+    fn parse_panel_takes_a_depth_after_the_rectangle() {
+        let spec = parse_panel("Tape 0 70 100 30 48").unwrap();
+        assert_eq!(spec.depth, Some(48));
+        // And a depth of zero is refused rather than carried: it would build a
+        // panel that draws nothing, which is not what leaving it out means.
+        assert!(parse_panel("Tape 0 0 10 10 0")
+            .unwrap_err()
+            .contains("carries no rows"));
+    }
+
+    #[test]
+    fn parse_panel_names_the_kinds_it_knows() {
+        let err = parse_panel("Ladder 0 0 10 10").unwrap_err();
+        assert!(err.contains("unknown panel"), "{err}");
+        assert!(
+            err.contains("Watchlist"),
+            "the message lists no kinds: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_panel_rejects_a_kind_with_no_rectangle() {
+        assert!(parse_panel("Book").unwrap_err().contains("Book 70 0 30 35"));
+        assert!(parse_panel("Book 1 2 3")
+            .unwrap_err()
+            .contains("four numbers"));
+    }
+
+    /// A rectangle running off the grid is a typo every time.
+    ///
+    /// Refused rather than drawn clipped: a renderer that trimmed it silently
+    /// would leave a panel the config says is one size and the screen says is
+    /// another.
+    #[test]
+    fn parse_rect_refuses_a_rectangle_that_leaves_the_grid() {
+        assert_eq!(
+            parse_rect("0 0 100 100").unwrap(),
+            RectSpec::new(0, 0, 100, 100)
+        );
+        assert!(parse_rect("70 0 40 35")
+            .unwrap_err()
+            .contains("runs off the grid"));
+        assert!(parse_rect("0 70 100 40")
+            .unwrap_err()
+            .contains("runs off the grid"));
+        assert!(parse_rect("0 0 0 50").unwrap_err().contains("draw nothing"));
+        assert!(parse_rect("0 0 x 50").unwrap_err().contains("grid number"));
     }
 }
