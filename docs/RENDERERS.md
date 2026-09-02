@@ -96,6 +96,35 @@ made the browser look like a different product rather than a second view:
   native backfill is: no history is a terminal that starts empty, never one that
   refuses to open the market.
 
+## The layout is no longer fixed at start-up
+
+`Config.layout.panels` was read once when the terminal was built and never
+again, in both renderers, so a terminal opened with the wrong panels had to be
+restarted with a different config. `AddPanel`, `RemovePanel` and `MovePanel`
+change it while it runs; `docs/PANELS.md` has the shapes.
+
+The two front-ends bind them differently, and the difference is idiom rather
+than capability. The TUI has a focused panel, so `p` adds one and focuses it,
+`o` takes the focused one off and `m` moves it. The browser does not have a
+focused panel -- it declines the panel-focus pair for that reason -- so it binds
+`add_panel` to its panel field and removes with the `x` on the panel's own
+heading, which names its target by sitting on it. `move_panel` goes with the
+focus pair: a key that moved an arbitrary panel would be worse than a key that
+does nothing.
+
+Both are named in
+`docs_examples::every_bound_action_reaches_a_renderer`, which fails the build if
+a bound action is answered by neither front-end and requires the browser's
+refusals to be written down rather than inferred from its silence.
+
+**What the renderers had to learn with it.** The TUI keeps one scroll offset per
+panel and a focused-panel index, both sized once at construction -- an invariant
+that held for exactly as long as the layout could not change. `sync_panels`
+restores both after every layout change. The browser keeps its own copy of the
+layout, updated in step with the commands it sends rather than re-read, because
+no command answers with the config and the renderer issuing the change is the
+one that knows what it did.
+
 ## One keymap, both renderers
 
 `layout.keybinds` is a map from action name to key name, and it sits in the

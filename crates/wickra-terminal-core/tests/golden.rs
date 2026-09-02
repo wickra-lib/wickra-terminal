@@ -263,8 +263,10 @@ fn scenarios() -> Vec<Scenario> {
     // the work of the three commands rather than of the default layout.
     let panels_feed = canonical_feed();
     let mut with_one_panel = replay_config(&panels_feed);
-    with_one_panel.layout.panels =
-        vec![PanelSpec::new(PanelKind::Chart, RectSpec::new(0, 0, 100, 50))];
+    with_one_panel.layout.panels = vec![PanelSpec::new(
+        PanelKind::Chart,
+        RectSpec::new(0, 0, 100, 50),
+    )];
     let footprint = footprint_feed();
     let indicators = indicator_feed();
 

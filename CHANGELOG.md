@@ -72,6 +72,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every scenario and pinned there -- and a field that is zero everywhere is one
   the nine language suites cannot tell apart from a field that was dropped,
   which is exactly what the fold used to do with them.
+- The layout can be changed while the terminal runs. `Config.layout.panels` was
+  read once when the terminal was built and never again, in both renderers, so a
+  terminal opened with the wrong panels had to be restarted with a different
+  config -- which is not something a person does while watching a market move.
+  `AddPanel`, `RemovePanel` and `MovePanel` change it, and a panel is named by
+  its index: `AddPanel` appends rather than inserting, because inserting would
+  renumber the ones a caller already holds, and an index past the end is refused
+  with the count rather than acted on.
+- The renderers bind them in their own idiom. The TUI has a focused panel, so
+  `p` adds one and focuses it, `o` takes the focused one off and `m` moves it,
+  each from the same shorthand the source and indicator prompts use --
+  `Book 70 0 30 35`, or `Tape 0 70 100 30 48` with the depth. The browser has no
+  focused panel, so it binds the add to its panel field and removes with the `x`
+  on the panel's own heading; `move_panel` joins the panel-focus pair it already
+  declines, and the guard requires that refusal to be written down rather than
+  inferred from silence.
+- A rectangle that runs off the grid is refused rather than drawn clipped, in
+  both renderers. It is a typo every time, and trimming it silently would leave
+  a panel the config says is one size and the screen says is another.
+- The renderers' own per-panel state follows the layout now. The TUI kept one
+  scroll offset per panel and a focused-panel index, both sized once at
+  construction -- an invariant that held for exactly as long as the layout could
+  not change, and that an earlier change in this cycle leaned on. `sync_panels`
+  restores both after every layout change.
+- A `panels` scenario in the golden corpus, so the nine language suites hold the
+  three commands to byte parity: a panel added with a depth, moved, and another
+  taken off, with the frame recorded after each.
 - Repository scaffolding: Cargo workspace, supply-chain configuration
   (`deny.toml`, `osv-scanner.toml`), lint configuration, `repo-metadata.toml`,
   and dual `MIT OR Apache-2.0` licensing.
