@@ -50,6 +50,7 @@ character, which needs no parser and no regular expression.
 |----------|------|
 | `basic` | trades and a book snapshot through the default layout |
 | `ticker` | the venue's ticker interleaved with trades, so the bid, ask, rolling volume and signed change on a watchlist row are pinned at real values rather than at zero |
+| `host_feed` | a host pushing its own events in with `Feed`, and the runtime indicator commands: one added and one removed mid-run, so the readings a frame carries follow the commands rather than the config |
 | `panels` | the layout changed while it runs: a panel added with a depth, moved, and another taken off, so the frame a renderer draws follows the commands rather than the config it opened with |
 | `book_deltas` | an L2 diff stream including level removals and new levels outside the previous range |
 | `footprint` | repeated prices on both sides, so the per-price volume accumulates rather than recording one entry per price |
@@ -64,6 +65,17 @@ character, which needs no parser and no regular expression.
 
 Nine language surfaces run every scenario: Rust, Python, Node, WASM, Go, C#,
 Java, R, and C through `examples/c/golden.c`.
+
+Fifteen of the nineteen commands are exercised here, and the four that are not
+cannot be: `run` keeps the last command's answer and reads it back as a `Frame`,
+so `ListIndicators`, `ExportRecording`, `SetRecording` and `ReplayPosition` --
+which answer with a catalogue, a recording and a cursor -- can never be the last
+command in a scenario, and their answers would never be compared. They are
+driven per binding instead: the registry suites for the first, and the recorder
+suites for the other three.
+`docs_examples::every_documented_command_is_driven_by_a_binding_suite` holds the
+whole set, counting this directory as a driving surface because every suite runs
+what is in it.
 
 The C one used to run the basic scenario alone, which left the ABI hub — the one
 every other binding routes through — as the least covered surface rather than

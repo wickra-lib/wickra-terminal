@@ -49,7 +49,11 @@ canvas draw. One logic, N front-ends.
 Data arrives through the `DataSource` trait, an activatable module:
 
 - **`Live`** — the [wickra-exchange](https://github.com/wickra-lib/wickra-exchange)
-  connectivity layer over the ten largest venues.
+  connectivity layer over the ten largest venues. Native builds only: that client
+  is native code with a socket and an HTTP stack, so the browser opens the
+  venue's public stream itself and feeds a `Manual` source instead. That bridge
+  is hand-written and reaches Binance spot — see
+  [docs/RENDERERS.md](docs/RENDERERS.md).
 - **`Replay`** — a recorded feed with a time-machine seek: the whole event list
   is kept, so `Seek` rewinds and re-folds state deterministically. It reads no
   files and holds no engine, which is why it runs in the browser too.
@@ -148,7 +152,12 @@ does not mean having decided to before it began.
 | **TUI** | native terminal | `crates/ui-tui` (ratatui), `cargo run -p wickra-terminal` |
 | **Web** | browser | `web/` (Vue) over `bindings/wasm`, `cd web && npm run dev` |
 
-Both consume the identical `Frame` of view-models from `wickra-terminal-core`.
+Both consume the identical `Frame` of view-models from `wickra-terminal-core`,
+and both read the same keymap out of the same config. Where they differ they
+differ in idiom rather than in capability — a prompt in the terminal is a focused
+field in the browser — with one exception worth knowing before you choose:
+**live market data reaches ten venues natively and one in the browser.**
+[docs/RENDERERS.md](docs/RENDERERS.md) has the rest.
 
 The Web row has a prerequisite the TUI row does not: `web/` depends on
 `file:../bindings/wasm/pkg`, which `wasm-pack` produces and no clone contains, so

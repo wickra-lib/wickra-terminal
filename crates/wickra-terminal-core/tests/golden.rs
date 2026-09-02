@@ -246,6 +246,25 @@ fn subscribe(source: u32) -> String {
     format!(r#"{{"type":"Subscribe","source":{source},"symbol":"{SYMBOL}"}}"#)
 }
 
+/// One `Feed` and one `Tick` per price: the host pushes, then the terminal
+/// drains. Written as a helper because a scenario that fed four prices by hand
+/// would be eight near-identical lines of JSON.
+fn feed_trades(prices: &[i64]) -> Vec<String> {
+    prices
+        .iter()
+        .enumerate()
+        .flat_map(|(index, price)| {
+            let timestamp = index + 1;
+            [
+                format!(
+                    r#"{{"type":"Feed","source":0,"event":{{"type":"trade","symbol":{{"base":"BTC","quote":"USDT"}},"price":"{price}","quantity":"0.5","aggressor":"Buy","timestamp":{timestamp}}}}}"#
+                ),
+                r#"{"type":"Tick"}"#.to_string(),
+            ]
+        })
+        .collect()
+}
+
 fn replay_config(feed: &[Event]) -> Config {
     let mut config = Config::default_layout();
     config.sources = vec![SourceSpec::Replay {
@@ -258,6 +277,21 @@ fn scenarios() -> Vec<Scenario> {
     let basic = canonical_feed();
     let deltas = book_delta_feed();
     let tickers = ticker_feed();
+
+    // A host-fed source, so `Feed` is exercised by every language suite rather
+    // than by the two that happen to have a test for it -- and the runtime
+    // indicator commands with it, whose effect is visible in the frame and so
+    // can be held to byte parity here. The three that answer with something
+    // other than a frame (`ListIndicators`, `ExportRecording`, `ReplayPosition`)
+    // cannot be: the corpus records the last answer and reads it back as a
+    // `Frame`. Their suites are per-binding instead.
+    let mut fed = Config::default_layout();
+    fed.sources = vec![SourceSpec::Manual];
+    fed.indicators = vec![IndicatorSpec::new("Sma", vec![3.0])];
+    fed.layout.panels = vec![PanelSpec::new(
+        PanelKind::Chart,
+        RectSpec::new(0, 0, 100, 100),
+    )];
 
     // One panel to start with, so the layout the scenario ends on is entirely
     // the work of the three commands rather than of the default layout.
@@ -355,6 +389,23 @@ fn scenarios() -> Vec<Scenario> {
             commands: [vec![subscribe(0)], tick(tickers.len())].concat(),
             replay_path: Some("replay/ticker.json"),
             feed: Some(tickers),
+        },
+        Scenario {
+            name: "host_feed",
+            config: fed,
+            commands: [
+                vec![subscribe(0)],
+                feed_trades(&[100, 101, 102, 103]),
+                vec![
+                    r#"{"type":"AddIndicator","spec":{"kind":"Ema","params":[3.0]}}"#.to_string(),
+                ],
+                feed_trades(&[104, 105]),
+                vec![r#"{"type":"RemoveIndicator","label":"Sma(3)"}"#.to_string()],
+                feed_trades(&[106]),
+            ]
+            .concat(),
+            replay_path: None,
+            feed: None,
         },
         Scenario {
             name: "panels",

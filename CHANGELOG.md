@@ -91,6 +91,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now runs its examples in the job that already has the binding built, which
   costs a second and is the only check that says they work. What is left in the
   parse gate is the WASM example, which is a page and needs a browser.
+- A `host_feed` scenario in the golden corpus. `Feed` was driven by two binding
+  suites and the runtime indicator commands by none of the corpus at all, so the
+  frames they produce were never held to byte parity across languages -- a
+  binding that serialised a fed event or a changed indicator set differently
+  would have passed everywhere. The corpus now reaches fifteen of the nineteen
+  commands; the four it does not are the four it cannot, because each answers
+  with something other than a frame and the corpus records the last answer as
+  one. Those are driven per binding instead, and
+  `every_documented_command_is_driven_by_a_binding_suite` holds the whole set.
+- The README and the cookbook say what the two renderers do not share. Live
+  market data reaches ten venues natively and one in the browser, which was true
+  before and written nowhere a user would meet it. The cookbook gains recipes for
+  the layout commands and the recorder.
 - The layout can be changed while the terminal runs. `Config.layout.panels` was
   read once when the terminal was built and never again, in both renderers, so a
   terminal opened with the wrong panels had to be restarted with a different

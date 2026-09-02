@@ -1,0 +1,17 @@
+{"type":"Subscribe","source":0,"symbol":"BTC/USDT"}
+{"type":"Feed","source":0,"event":{"type":"trade","symbol":{"base":"BTC","quote":"USDT"},"price":"100","quantity":"0.5","aggressor":"Buy","timestamp":1}}
+{"type":"Tick"}
+{"type":"Feed","source":0,"event":{"type":"trade","symbol":{"base":"BTC","quote":"USDT"},"price":"101","quantity":"0.5","aggressor":"Buy","timestamp":2}}
+{"type":"Tick"}
+{"type":"Feed","source":0,"event":{"type":"trade","symbol":{"base":"BTC","quote":"USDT"},"price":"102","quantity":"0.5","aggressor":"Buy","timestamp":3}}
+{"type":"Tick"}
+{"type":"Feed","source":0,"event":{"type":"trade","symbol":{"base":"BTC","quote":"USDT"},"price":"103","quantity":"0.5","aggressor":"Buy","timestamp":4}}
+{"type":"Tick"}
+{"type":"AddIndicator","spec":{"kind":"Ema","params":[3.0]}}
+{"type":"Feed","source":0,"event":{"type":"trade","symbol":{"base":"BTC","quote":"USDT"},"price":"104","quantity":"0.5","aggressor":"Buy","timestamp":1}}
+{"type":"Tick"}
+{"type":"Feed","source":0,"event":{"type":"trade","symbol":{"base":"BTC","quote":"USDT"},"price":"105","quantity":"0.5","aggressor":"Buy","timestamp":2}}
+{"type":"Tick"}
+{"type":"RemoveIndicator","label":"Sma(3)"}
+{"type":"Feed","source":0,"event":{"type":"trade","symbol":{"base":"BTC","quote":"USDT"},"price":"106","quantity":"0.5","aggressor":"Buy","timestamp":1}}
+{"type":"Tick"}
