@@ -91,6 +91,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now runs its examples in the job that already has the binding built, which
   costs a second and is the only check that says they work. What is left in the
   parse gate is the WASM example, which is a page and needs a browser.
+- The one piece of policy inside the TUI event loop is testable now. What a key
+  means depends on whether a prompt is open -- a prompt takes the keyboard whole,
+  because mapping keys to actions while one is open fires `quit` for the `q` in a
+  symbol -- and that decision sat four levels deep in a function no test can
+  enter, needing a terminal and an event stream to reach. `on_key` needs neither,
+  and five tests now cover the prompt, the action path, and the press filter that
+  keeps a held key from repeating its action on every report the terminal sends.
+- The book panel's empty-market branch and the terminal guard have tests. The
+  guard is the one piece the renderer must get right however the event loop
+  exits, and it was at zero.
 - The browser writes a changed layout back to `localStorage`. `web/README.md`
   said the layout is persisted, and the config was written once and never again
   -- so a panel added while the terminal ran was gone on the next reload, which
