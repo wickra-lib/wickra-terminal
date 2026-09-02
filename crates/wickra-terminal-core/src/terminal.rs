@@ -907,6 +907,54 @@ mod tests {
         terminal
     }
 
+    /// The chart panel's view-model out of the current frame.
+    ///
+    /// `find_map` rather than `find` plus a refutable `let`: the `let` needed an
+    /// `else` arm that the `find` had already made unreachable, so three copies
+    /// of an `unreachable!()` sat in the tests waiting to be read as a real
+    /// branch. Here the arm that skips a panel is the one every other panel in
+    /// the default layout takes.
+    fn chart_of(terminal: &Terminal) -> crate::view::ChartView {
+        terminal
+            .frame()
+            .panels
+            .into_iter()
+            .find_map(|panel| match panel {
+                PanelView::Chart(chart) => Some(chart),
+                _ => None,
+            })
+            .expect("the default layout has a chart")
+    }
+
+    /// A source that backfills is still an ordinary source.
+    ///
+    /// `poll`, `kind` and `unsubscribe` are the rest of the trait, and a history
+    /// source that answered `backfill` correctly and nothing else would seed a
+    /// chart once and then sit there: the tick path would take whatever `poll`
+    /// gave it, and a market dropped from it would keep being folded.
+    #[test]
+    fn a_backfilling_source_still_polls_and_unsubscribes() {
+        let mut terminal = seeded(rising_bars(4), 200);
+        let sym = Symbol::new("BTC", "USDT");
+        terminal.subscribe(0, &sym).expect("the source accepts");
+
+        // `tick` polls the source; it has no live events, so the frame is the
+        // seeded history and nothing more.
+        let frame = terminal.tick();
+        assert!(frame
+            .panels
+            .iter()
+            .any(|p| matches!(p, PanelView::Chart(_))));
+        // `kind` says it is not a recording, so the scrubber has nothing to show.
+        assert_eq!(terminal.replay_position(0), None);
+
+        terminal.unsubscribe(0, &sym);
+        assert!(
+            terminal.state().watchlist.is_empty(),
+            "the market was not dropped"
+        );
+    }
+
     #[test]
     fn a_fresh_subscription_is_seeded_from_history() {
         // Without this every bar came from ticks the terminal saw itself, so
@@ -915,15 +963,7 @@ mod tests {
         let mut terminal = seeded(rising_bars(30), 200);
         terminal.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
 
-        let PanelView::Chart(chart) = terminal
-            .frame()
-            .panels
-            .into_iter()
-            .find(|p| matches!(p, PanelView::Chart(_)))
-            .expect("the default layout has a chart")
-        else {
-            unreachable!("matched on the chart variant")
-        };
+        let chart = chart_of(&terminal);
         assert_eq!(chart.bars.len(), 30, "the history did not reach the chart");
         assert!(chart.last > 0.0, "the last price was not seeded");
         assert!(
@@ -936,15 +976,7 @@ mod tests {
     fn backfill_zero_fetches_nothing() {
         let mut terminal = seeded(rising_bars(30), 0);
         terminal.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
-        let PanelView::Chart(chart) = terminal
-            .frame()
-            .panels
-            .into_iter()
-            .find(|p| matches!(p, PanelView::Chart(_)))
-            .expect("the default layout has a chart")
-        else {
-            unreachable!("matched on the chart variant")
-        };
+        let chart = chart_of(&terminal);
         assert!(chart.bars.is_empty(), "history was fetched with backfill 0");
     }
 
@@ -956,15 +988,7 @@ mod tests {
         let sym = Symbol::new("BTC", "USDT");
         terminal.subscribe(0, &sym).unwrap();
         terminal.subscribe(0, &sym).unwrap();
-        let PanelView::Chart(chart) = terminal
-            .frame()
-            .panels
-            .into_iter()
-            .find(|p| matches!(p, PanelView::Chart(_)))
-            .expect("the default layout has a chart")
-        else {
-            unreachable!("matched on the chart variant")
-        };
+        let chart = chart_of(&terminal);
         assert_eq!(chart.bars.len(), 30, "the history was seeded twice");
     }
 
@@ -1012,9 +1036,20 @@ mod tests {
         }
         assert_eq!(terminal.recording_len(), 6);
 
+        // The typed twin answers the same recording the command serialises. A
+        // host embedding the core in Rust reaches for this one, and nothing read
+        // it -- so the two could have drifted apart unnoticed.
+        let typed = terminal.recording();
+        assert_eq!(typed.len(), terminal.recording_len());
+
         let exported = terminal
             .command_json(r#"{"type":"ExportRecording"}"#)
             .unwrap();
+        assert_eq!(
+            serde_json::to_string(&typed).expect("the events serialise"),
+            exported,
+            "the typed recording and the exported one are not the same events"
+        );
         let mut replayed = Config::default_layout();
         replayed.sources = vec![SourceSpec::Replay { dataset: exported }];
         let mut second = Terminal::new(&replayed).unwrap();

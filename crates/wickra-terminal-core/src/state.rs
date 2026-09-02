@@ -1603,6 +1603,67 @@ impl AppState {
 mod tests {
     use super::*;
 
+    /// Seeding more history than the rings hold keeps the newest of it.
+    ///
+    /// A live subscription asks for as many bars as the config's `backfill`
+    /// says, and nothing clamps that to what a `SymbolState` carries -- so a
+    /// config asking for a thousand bars on a venue that has them walks both
+    /// rings past their bound. They evict rather than grow, and the bar that
+    /// survives has to be the newest one, because that is the one the chart
+    /// draws and the one the next tick continues from.
+    #[test]
+    fn seeding_past_the_rings_evicts_the_oldest_bars() {
+        let bars: Vec<wickra_core::Candle> = (0..600)
+            .map(|i| {
+                let close = 100.0 + f64::from(i);
+                wickra_core::Candle::new(close, close, close, close, 1.0, i64::from(i))
+                    .expect("an ordered candle")
+            })
+            .collect();
+
+        let mut state = SymbolState::new(&[], &[], &[], Timeframe::default())
+            .expect("an empty indicator set is constructible");
+        state.seed_bars(&bars);
+
+        assert_eq!(
+            state.ohlc.len(),
+            OHLC_HISTORY,
+            "the bar ring grew past its bound"
+        );
+        assert_eq!(
+            state.history.len(),
+            512,
+            "the price ring grew past its bound"
+        );
+        let newest = state.ohlc.back().expect("the ring is not empty");
+        assert!(
+            (newest.close - 699.0).abs() < 1e-9,
+            "the newest bar was evicted"
+        );
+        let oldest = state.ohlc.front().expect("the ring is not empty");
+        let first_kept = 700.0 - f64::from(u16::try_from(OHLC_HISTORY).expect("the ring is small"));
+        assert!((oldest.close - first_kept).abs() < 1e-9);
+    }
+
+    /// `AppState` is what a panicking test prints, and it holds a recording that
+    /// can run to thousands of events. Printing the ring itself would bury the
+    /// fields a reader is actually after, so the recorder is reported by count
+    /// -- and that only stays true if something reads it.
+    #[test]
+    fn the_debug_view_reports_the_recording_by_count() {
+        let mut state = AppState::default();
+        state.set_recording(Some(16));
+        let sym = Symbol::new("BTC", "USDT");
+        let event = trade(&sym, dec!(100), OrderSide::Buy);
+        state.fold(0, &sym, &event);
+        state.record(&event);
+
+        let shown = format!("{state:?}");
+        assert!(shown.contains("record_capacity: Some(16)"), "{shown}");
+        assert!(shown.contains("recorded: 1"), "{shown}");
+        assert!(shown.contains("sources: 0"), "{shown}");
+    }
+
     /// A tick carrying one closed candle, which is all the bar streams read.
     fn candle_tick(open: f64, high: f64, low: f64, close: f64) -> TickInput {
         let mut input = TickInput::price(close);

@@ -169,6 +169,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   section both keys must be absent, and the moment one is cut both must be
   present and agree with it. Cutting a release now fails until the citation is
   brought along, instead of shipping one that dates nothing.
+- Four error arms that nothing could reach are gone, each replaced by the
+  reasoning that made it unreachable. Changing the timeframe and seeking a
+  replay both handled a failure their own guards had already excluded -- the
+  indicator specs were validated when they were added, and `replay_position`
+  had just answered -- and saving a recording handled a failure of a constant
+  command with no failing path. `parse_indicator` guarded against `vs` with no
+  market after it, which the leading `trim` makes impossible: the pattern's
+  trailing space cannot match at the end of the text, so a dangling `vs` never
+  splits and is reported as the parameter it is not. A branch no input can take
+  is not defence; it is an untested path that reads like one.
 - README section headings follow the fixed order the repository blueprint sets:
   `## Performance` is now `## Benchmarks`, and `## Building from source` is now
   `## Building everything from source`.

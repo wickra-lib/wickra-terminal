@@ -432,6 +432,10 @@ mod tests {
         subscribed: Vec<Symbol>,
         klines_asked: Option<(String, u32)>,
         klines_fail: bool,
+        /// How many times the source asked for market data over REST rather
+        /// than taking it off the stream. Backfill is not counted: that is one
+        /// request per subscription and the reason `klines` exists here.
+        rest_polls: usize,
     }
 
     /// The stub and the test share one state, so the test can queue events and
@@ -455,11 +459,18 @@ mod tests {
         fn klines_asked(&self) -> Option<(String, u32)> {
             self.state.borrow().klines_asked.clone()
         }
+
+        fn rest_polls(&self) -> usize {
+            self.state.borrow().rest_polls
+        }
     }
 
     impl wickra_exchange::MarketData for StubExchange {
         fn ticker(&mut self, _symbol: &Symbol) -> wickra_exchange::Result<wickra_exchange::Ticker> {
-            Err(wickra_exchange::Error::InvalidOrder("stub"))
+            self.state.borrow_mut().rest_polls += 1;
+            Err(wickra_exchange::Error::InvalidSymbol(
+                "the stub answers market data over the stream".to_string(),
+            ))
         }
 
         fn klines(
@@ -481,7 +492,10 @@ mod tests {
             _symbol: &Symbol,
             _depth: u32,
         ) -> wickra_exchange::Result<wickra_exchange::OrderBookSnapshot> {
-            Err(wickra_exchange::Error::InvalidOrder("stub"))
+            self.state.borrow_mut().rest_polls += 1;
+            Err(wickra_exchange::Error::InvalidSymbol(
+                "the stub answers market data over the stream".to_string(),
+            ))
         }
 
         fn subscribe_trades(&mut self, symbol: &Symbol) -> wickra_exchange::Result<()> {
@@ -602,6 +616,53 @@ mod tests {
         assert_eq!(market_type(Market::UsdMFutures), MarketType::UsdMFutures);
         assert_eq!(market_type(Market::CoinMFutures), MarketType::CoinMFutures);
         assert_eq!(market_type(Market::Margin), MarketType::Margin);
+    }
+
+    /// The source takes its ticker and its book off the stream, never by REST.
+    ///
+    /// `MarketData` also offers `ticker` and `order_book` as one-shot requests,
+    /// and a source that reached for either per tick would be rate-limited off
+    /// the venue within minutes -- quietly, because each call on its own
+    /// succeeds. The only REST call a subscription makes is the one backfill,
+    /// which is counted separately.
+    #[test]
+    fn a_subscription_polls_no_market_data_over_rest() {
+        let stub = StubExchange::new();
+        stub.state.borrow_mut().bars =
+            vec![wickra_exchange::Candle::new(100.0, 110.0, 95.0, 105.0, 1.0, 0).expect("valid")];
+        let mut source = stubbed(&stub);
+        let btc = Symbol::new("BTC", "USDT");
+
+        source.subscribe(&btc).expect("the stub accepts");
+        source.backfill(&btc, "1m", 10);
+        stub.queue(vec![print(&btc, 100)]);
+        for _ in 0..5 {
+            source.poll();
+        }
+
+        assert_eq!(
+            stub.rest_polls(),
+            0,
+            "the source polled market data over REST"
+        );
+        assert!(
+            stub.klines_asked().is_some(),
+            "the one backfill did not happen"
+        );
+    }
+
+    /// And when something does ask, the stub refuses rather than inventing a
+    /// book -- so the assertion above is measuring a real refusal, not a method
+    /// that quietly answers.
+    #[test]
+    fn the_stub_refuses_a_rest_request_and_counts_it() {
+        let stub = StubExchange::new();
+        let btc = Symbol::new("BTC", "USDT");
+        let mut client = stub.clone();
+
+        assert!(wickra_exchange::MarketData::ticker(&mut client, &btc).is_err());
+        assert!(wickra_exchange::MarketData::order_book(&mut client, &btc, 10).is_err());
+        assert_eq!(stub.rest_polls(), 2);
     }
 
     #[test]

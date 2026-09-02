@@ -341,10 +341,14 @@ impl App {
                 return;
             }
         };
-        match self.terminal.set_timeframe(timeframe) {
-            Ok(()) => self.status = format!("timeframe {}", timeframe.label()),
-            Err(err) => self.status = format!("timeframe failed: {err}"),
-        }
+        // The core rebuilds the indicator set from the specs it is already
+        // holding, and those were validated when they were added -- the same
+        // reasoning `Terminal::seek` uses when it rebuilds a market. An arm for
+        // a failure nothing can produce is a branch no test can reach.
+        self.terminal
+            .set_timeframe(timeframe)
+            .expect("the indicator specs were validated when they were added");
+        self.status = format!("timeframe {}", timeframe.label());
     }
 
     /// Search the registry catalogue and report the matches in the status line.
@@ -392,10 +396,12 @@ impl App {
             .unwrap_or(i64::MAX)
             .saturating_add(offset);
         let target = usize::try_from(target.max(0)).unwrap_or(0).min(length);
-        match self.terminal.seek(source, target) {
-            Ok(()) => self.status = format!("replay {target}/{length}"),
-            Err(err) => self.status = format!("seek failed: {err}"),
-        }
+        // `replay_position` answered above, so the source is open and has a
+        // recording to seek; both of `seek`'s errors are already excluded.
+        self.terminal
+            .seek(source, target)
+            .expect("replay_position answered, so this source is open and replayable");
+        self.status = format!("replay {target}/{length}");
     }
 
     /// Write the recorded events beside the terminal, ready to be replayed.
@@ -422,13 +428,10 @@ impl App {
         // Through the command boundary rather than serialising here: the format
         // is the core's to decide, and this way the file is byte-for-byte what
         // `ExportRecording` hands any other binding.
-        let json = match self.terminal.command_json(r#"{"type":"ExportRecording"}"#) {
-            Ok(json) => json,
-            Err(err) => {
-                self.status = format!("could not export the recording: {err}");
-                return;
-            }
-        };
+        let json = self
+            .terminal
+            .command_json(r#"{"type":"ExportRecording"}"#)
+            .expect("ExportRecording is a constant command with no failing path");
         self.status = write_recording(std::path::Path::new("."), &json, count);
     }
 
@@ -447,18 +450,11 @@ impl App {
             .unwrap_or(i64::MAX)
             .saturating_add(direction);
         *offset = usize::try_from(moved.max(0)).unwrap_or(0);
-        let kind = self
-            .terminal
-            .config()
-            .layout
-            .panels
-            .get(self.focused_panel)
-            .map(|spec| spec.kind);
+        // `scroll` is built with one entry per panel and neither can grow after
+        // that, so the lookup above having succeeded is proof this one does too.
+        let kind = self.terminal.config().layout.panels[self.focused_panel].kind;
         let clamped = self.clamp_scroll();
-        self.status = match kind {
-            Some(kind) => format!("{kind:?} row {clamped}"),
-            None => String::new(),
-        };
+        self.status = format!("{kind:?} row {clamped}");
     }
 
     /// Hold every offset inside the rows its panel actually carries.
@@ -518,7 +514,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wickra_terminal_core::{Config, SourceSpec};
+    use wickra_terminal_core::{Config, IndicatorSpec, PanelSpec, SourceSpec};
 
     fn synth_app() -> App {
         let mut cfg = Config::default_layout();
@@ -857,14 +853,22 @@ mod tests {
         for _ in 0..50 {
             app.on_action(Action::ScrollDown);
         }
-        let rows = match &app.frame.panels[tape] {
-            wickra_terminal_core::PanelView::Tape(view) => view.prints.len(),
-            other => panic!("expected a tape, got {other:?}"),
-        };
+        // `find_map` over the frame rather than a match with a catch-all: the
+        // arm for "not a tape" is taken by every other panel in the layout, so
+        // it is live, where a `panic!` catch-all on the indexed panel never is.
+        let rows = app
+            .frame
+            .panels
+            .iter()
+            .find_map(|panel| match panel {
+                wickra_terminal_core::PanelView::Tape(view) => Some(view.prints.len()),
+                _ => None,
+            })
+            .expect("the default layout has a tape");
+        let reached = app.scroll[tape];
         assert!(
-            app.scroll[tape] < rows.max(1),
-            "scrolled to {} of {rows} rows",
-            app.scroll[tape]
+            reached < rows.max(1),
+            "scrolled to {reached} of {rows} rows"
         );
     }
 
@@ -882,10 +886,10 @@ mod tests {
             (Action::ListIndicators, "catalogue"),
         ] {
             app.on_action(action);
+            let footer = app.footer();
             assert!(
-                app.footer().contains(expected),
-                "{action:?} prompts with {:?}",
-                app.footer()
+                footer.contains(expected),
+                "{action:?} prompts with {footer:?}"
             );
             app.input_cancel();
         }
@@ -991,11 +995,8 @@ mod tests {
             .expect("the status names the file");
         let body = std::fs::read_to_string(&path).expect("read the recording back");
         let _ = std::fs::remove_file(&path);
-        assert!(
-            body.starts_with('['),
-            "not a JSON array: {}",
-            &body[..body.len().min(60)]
-        );
+        let head = &body[..body.len().min(60)];
+        assert!(body.starts_with('['), "not a JSON array: {head}");
 
         // And it replays: the file goes straight back in as a dataset.
         let mut replay = Config::default_layout();
@@ -1060,5 +1061,131 @@ mod tests {
         app.on_action(Action::NextPanel);
         app.on_action(Action::PrevPanel);
         assert_eq!(app.focused_panel, 0, "no panels means nothing to focus");
+    }
+
+    /// Scrolling with no panels at all does nothing rather than panicking.
+    ///
+    /// An empty layout is a config a user can write, and `scroll` is then empty
+    /// while `focused_panel` is still 0 -- so the lookup misses and the only
+    /// correct answer is to leave the status alone.
+    #[test]
+    fn scrolling_an_empty_layout_is_a_no_op() {
+        let mut config = Config::default_layout();
+        config.layout.panels.clear();
+        config.sources = vec![SourceSpec::Synth { seed: 1 }];
+        let mut app = App::new(Terminal::new(&config).unwrap());
+        let before = app.status.clone();
+        app.on_action(Action::ScrollDown);
+        app.on_action(Action::ScrollUp);
+        assert_eq!(app.status, before, "an empty layout reported a scroll");
+        assert!(app.scroll.is_empty());
+    }
+
+    /// A bars panel reports the longest of its streams, so it scrolls.
+    ///
+    /// Every other panel kind is one list; this one is several at once, and a
+    /// row count taken from the first stream would stop the scroll short of the
+    /// longest. The chart and the profile deliberately report one row -- they
+    /// are not lists -- which is why this is the arm worth pinning.
+    #[test]
+    fn a_bars_panel_scrolls_by_its_longest_stream() {
+        let mut config = Config::default_layout();
+        config.sources = vec![SourceSpec::Synth { seed: 1 }];
+        config.bars = vec![
+            IndicatorSpec::new("RenkoBars", vec![1.0]),
+            IndicatorSpec::new("TickBars", vec![4.0]),
+        ];
+        config.layout.panels = vec![PanelSpec {
+            kind: wickra_terminal_core::PanelKind::Bars,
+            rect: config.layout.panels[0].rect,
+            depth: None,
+        }];
+        let mut app = App::new(Terminal::new(&config).unwrap());
+        app.terminal
+            .subscribe(0, &Symbol::new("BTC", "USDT"))
+            .unwrap();
+        for _ in 0..400 {
+            app.update();
+        }
+        let rows = app
+            .frame
+            .panels
+            .iter()
+            .find_map(|panel| match panel {
+                wickra_terminal_core::PanelView::Bars(view) => {
+                    Some(view.streams.iter().map(|s| s.bars.len()).max().unwrap_or(0))
+                }
+                _ => None,
+            })
+            .expect("the layout is one bars panel");
+
+        for _ in 0..50 {
+            app.on_action(Action::ScrollDown);
+        }
+        assert!(app.status.starts_with("Bars row"), "status: {}", app.status);
+        assert!(
+            app.scroll[0] < rows.max(1),
+            "scrolled to {} of {rows} rows",
+            app.scroll[0]
+        );
+    }
+
+    /// An indicator prompt that cannot be parsed says so and changes nothing.
+    #[test]
+    fn an_unparseable_indicator_is_reported_and_adds_nothing() {
+        let mut app = synth_app();
+        let before = app.terminal.config().indicators.len();
+        app.on_action(Action::AddIndicator);
+        type_and_submit(&mut app, "Sma not-a-number");
+        assert!(
+            app.status.starts_with("bad indicator:"),
+            "status: {}",
+            app.status
+        );
+        assert_eq!(app.terminal.config().indicators.len(), before);
+    }
+
+    /// The save key writes a file, and says so, without a config change first.
+    ///
+    /// Two answers before that one, both of which used to be silence: a
+    /// terminal that is not recording, and one that is recording but has seen
+    /// nothing yet.
+    #[test]
+    fn the_save_key_reports_the_recorder_state_and_then_writes() {
+        let mut app = synth_app();
+        app.on_action(Action::SaveRecording);
+        assert!(
+            app.status.contains("recording is off"),
+            "status: {}",
+            app.status
+        );
+
+        let mut config = Config::default_layout();
+        config.sources = vec![SourceSpec::Synth { seed: 1 }];
+        config.record = Some(256);
+        let mut app = App::new(Terminal::new(&config).unwrap());
+        app.on_action(Action::SaveRecording);
+        assert!(
+            app.status.contains("nothing recorded"),
+            "status: {}",
+            app.status
+        );
+
+        app.terminal
+            .subscribe(0, &Symbol::new("BTC", "USDT"))
+            .unwrap();
+        for _ in 0..5 {
+            app.update();
+        }
+        app.on_action(Action::SaveRecording);
+        assert!(app.status.starts_with("wrote "), "status: {}", app.status);
+        let path = app
+            .status
+            .split_once(" to ")
+            .map(|(_, path)| std::path::PathBuf::from(path))
+            .expect("the status names the file");
+        let body = std::fs::read_to_string(&path).expect("read the recording back");
+        let _ = std::fs::remove_file(&path);
+        assert!(body.starts_with('['), "not a JSON array");
     }
 }

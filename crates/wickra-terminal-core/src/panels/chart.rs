@@ -80,3 +80,38 @@ impl Panel for ChartPanel {
         PanelView::Chart(chart)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::CHART_POINTS;
+    use super::*;
+
+    /// A panel focused on a market the state has never folded still answers.
+    ///
+    /// The empty answer is not a formality: focus moves to a market the moment
+    /// it is subscribed, which is before its first event arrives, so this is the
+    /// view every live market is drawn from for its first frame. A renderer that
+    /// was handed nothing there would have to guess.
+    #[test]
+    fn a_market_with_no_state_yet_charts_as_empty() {
+        let sym = Symbol::new("BTC", "USDT");
+        let state = AppState::default();
+
+        let PanelView::Chart(view) = (ChartPanel {
+            points: CHART_POINTS,
+        })
+        .view(&state, (0, &sym)) else {
+            panic!("the chart panel answers with a chart")
+        };
+
+        assert_eq!(view.symbol, "BTC/USDT");
+        assert!(
+            view.last.abs() < f64::EPSILON,
+            "an unfolded market has no last price"
+        );
+        assert!(view.series.is_empty());
+        assert!(view.bars.is_empty());
+        assert!(view.forming.is_none());
+        assert!(view.indicators.is_empty());
+    }
+}
