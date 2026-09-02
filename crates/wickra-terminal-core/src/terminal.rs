@@ -12,7 +12,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::candle::Timeframe;
-use crate::config::{Config, IndicatorSpec, SourceSpec};
+use crate::config::{Config, IndicatorSpec, PanelSpec, RectSpec, SourceSpec};
 use crate::error::{Error, Result};
 use crate::panels::{build_panel, Panel};
 use crate::registry;
@@ -135,6 +135,32 @@ enum Command {
         symbol: String,
         /// The channels that arrived.
         update: DerivativesUpdate,
+    },
+    /// Place a new panel on the layout, appended after the ones already there.
+    ///
+    /// The layout was read once when the terminal was built and never again, so
+    /// a terminal opened with the wrong panels had to be restarted with a
+    /// different config -- which is not something a person does while watching a
+    /// market move.
+    AddPanel {
+        /// The panel to build, and where to put it.
+        spec: PanelSpec,
+    },
+    /// Take the panel at `index` off the layout.
+    RemovePanel {
+        /// Its position in the layout, counting from zero.
+        index: usize,
+    },
+    /// Move or resize the panel at `index`.
+    ///
+    /// The rectangle only. A panel's depth is what it was built with, so
+    /// changing that means building a different panel -- a remove and an add,
+    /// which says plainly that the old one's state goes with it.
+    MovePanel {
+        /// Its position in the layout, counting from zero.
+        index: usize,
+        /// Where it should sit now.
+        rect: RectSpec,
     },
 }
 
@@ -529,6 +555,60 @@ impl Terminal {
         self.state.focus = Some((id, sym.clone()));
     }
 
+    /// Place a new panel on the layout, and answer with its index.
+    ///
+    /// The layout was read once in [`new`](Self::new) and never again, so a
+    /// terminal opened with the wrong panels had to be restarted with a
+    /// different config -- which is not something a person does while watching a
+    /// market move.
+    ///
+    /// Appended rather than inserted at a position: the index is how every other
+    /// panel command names its target, and inserting would renumber the ones a
+    /// caller is already holding.
+    pub fn add_panel(&mut self, spec: &PanelSpec) -> usize {
+        self.panels.push(build_panel(spec));
+        self.config.layout.panels.push(spec.clone());
+        self.panels.len() - 1
+    }
+
+    /// Take the panel at `index` off the layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Command`] if there is no panel at `index`.
+    pub fn remove_panel(&mut self, index: usize) -> Result<()> {
+        if index >= self.panels.len() {
+            return Err(Error::Command(format!(
+                "no panel at {index}: the layout has {}",
+                self.panels.len()
+            )));
+        }
+        self.panels.remove(index);
+        self.config.layout.panels.remove(index);
+        Ok(())
+    }
+
+    /// Move or resize the panel at `index`.
+    ///
+    /// The rectangle only. A panel's depth is what it was built with, so
+    /// changing that means building a different panel -- a remove and an add,
+    /// which says plainly that the old one's state goes with it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Command`] if there is no panel at `index`.
+    pub fn move_panel(&mut self, index: usize, rect: RectSpec) -> Result<()> {
+        let count = self.panels.len();
+        let spec = self
+            .config
+            .layout
+            .panels
+            .get_mut(index)
+            .ok_or_else(|| Error::Command(format!("no panel at {index}: the layout has {count}")))?;
+        spec.rect = rect;
+        Ok(())
+    }
+
     /// Track one more indicator on every market, now and on markets opened
     /// later. It starts cold and warms up from the next tick.
     ///
@@ -674,6 +754,15 @@ impl Terminal {
                 update,
             } => {
                 self.feed_derivatives(source, &symbol, &update)?;
+            }
+            Command::AddPanel { spec } => {
+                self.add_panel(&spec);
+            }
+            Command::RemovePanel { index } => {
+                self.remove_panel(index)?;
+            }
+            Command::MovePanel { index, rect } => {
+                self.move_panel(index, rect)?;
             }
             Command::AddIndicator { spec } => {
                 self.add_indicator(&spec)?;
