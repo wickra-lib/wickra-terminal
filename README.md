@@ -124,9 +124,12 @@ cargo run -p wickra-terminal -- --source "replay:$(cat golden/replay/basic.json)
 cargo run -p wickra-terminal -- --config my-terminal.toml
 ```
 
-The three `--source` shorthands are `synth:<seed>`, `live:<venue>:<BASE/QUOTE>`
-and `replay:<json>` — the last one taking the recorded events inline rather than
-a filename. See [docs/SOURCES.md](docs/SOURCES.md) for what each one does and
+The three `--source` shorthands are `synth:<seed>`,
+`live:<venue>:<BASE/QUOTE>[:<market>]` and `replay:<json>` — the last one taking
+the recorded events inline rather than a filename. A live source opens the spot
+book unless a market follows the symbol: `spot`, `usdm`, `coinm` or `margin`, so
+`live:binance:BTC/USDT:usdm` watches the USD-margined perpetual. See
+[docs/SOURCES.md](docs/SOURCES.md) for what each one does and
 [docs/Cookbook.md](docs/Cookbook.md) for worked config files.
 
 ## Renderers

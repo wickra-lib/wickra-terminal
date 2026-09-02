@@ -11,7 +11,7 @@ use wickra_terminal_core::{IndicatorSpec, Market, SourceSpec};
 /// Returns a human-readable message if the shorthand is not recognized.
 pub(crate) fn parse_source(spec: &str) -> Result<SourceSpec, String> {
     let (kind, rest) = spec.split_once(':').ok_or_else(|| {
-        "expected kind:… (synth:1 | live:venue:BASE/QUOTE | replay:JSON)".to_string()
+        "expected kind:… (synth:1 | live:venue:BASE/QUOTE[:market] | replay:JSON)".to_string()
     })?;
     match kind {
         "synth" => Ok(SourceSpec::Synth {

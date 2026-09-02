@@ -159,12 +159,15 @@ pub fn event_symbol(event: &Event) -> Option<Symbol> {
 /// load.
 pub fn build_source(id: SourceId, spec: &SourceSpec) -> Result<Box<dyn DataSource>> {
     match spec {
+        // The spec's symbol is not read here: `Terminal::add_source` subscribes
+        // it once the source is open, and connecting is to a venue rather than
+        // to a market.
         SourceSpec::Live {
             venue,
-            symbol,
+            symbol: _,
             testnet,
             market,
-        } => build_live(id, venue, symbol, *testnet, *market),
+        } => build_live(id, venue, *testnet, *market),
         SourceSpec::Replay { dataset } => Ok(Box::new(ReplaySource::from_dataset(id, dataset)?)),
         SourceSpec::Synth { seed } => Ok(Box::new(SynthSource::new(id, *seed))),
         SourceSpec::Manual => Ok(Box::new(ManualSource::new(id))),
@@ -176,13 +179,10 @@ pub fn build_source(id: SourceId, spec: &SourceSpec) -> Result<Box<dyn DataSourc
 fn build_live(
     id: SourceId,
     venue: &str,
-    symbol: &str,
     testnet: bool,
     market: crate::config::Market,
 ) -> Result<Box<dyn DataSource>> {
-    Ok(Box::new(LiveSource::connect(
-        id, venue, symbol, testnet, market,
-    )?))
+    Ok(Box::new(LiveSource::connect(id, venue, testnet, market)?))
 }
 
 /// Without the `live` feature (e.g. wasm), a Live spec is an error: the browser
@@ -191,7 +191,6 @@ fn build_live(
 fn build_live(
     _id: SourceId,
     _venue: &str,
-    _symbol: &str,
     _testnet: bool,
     _market: crate::config::Market,
 ) -> Result<Box<dyn DataSource>> {

@@ -226,7 +226,9 @@ impl App {
         match &self.mode {
             Mode::Input { kind, buffer } => {
                 let label = match kind {
-                    InputKind::AddSource => "add source (synth:N | live:venue:SYM | replay:JSON)",
+                    InputKind::AddSource => {
+                        "add source (synth:N | live:venue:SYM[:market] | replay:JSON)"
+                    }
                     InputKind::AddSymbol => "add symbol (BASE/QUOTE)",
                     InputKind::AddIndicator => "add indicator (Sma 20 | Beta 20 vs ETH/USDT)",
                     InputKind::RemoveIndicator => "remove indicator (the label, e.g. Sma(20))",
@@ -576,7 +578,7 @@ mod tests {
         app.input_backspace();
         assert_eq!(
             app.footer(),
-            "add source (synth:N | live:venue:SYM | replay:JSON): a\u{2588}"
+            "add source (synth:N | live:venue:SYM[:market] | replay:JSON): a\u{2588}"
         );
         app.input_cancel();
         assert!(!app.is_input());
