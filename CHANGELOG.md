@@ -91,6 +91,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now runs its examples in the job that already has the binding built, which
   costs a second and is the only check that says they work. What is left in the
   parse gate is the WASM example, which is a page and needs a browser.
+- `THREAT_MODEL.md` lists what is fuzzed correctly, and a test keeps it that
+  way. It named four of the five targets and mapped two of the four to the wrong
+  one -- and the target it left out, `registry_drive`, is the one that found a
+  real fault: an indicator period of 10^20 cast cleanly to a `usize`, the
+  indicator asked for a `Vec` that size, and the process aborted on a panic no
+  caller could catch. A promise about what is tested is worth exactly what
+  checks it, so `every_fuzz_target_is_named_in_the_threat_model` now does, in
+  both directions -- a target missing from the list, and a name in the list with
+  no target behind it.
 - The terminal draws indicator overlays in the before-the-first-bar fallback,
   which the browser has always done. From one frame the browser drew the price
   and its indicator lines on a shared axis and the terminal drew a single row of

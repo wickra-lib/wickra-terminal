@@ -381,6 +381,72 @@ fn the_citation_matches_the_release_state() {
     }
 }
 
+/// Every fuzz target is named in the threat model, and every name is a target.
+///
+/// The threat model lists what is fuzzed as one of the guarantees the code is
+/// held to, and nothing checked the list against the directory. It had drifted
+/// both ways: it named four of the five targets and mapped two of the four to
+/// the wrong one. The target it omitted, `registry_drive`, is the one that found
+/// a real fault -- an indicator period of 10^20 that aborted the process.
+///
+/// A promise about what is tested is worth exactly what checks it.
+#[test]
+fn every_fuzz_target_is_named_in_the_threat_model() {
+    let root = repo_root();
+    let model = read(&root, "THREAT_MODEL.md");
+    let manifest = read(&root, "fuzz/Cargo.toml");
+
+    let dir = root.join("fuzz/fuzz_targets");
+    let mut targets: Vec<String> = std::fs::read_dir(&dir)
+        .expect("fuzz/fuzz_targets is readable")
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            (path.extension()? == "rs").then(|| path.file_stem()?.to_str().map(str::to_owned))?
+        })
+        .collect();
+    targets.sort();
+    assert!(
+        targets.len() >= 5,
+        "found only {targets:?} in fuzz/fuzz_targets"
+    );
+
+    for target in &targets {
+        assert!(
+            model.contains(&format!("`{target}`")),
+            "THREAT_MODEL.md does not name the {target} fuzz target"
+        );
+        // A target the manifest does not build is a file cargo-fuzz never runs,
+        // which the threat model would then be crediting for nothing.
+        assert!(
+            manifest.contains(&format!("fuzz_targets/{target}.rs")),
+            "fuzz/Cargo.toml does not build the {target} target"
+        );
+    }
+
+    // And nothing named there that does not exist: a list that outlives its
+    // targets claims coverage the repository has stopped having.
+    for line in model
+        .lines()
+        .filter(|line| line.trim_start().starts_with('|'))
+    {
+        let Some(name) = line.split('`').nth(1) else {
+            continue;
+        };
+        if name.ends_with("_parse")
+            || name.ends_with("_event")
+            || name.ends_with("_fold")
+            || name.ends_with("_model")
+            || name.ends_with("_drive")
+        {
+            assert!(
+                targets.iter().any(|target| target == name),
+                "THREAT_MODEL.md names a {name} fuzz target that does not exist"
+            );
+        }
+    }
+}
+
 /// Every command the READMEs promise is driven by at least one binding suite.
 ///
 /// `every_binding_readme_documents_every_command` below checks the promise is

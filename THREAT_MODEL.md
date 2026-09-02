@@ -51,10 +51,24 @@ completely and this document changes first.
 - **Panics never unwind across the C ABI.** The release profile is
   `panic = "abort"`, because unwinding through C is undefined behaviour. Every
   export null-checks its pointers and returns a typed error code.
-- **Defensive parsing, fuzzed.** Config, command JSON, the state fold and the
-  view-model build each have a fuzz target (`config_parse`, `feed_event`,
-  `state_fold`, `view_model`) run on every push. Malformed input yields a typed
-  error, never a panic.
+- **Defensive parsing, fuzzed.** Five targets run on every push, and malformed
+  input has to yield a typed error rather than a panic in each:
+
+  | target | what it drives |
+  |---|---|
+  | `config_parse` | `Config::from_json` and `Terminal::from_json` |
+  | `feed_event` | an `Event` and a whole feed, deserialized |
+  | `state_fold` | folding an arbitrary feed into a fresh `AppState` |
+  | `view_model` | `command_json` -- the data-driven boundary itself |
+  | `registry_drive` | the registry's construction arms, by name and parameters |
+
+  This list named four of the five and mapped two of them to the wrong target,
+  which is worth more than a correction: `registry_drive` is the one that found
+  a real fault. An indicator period of 10^20 cast cleanly to a `usize`, the
+  indicator asked for a `Vec` that size, and the process aborted on a panic no
+  caller could catch -- reachable from the indicator prompt in either renderer.
+  Periods are bounded at a million now, in the generator and the generated file
+  alike.
 - **Exact market arithmetic.** Price and quantity use `rust_decimal::Decimal`,
   not `f64`, through the whole market layer. Values are converted to `f64` only
   at the view-model boundary, where they are being drawn rather than compared.
