@@ -76,6 +76,34 @@ Every number crosses the boundary as a JSON number. Internally prices and
 quantities are `Decimal`; the conversion happens here, at the edge, because a
 view-model is drawn rather than compared.
 
+## Changing the layout while it runs
+
+`Config.layout.panels` was read once when the terminal was built and never
+again, so a terminal opened with the wrong panels had to be restarted with a
+different config -- which is not something a person does while watching a market
+move. Three commands change it:
+
+```json
+{"type":"AddPanel","spec":{"kind":"Book","rect":{"x":50,"y":0,"w":50,"h":100},"depth":24}}
+{"type":"MovePanel","index":1,"rect":{"x":0,"y":50,"w":100,"h":50}}
+{"type":"RemovePanel","index":1}
+```
+
+A panel is named by its index in the layout, counting from zero, and `AddPanel`
+appends rather than inserting: the index is how the other two name their target,
+and inserting would renumber the ones a caller is already holding. An index past
+the end is refused with the count, so a renderer that kept an index across a
+frame in which the layout shrank gets an error rather than acting on the wrong
+panel.
+
+`MovePanel` changes the rectangle and nothing else. A panel's depth is what it
+was built with, so changing that means building a different panel -- a remove
+and an add, which says plainly that the old one's state goes with it.
+
+The config moves with the layout, because the config is what a renderer reads to
+place the panels a frame carries. A host that persists its config after a
+session gets the layout the session ended on.
+
 ## Focus
 
 All panels but the watchlist render one market — the focused `(source, symbol)`.

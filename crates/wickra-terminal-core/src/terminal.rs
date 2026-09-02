@@ -599,12 +599,9 @@ impl Terminal {
     /// Returns [`Error::Command`] if there is no panel at `index`.
     pub fn move_panel(&mut self, index: usize, rect: RectSpec) -> Result<()> {
         let count = self.panels.len();
-        let spec = self
-            .config
-            .layout
-            .panels
-            .get_mut(index)
-            .ok_or_else(|| Error::Command(format!("no panel at {index}: the layout has {count}")))?;
+        let spec = self.config.layout.panels.get_mut(index).ok_or_else(|| {
+            Error::Command(format!("no panel at {index}: the layout has {count}"))
+        })?;
         spec.rect = rect;
         Ok(())
     }
@@ -2056,7 +2053,10 @@ mod tests {
         terminal.remove_panel(0).expect("panel 0 exists");
         let panels = terminal.frame().panels;
         assert_eq!(panels.len(), 1);
-        assert!(matches!(panels[0], PanelView::Book(_)), "the wrong panel went");
+        assert!(
+            matches!(panels[0], PanelView::Book(_)),
+            "the wrong panel went"
+        );
         assert_eq!(terminal.config().layout.panels.len(), 1);
     }
 
@@ -2067,7 +2067,10 @@ mod tests {
     #[test]
     fn a_panel_command_past_the_end_is_refused() {
         let mut config = synth_config();
-        config.layout.panels = vec![PanelSpec::new(PanelKind::Chart, RectSpec::new(0, 0, 100, 100))];
+        config.layout.panels = vec![PanelSpec::new(
+            PanelKind::Chart,
+            RectSpec::new(0, 0, 100, 100),
+        )];
         let mut terminal = Terminal::new(&config).expect("the config builds");
 
         let err = terminal.remove_panel(1).expect_err("there is no panel 1");
@@ -2087,7 +2090,10 @@ mod tests {
     #[test]
     fn the_panel_commands_cross_the_boundary() {
         let mut config = synth_config();
-        config.layout.panels = vec![PanelSpec::new(PanelKind::Chart, RectSpec::new(0, 0, 100, 100))];
+        config.layout.panels = vec![PanelSpec::new(
+            PanelKind::Chart,
+            RectSpec::new(0, 0, 100, 100),
+        )];
         let mut terminal = Terminal::new(&config).expect("the config builds");
         terminal
             .subscribe(0, &Symbol::new("BTC", "USDT"))
@@ -2123,7 +2129,10 @@ mod tests {
     #[test]
     fn an_added_panel_honours_the_depth_it_was_given() {
         let (sym, mut config) = replay_config();
-        config.layout.panels = vec![PanelSpec::new(PanelKind::Chart, RectSpec::new(0, 0, 100, 100))];
+        config.layout.panels = vec![PanelSpec::new(
+            PanelKind::Chart,
+            RectSpec::new(0, 0, 100, 100),
+        )];
         let mut terminal = Terminal::new(&config).expect("the config builds");
         terminal.subscribe(0, &sym).expect("the replay accepts");
         for _ in 0..3 {
