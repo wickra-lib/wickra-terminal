@@ -37,8 +37,12 @@ use term::TermGuard;
 #[derive(Parser)]
 #[command(name = "wkterm", version, about)]
 struct Cli {
-    /// A source shorthand: `synth:<seed>`, `live:<venue>:<BASE/QUOTE>` or
-    /// `replay:<json>`.
+    /// A source shorthand: `synth:<seed>`,
+    /// `live:<venue>:<BASE/QUOTE>[:<market>]` or `replay:<json>`.
+    ///
+    /// A live source opens the venue's spot book unless a market follows the
+    /// symbol -- `spot`, `usdm`, `coinm` or `margin` -- so
+    /// `live:binance:BTC/USDT:usdm` watches the USD-margined perpetual.
     #[arg(long)]
     source: Option<String>,
 

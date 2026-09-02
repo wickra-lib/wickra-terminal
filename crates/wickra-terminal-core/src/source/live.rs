@@ -125,17 +125,16 @@ impl std::fmt::Debug for LiveSource {
 impl LiveSource {
     /// Connect a read-only client to `venue` for public market data.
     ///
+    /// No symbol: a connection is to a venue's market of a kind, and the markets
+    /// on it are chosen afterwards with [`subscribe`](DataSource::subscribe).
+    /// The parameter was here and ignored, so every caller computed one and
+    /// handed it to nothing.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::Exchange`] if the venue is unknown or the HTTP client
     /// cannot be constructed.
-    pub fn connect(
-        id: SourceId,
-        venue: &str,
-        _symbol: &str,
-        testnet: bool,
-        market: Market,
-    ) -> Result<Self> {
+    pub fn connect(id: SourceId, venue: &str, testnet: bool, market: Market) -> Result<Self> {
         // The market was hard-coded to Spot, so a perpetual could not be opened
         // at all -- which left the whole derivatives side of the catalogue with
         // no market to watch, before the question of a funding feed even
