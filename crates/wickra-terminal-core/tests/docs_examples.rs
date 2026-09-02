@@ -381,6 +381,68 @@ fn the_citation_matches_the_release_state() {
     }
 }
 
+/// The panel depth table states the constants the code actually uses.
+///
+/// Those numbers are a contract a reader plans a layout around -- how much a
+/// panel carries by default, and how much is behind it to scroll to. They are
+/// written once in the source and again in the table, and this repository has
+/// already watched the indicator count, the binding command tables and the fuzz
+/// target list drift the same way.
+///
+/// The constants are `pub(crate)`, so they are read out of the source rather
+/// than imported: making them public to be testable would be the test dictating
+/// the API, which is the reasoning `every_binding_readme_documents_every_command`
+/// gives for reading the `Command` enum the same way.
+#[test]
+fn the_panel_depth_table_states_the_real_bounds() {
+    /// The value of a `const NAME: usize = N;` in the given source.
+    fn constant(source: &str, name: &str) -> usize {
+        let needle = format!("const {name}: usize = ");
+        let at = source
+            .find(&needle)
+            .unwrap_or_else(|| panic!("{name} is gone or was renamed"));
+        source[at + needle.len()..]
+            .split(';')
+            .next()
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or_else(|| panic!("{name} is no longer a plain number"))
+    }
+
+    let root = repo_root();
+    let panels = read(&root, "crates/wickra-terminal-core/src/panels/mod.rs");
+    let state = read(&root, "crates/wickra-terminal-core/src/state.rs");
+    let doc = read(&root, "docs/PANELS.md");
+
+    let depth = constant(&panels, "DEFAULT_DEPTH");
+    let points = constant(&panels, "CHART_POINTS");
+    let bars_kept = constant(&state, "OHLC_HISTORY");
+    let prices_kept = constant(&state, "PRICE_HISTORY");
+    let levels_kept = constant(&state, "MAX_FOOTPRINT_LEVELS");
+    let alt_kept = constant(&state, "ALT_BARS_KEPT");
+    // `TAPE_ROWS` is written in terms of `DEFAULT_DEPTH`, which is the point:
+    // the tape carries twice what a ladder does because it is a stream rather
+    // than a snapshot.
+    assert!(
+        panels.contains("const TAPE_ROWS: usize = DEFAULT_DEPTH * 2;"),
+        "TAPE_ROWS is no longer twice the default depth"
+    );
+    let tape_rows = depth * 2;
+
+    for claim in [
+        format!("| `chart` | {points} bars, {points} price points"),
+        format!("{bars_kept} bars kept, {prices_kept} price points"),
+        format!("| `book` | {depth} levels a side"),
+        format!("| `tape` | {tape_rows} prints"),
+        format!("| `footprint` | {depth} levels | {levels_kept} levels kept"),
+        format!("| `bars` | {depth} bars a stream | {alt_kept} kept"),
+    ] {
+        assert!(
+            doc.contains(&claim),
+            "docs/PANELS.md does not say {claim:?}"
+        );
+    }
+}
+
 /// Every fuzz target is named in the threat model, and every name is a target.
 ///
 /// The threat model lists what is fuzzed as one of the guarantees the code is

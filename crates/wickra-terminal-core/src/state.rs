@@ -824,6 +824,14 @@ const ALT_BARS_KEPT: usize = 256;
 /// window a chart panel asks for.
 const OHLC_HISTORY: usize = 256;
 
+/// How many recent prices a market keeps for the chart's tick series.
+///
+/// Named rather than written three times: the bound appeared as a bare `512` at
+/// each of the two places that enforce it and once more at the allocation, so
+/// raising it meant finding all three -- and `docs/PANELS.md` states it as a
+/// ceiling a reader is entitled to trust.
+const PRICE_HISTORY: usize = 512;
+
 /// One named alternative bar stream and the bars it has completed.
 struct BarEntry {
     label: String,
@@ -1115,7 +1123,7 @@ impl SymbolState {
             ask: Decimal::ZERO,
             volume: Decimal::ZERO,
             open: Decimal::ZERO,
-            history: VecDeque::with_capacity(512),
+            history: VecDeque::with_capacity(PRICE_HISTORY),
             candles: CandleBuilder::new(timeframe),
             ohlc: VecDeque::with_capacity(OHLC_HISTORY),
             breadth: BreadthState::new(),
@@ -1173,7 +1181,7 @@ impl SymbolState {
             }
             self.ohlc.push_back(*bar);
 
-            if self.history.len() == 512 {
+            if self.history.len() == PRICE_HISTORY {
                 self.history.pop_front();
             }
             if let Some(close) = Decimal::from_f64_retain(bar.close) {
@@ -1409,7 +1417,7 @@ impl AppState {
                 state.indicators.update(&tick);
                 state.profiles.update(&tick);
                 state.bars.update(&tick);
-                if state.history.len() == 512 {
+                if state.history.len() == PRICE_HISTORY {
                     state.history.pop_front();
                 }
                 state.history.push_back(print.price);
