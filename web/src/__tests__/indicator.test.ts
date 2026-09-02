@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { parseIndicator } from '../indicator'
+import { parseIndicator, reading } from '../indicator'
 
 describe('parseIndicator', () => {
   it('reads a kind and its parameters', () => {
@@ -48,5 +48,38 @@ describe('parseIndicator', () => {
     expect(parseIndicator('   ')).toBeNull()
     expect(parseIndicator('Sma twenty')).toBeNull()
     expect(parseIndicator('Beta 20 vs ')).toBeNull()
+  })
+})
+
+describe('reading', () => {
+  it('shows a single-output indicator as name=value', () => {
+    expect(reading({ name: 'Sma(20)', value: 101.256, fields: [] })).toBe('Sma(20)=101.26')
+  })
+
+  it('shows the ellipsis while an indicator is warming up', () => {
+    expect(reading({ name: 'Sma(20)', value: null, fields: [] })).toBe('Sma(20)=…')
+  })
+
+  it('names every output of a multi-output indicator', () => {
+    // `value` is the first field, so a readout that showed only it dropped the
+    // signal line and the histogram -- the two numbers MACD exists to be read
+    // against.
+    expect(
+      reading({
+        name: 'Macd(12,26,9)',
+        value: 1.5,
+        fields: [
+          { name: 'macd', value: 1.5 },
+          { name: 'signal', value: 1.25 },
+          { name: 'histogram', value: 0.25 },
+        ],
+      }),
+    ).toBe('Macd(12,26,9)[macd=1.50 signal=1.25 histogram=0.25]')
+  })
+
+  it('treats an absent fields list like an empty one', () => {
+    // The core omits the key entirely when there are no named outputs, so a
+    // consumer written against the single-output shape sees what it always saw.
+    expect(reading({ name: 'Rsi(14)', value: 55 })).toBe('Rsi(14)=55.00')
   })
 })

@@ -47,6 +47,13 @@ Each entry in `indicators` carries its `name` (the label from its spec,
 list for the multi-output ones, and an optional `series` of its own. See
 [INDICATORS.md](INDICATORS.md).
 
+`value` is the *first* field of a multi-output indicator, so that a consumer
+wanting one line does not have to know which field that is -- and both reference
+renderers read only it for a while, which drew `Macd(12,26,9)=1.42` and dropped
+the signal line and the histogram. They read `fields` now and write
+`Macd(12,26,9)[macd=1.42 signal=1.25 histogram=0.17]`, the same shape in both,
+because one indicator read in two places should not look like two.
+
 > Both reference renderers draw the candles and report the indicators as
 > numbers, rather than drawing indicator lines over the candles. An indicator's
 > `series` is sampled once per tick and the bars are one per bar, so the two do

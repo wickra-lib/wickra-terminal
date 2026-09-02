@@ -91,6 +91,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now runs its examples in the job that already has the binding built, which
   costs a second and is the only check that says they work. What is left in the
   parse gate is the WASM example, which is a page and needs a browser.
+- Both renderers show every output of a multi-output indicator. `value` is the
+  first field, so a readout that showed only it drew `Macd(12,26,9)=1.42` and
+  dropped the signal line and the histogram -- the two numbers the indicator
+  exists to be read against. The core had carried them across the boundary all
+  along, two binding suites tested them, and neither renderer drew them. Both
+  write the same shape now, because one indicator read in two places should not
+  look like two.
 - The one piece of policy inside the TUI event loop is testable now. What a key
   means depends on whether a prompt is open -- a prompt takes the keyboard whole,
   because mapping keys to actions while one is open fires `quit` for the `q` in a

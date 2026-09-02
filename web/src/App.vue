@@ -18,6 +18,7 @@ import { placementsFor, readLayout, withLayout } from './layout'
 import { binWidth, peakOf } from './profile'
 import { parseIndicator } from './indicator'
 import { actionFor, isTyping, readKeybinds, type Keybinds } from './keybinds'
+import { reading } from './indicator'
 import { parsePanel } from './panel'
 import { changeClass, compactVolume, spread } from './watchlist'
 import { drawChart } from './render/chart'
@@ -741,7 +742,7 @@ onBeforeUnmount(() => {
         <canvas ref="chartCanvas" width="600" height="300"></canvas>
         <div class="indicators">
           <span v-for="ind in chart?.indicators ?? []" :key="ind.name">
-            {{ ind.name }}={{ ind.value === null ? '…' : ind.value.toFixed(2) }}
+            {{ reading(ind) }}
             <button class="x" @click="removeIndicator(ind.name)" title="stop tracking">×</button>
           </span>
         </div>

@@ -18,7 +18,7 @@ use ratatui::text::Line as TextLine;
 use ratatui::widgets::canvas::{Canvas, Line as CanvasLine};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
-use wickra_terminal_core::view::{ChartView, OhlcBar};
+use wickra_terminal_core::view::{ChartView, IndicatorValue, OhlcBar};
 
 /// Block glyphs from empty to full, for the fallback sparkline.
 const LEVELS: [char; 8] = [
@@ -140,16 +140,34 @@ fn draw_bar(ctx: &mut ratatui::widgets::canvas::Context<'_>, index: usize, bar: 
     }
 }
 
+/// One reading as text: a number, or the named outputs when it has several.
+///
+/// `value` is the first field of a multi-output indicator, so a readout that
+/// showed only it drew `Macd(12,26,9)=1.42` and dropped the signal line and
+/// the histogram -- the two numbers the indicator exists to be read against.
+/// The core has carried them across the boundary all along; neither renderer
+/// drew them.
+fn reading(indicator: &IndicatorValue) -> String {
+    let number = |value: Option<f64>| {
+        value.map_or_else(|| "\u{2026}".to_string(), |value| format!("{value:.2}"))
+    };
+    if indicator.fields.is_empty() {
+        return format!("{}={}", indicator.name, number(indicator.value));
+    }
+    let named = indicator
+        .fields
+        .iter()
+        .map(|field| format!("{}={}", field.name, number(Some(field.value))))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("{}[{named}]", indicator.name)
+}
+
 /// The one-line indicator readout under the plot.
 fn readout(view: &ChartView) -> String {
     view.indicators
         .iter()
-        .map(|indicator| {
-            let value = indicator
-                .value
-                .map_or_else(|| "\u{2026}".to_string(), |v| format!("{v:.2}"));
-            format!("{}={}", indicator.name, value)
-        })
+        .map(reading)
         .collect::<Vec<_>>()
         .join("  ")
 }
@@ -443,5 +461,60 @@ mod tests {
             .map(ratatui::buffer::Cell::symbol)
             .collect();
         assert!(text.contains("Sma(20)=110.50"), "readout missing: {text}");
+    }
+
+    use wickra_terminal_core::view::{IndicatorField, IndicatorValue};
+
+    fn single(name: &str, value: Option<f64>) -> IndicatorValue {
+        IndicatorValue {
+            name: name.to_owned(),
+            value,
+            fields: Vec::new(),
+            series: Vec::new(),
+        }
+    }
+
+    /// A single-output indicator reads as one number.
+    #[test]
+    fn a_single_output_indicator_reads_as_a_number() {
+        assert_eq!(
+            super::reading(&single("Sma(20)", Some(101.256))),
+            "Sma(20)=101.26"
+        );
+        assert_eq!(super::reading(&single("Sma(20)", None)), "Sma(20)=\u{2026}");
+    }
+
+    /// A multi-output one names every output.
+    ///
+    /// `value` is the first field, so a readout that showed only it drew
+    /// `Macd(12,26,9)=1.50` and dropped the signal line and the histogram --
+    /// the two numbers the indicator exists to be read against. The same shape
+    /// the browser writes, because one indicator read in two places should not
+    /// look like two: `web/src/__tests__/indicator.test.ts` pins the other half.
+    #[test]
+    fn a_multi_output_indicator_names_every_output() {
+        let macd = IndicatorValue {
+            name: "Macd(12,26,9)".to_owned(),
+            value: Some(1.5),
+            series: Vec::new(),
+            fields: vec![
+                IndicatorField {
+                    name: "macd".to_owned(),
+                    value: 1.5,
+                },
+                IndicatorField {
+                    name: "signal".to_owned(),
+                    value: 1.25,
+                },
+                IndicatorField {
+                    name: "histogram".to_owned(),
+                    value: 0.25,
+                },
+            ],
+        };
+        assert_eq!(
+            super::reading(&macd),
+            "Macd(12,26,9)[macd=1.50 signal=1.25 histogram=0.25]"
+        );
     }
 }
