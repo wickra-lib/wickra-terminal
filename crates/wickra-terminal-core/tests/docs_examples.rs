@@ -381,7 +381,7 @@ fn the_citation_matches_the_release_state() {
     }
 }
 
-/// The panel depth table states the constants the code actually uses.
+/// The documented bounds are the constants the code actually uses.
 ///
 /// Those numbers are a contract a reader plans a layout around -- how much a
 /// panel carries by default, and how much is behind it to scroll to. They are
@@ -394,7 +394,7 @@ fn the_citation_matches_the_release_state() {
 /// the API, which is the reasoning `every_binding_readme_documents_every_command`
 /// gives for reading the `Command` enum the same way.
 #[test]
-fn the_panel_depth_table_states_the_real_bounds() {
+fn the_documented_bounds_are_the_real_ones() {
     /// The value of a `const NAME: usize = N;` in the given source.
     fn constant(source: &str, name: &str) -> usize {
         let needle = format!("const {name}: usize = ");
@@ -428,11 +428,33 @@ fn the_panel_depth_table_states_the_real_bounds() {
     );
     let tape_rows = depth * 2;
 
+    // `docs/STREAMING.md` restates the same ceilings in prose, which is a second
+    // copy of every number above and drifts the same way.
+    let streaming = read(&root, "docs/STREAMING.md");
+    let pending = constant(
+        &read(&root, "crates/wickra-terminal-core/src/source/manual.rs"),
+        "MAX_PENDING_EVENTS",
+    );
+    let series = constant(&state, "INDICATOR_SERIES");
+    let tape_kept = constant(&state, "TAPE_PRINTS_KEPT");
+    for claim in [
+        format!("the tape ring at {tape_kept} prints"),
+        format!("the price history at {prices_kept}"),
+        format!("each indicator's series at {series}"),
+        format!("the footprint at {levels_kept:} price levels").replace("1024", "1,024"),
+        format!("pending queue at {pending} events").replace("4096", "4,096"),
+    ] {
+        assert!(
+            streaming.contains(&claim),
+            "docs/STREAMING.md does not say {claim:?}"
+        );
+    }
+
     for claim in [
         format!("| `chart` | {points} bars, {points} price points"),
         format!("{bars_kept} bars kept, {prices_kept} price points"),
         format!("| `book` | {depth} levels a side"),
-        format!("| `tape` | {tape_rows} prints"),
+        format!("| `tape` | {tape_rows} prints | {tape_kept} kept"),
         format!("| `footprint` | {depth} levels | {levels_kept} levels kept"),
         format!("| `bars` | {depth} bars a stream | {alt_kept} kept"),
     ] {

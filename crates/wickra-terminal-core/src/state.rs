@@ -556,9 +556,16 @@ impl TapeRing {
     }
 }
 
+/// How many prints a market's tape keeps.
+///
+/// Named for the same reason the price history is: `docs/PANELS.md` and
+/// `docs/STREAMING.md` both state it as a ceiling, and a bound stated twice in
+/// prose and written once as a literal is one nobody can raise with confidence.
+const TAPE_PRINTS_KEPT: usize = 256;
+
 impl Default for TapeRing {
     fn default() -> Self {
-        Self::new(256)
+        Self::new(TAPE_PRINTS_KEPT)
     }
 }
 

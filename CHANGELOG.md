@@ -91,16 +91,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now runs its examples in the job that already has the binding built, which
   costs a second and is the only check that says they work. What is left in the
   parse gate is the WASM example, which is a page and needs a browser.
-- The panel depth table in `docs/PANELS.md` is checked against the constants it
-  restates. Those numbers are a contract a reader plans a layout around -- what a
+- The bounds `docs/PANELS.md` and `docs/STREAMING.md` state are checked against
+  the constants they restate. Those numbers are a contract a reader plans a layout around -- what a
   panel carries by default and how much is behind it to scroll to -- and they
   were written once in the source and again in the table, which is exactly how
   the indicator count, the binding command tables and the fuzz target list each
   drifted.
-- The price-history bound has a name. It was a bare `512` at both places that
-  enforce it and once more at the allocation, so raising it meant finding all
-  three -- and `docs/PANELS.md` states it as a ceiling a reader is entitled to
-  trust.
+- The price history and the tape ring have named bounds. Each was a bare number
+  in the code -- the price history three times, the tape once -- while both
+  documents state them as ceilings a reader is entitled to trust, and every
+  other bound in that file has been named all along.
 - `THREAT_MODEL.md` lists what is fuzzed correctly, and a test keeps it that
   way. It named four of the five targets and mapped two of the four to the wrong
   one -- and the target it left out, `registry_drive`, is the one that found a
