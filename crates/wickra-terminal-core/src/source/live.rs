@@ -18,7 +18,7 @@ use crate::error::{Error, Result};
 use std::collections::HashSet;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
-use wickra_exchange::{connect, Credentials, Event, Exchange, ExchangeOptions, MarketType};
+use wickra_exchange::{connect, Credentials, Event, ExchangeOptions, MarketData, MarketType};
 
 /// The first wait after a live socket reports a drop.
 const RECONNECT_MIN_WAIT: Duration = Duration::from_millis(250);
@@ -89,7 +89,14 @@ impl ReconnectBackoff {
 /// A live feed from one venue.
 pub struct LiveSource {
     id: SourceId,
-    client: Box<dyn Exchange>,
+    /// The venue's market-data half, and only that.
+    ///
+    /// `connect` hands back a `dyn Exchange`, which also carries order placement
+    /// and balances. Narrowing it here says structurally what `THREAT_MODEL.md`
+    /// says in prose: this source reads. It cannot place an order, because the
+    /// type it holds has no method for one -- and a future edit that tried would
+    /// not compile rather than needing to be noticed in review.
+    client: Box<dyn MarketData>,
     backoff: ReconnectBackoff,
     /// The markets this source forwards.
     ///
@@ -106,8 +113,8 @@ pub struct LiveSource {
 }
 
 impl std::fmt::Debug for LiveSource {
-    /// `client` is a `Box<dyn Exchange>` from wickra-exchange, which carries no
-    /// `Debug` bound, so the source is identified by its id.
+    /// `client` is a trait object from wickra-exchange, which carries no `Debug`
+    /// bound, so the source is identified by its id.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LiveSource")
             .field("id", &self.id)
@@ -415,9 +422,9 @@ mod tests {
     /// nothing at all, and a dropped market was folded for the rest of the
     /// session.
     ///
-    /// The execution half of the trait refuses. The terminal connects with empty
-    /// credentials and reads public market data; a stub that answered an order
-    /// would be modelling something this source cannot do.
+    /// It implements market data and nothing else, because the source holds a
+    /// `dyn MarketData` and nothing else. That narrowing is the point: there is
+    /// no execution half to stub, so there is none to get wrong.
     #[derive(Default)]
     struct StubState {
         bars: Vec<wickra_exchange::Candle>,
@@ -492,44 +499,6 @@ mod tests {
 
         fn poll_events(&mut self) -> Vec<Event> {
             std::mem::take(&mut self.state.borrow_mut().events)
-        }
-    }
-
-    impl wickra_exchange::Execution for StubExchange {
-        fn place_order(
-            &mut self,
-            _request: &wickra_exchange::OrderRequest,
-        ) -> wickra_exchange::Result<wickra_exchange::Order> {
-            Err(wickra_exchange::Error::InvalidCredentials("read-only"))
-        }
-
-        fn cancel_order(&mut self, _symbol: &Symbol, _id: &str) -> wickra_exchange::Result<()> {
-            Err(wickra_exchange::Error::InvalidCredentials("read-only"))
-        }
-
-        fn query_order(
-            &mut self,
-            _symbol: &Symbol,
-            _id: &str,
-        ) -> wickra_exchange::Result<wickra_exchange::Order> {
-            Err(wickra_exchange::Error::InvalidCredentials("read-only"))
-        }
-
-        fn open_orders(
-            &mut self,
-            _symbol: Option<&Symbol>,
-        ) -> wickra_exchange::Result<Vec<wickra_exchange::Order>> {
-            Err(wickra_exchange::Error::InvalidCredentials("read-only"))
-        }
-
-        fn balances(&mut self) -> wickra_exchange::Result<Vec<wickra_exchange::Balance>> {
-            Err(wickra_exchange::Error::InvalidCredentials("read-only"))
-        }
-    }
-
-    impl wickra_exchange::Exchange for StubExchange {
-        fn name(&self) -> &'static str {
-            "stub"
         }
     }
 

@@ -75,6 +75,53 @@ fn live_source_is_object_safe_and_reports_its_kind() {
     assert_eq!(sources[0].kind(), SourceKind::Live);
 }
 
+/// Every market kind opens, and none of them opens the spot book by mistake.
+///
+/// Offline: `connect` builds the venue's HTTP client and does not reach for a
+/// socket -- the sockets are opened on the first poll. So the one thing worth
+/// asserting here is exactly the thing that was wrong, which is that the market
+/// was hard-coded to spot and a perpetual could not be opened at all.
+#[cfg(feature = "live")]
+#[test]
+fn a_live_source_opens_every_market_kind() {
+    for market in [
+        Market::Spot,
+        Market::UsdMFutures,
+        Market::CoinMFutures,
+        Market::Margin,
+    ] {
+        let source = build_source(
+            5,
+            &SourceSpec::Live {
+                venue: "binance".to_string(),
+                symbol: "BTC/USDT".to_string(),
+                testnet: false,
+                market,
+            },
+        )
+        .unwrap_or_else(|err| panic!("binance {market:?}: {err}"));
+        assert_eq!(source.kind(), SourceKind::Live);
+    }
+}
+
+/// The testnet host is a separate branch, and a source that silently opened
+/// mainnet for a testnet config would be the worst kind of wrong.
+#[cfg(feature = "live")]
+#[test]
+fn a_live_source_opens_a_testnet_host() {
+    let source = build_source(
+        6,
+        &SourceSpec::Live {
+            venue: "binance".to_string(),
+            symbol: "BTC/USDT".to_string(),
+            testnet: true,
+            market: Market::UsdMFutures,
+        },
+    )
+    .expect("binance testnet");
+    assert_eq!(source.kind(), SourceKind::Live);
+}
+
 #[cfg(feature = "live")]
 #[test]
 fn live_source_rejects_an_unknown_venue() {
