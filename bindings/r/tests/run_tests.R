@@ -265,4 +265,150 @@ stopifnot(grepl(
   fixed = TRUE
 ))
 
+
+## The recorder, the scrubber and the host feed, end to end through the binding.
+##
+## Four commands sit on the boundary, are documented in all nine binding READMEs,
+## and were driven by almost no binding: SetRecording and ExportRecording by none
+## at all, ReplayPosition only by the C example, FeedDerivatives by none. The
+## README completeness test proved the promise and nothing checked it was kept,
+## so the recorder had never been executed outside Rust.
+##
+## The round trip is the point: arm the recorder, drive the terminal, export what
+## it kept, and hand that straight back as a Replay dataset. A binding that
+## mangled the export would be caught by the replay refusing it, which no
+## assertion about a string shape would find.
+##
+## No JSON library here either -- the binding deliberately has none, and this
+## file reads every other answer by matching on the wire form.
+
+## A derivatives indicator, so FeedDerivatives is observable in the frame rather
+## than merely accepted.
+recorder_config <- paste0(
+  '{"sources":["Manual"],',
+  '"indicators":[{"kind":"FundingRate","params":[]}],',
+  '"layout":{"panels":[{"kind":"Chart","rect":{"x":0,"y":0,"w":100,"h":100}}]}}'
+)
+
+recorder_symbol <- "BTC/USDT"
+
+## A recording as a Replay dataset: the whole array becomes one JSON string
+## field, so every quote inside it has to be escaped.
+replay_config <- function(dataset) {
+  paste0(
+    '{"sources":[{"Replay":{"dataset":"',
+    gsub('"', '\\"', dataset, fixed = TRUE),
+    '"}}],"indicators":[],',
+    '"layout":{"panels":[{"kind":"Chart","rect":{"x":0,"y":0,"w":100,"h":100}}]}}'
+  )
+}
+
+subscribed_recorder <- function() {
+  term <- wkterm_new(recorder_config)
+  invisible(wkterm_command(
+    term,
+    paste0('{"type":"Subscribe","source":0,"symbol":"', recorder_symbol, '"}')
+  ))
+  term
+}
+
+drive <- function(term, price, timestamp) {
+  invisible(wkterm_command(term, paste0(
+    '{"type":"Feed","source":0,"event":{"type":"trade",',
+    '"symbol":{"base":"BTC","quote":"USDT"},"price":"', price, '",',
+    '"quantity":"0.5","aggressor":"Buy","timestamp":', timestamp, '}}'
+  )))
+  wkterm_command(term, '{"type":"Tick"}')
+}
+
+## The recorder round trips through a replay.
+rec_term <- subscribed_recorder()
+
+## Nothing is kept until the recorder is armed, and asking is not an error.
+stopifnot(identical(wkterm_command(rec_term, '{"type":"ExportRecording"}'), "[]"))
+
+invisible(wkterm_command(rec_term, '{"type":"SetRecording","capacity":64}'))
+rec_prices <- c("100", "101", "102", "103")
+for (i in seq_along(rec_prices)) {
+  invisible(drive(rec_term, rec_prices[i], i))
+}
+
+recording <- wkterm_command(rec_term, '{"type":"ExportRecording"}')
+stopifnot(startsWith(recording, "[{"))
+stopifnot(grepl('"price":"100"', recording, fixed = TRUE))
+stopifnot(grepl('"price":"103"', recording, fixed = TRUE))
+
+## Straight back in as a dataset: the shape Replay takes is the shape
+## ExportRecording answers with, which is what makes a session keepable.
+rec_replay <- wkterm_new(replay_config(recording))
+invisible(wkterm_command(
+  rec_replay,
+  paste0('{"type":"Subscribe","source":0,"symbol":"', recorder_symbol, '"}')
+))
+rec_frame <- ""
+for (i in seq_len(4)) {
+  rec_frame <- wkterm_command(rec_replay, '{"type":"Tick"}')
+}
+stopifnot(grepl('"last":103.0', rec_frame, fixed = TRUE))
+
+## ReplayPosition answers 0/0 for a source that is not a recording -- rather than
+## an error, so a renderer can ask about whatever is focused without first
+## knowing what kind of source it is.
+stopifnot(identical(
+  wkterm_command(rec_term, '{"type":"ReplayPosition","source":0}'),
+  '{"cursor":0,"length":0}'
+))
+
+## And tracks the cursor through one that is.
+rec_scrub <- wkterm_new(replay_config(recording))
+invisible(wkterm_command(
+  rec_scrub,
+  paste0('{"type":"Subscribe","source":0,"symbol":"', recorder_symbol, '"}')
+))
+stopifnot(identical(
+  wkterm_command(rec_scrub, '{"type":"ReplayPosition","source":0}'),
+  '{"cursor":0,"length":4}'
+))
+for (i in seq_len(3)) {
+  invisible(wkterm_command(rec_scrub, '{"type":"Tick"}'))
+}
+stopifnot(identical(
+  wkterm_command(rec_scrub, '{"type":"ReplayPosition","source":0}'),
+  '{"cursor":3,"length":4}'
+))
+
+## Stopping the recorder clears what it held: both directions clear, so a
+## capacity change never leaves a recording that is part one size and part
+## another.
+invisible(wkterm_command(rec_term, '{"type":"SetRecording","capacity":null}'))
+stopifnot(identical(wkterm_command(rec_term, '{"type":"ExportRecording"}'), "[]"))
+
+## Fed derivatives reach a derivatives indicator. Accepting the command proves
+## nothing on its own: the update is folded into the market's microstructure and
+## reaches an indicator only on the next trade, so the reading is what says it
+## arrived.
+deriv_term <- subscribed_recorder()
+deriv_before <- drive(deriv_term, "100", 1)
+stopifnot(grepl('{"name":"FundingRate","value":null}', deriv_before, fixed = TRUE))
+
+## All three prices, or the tick is withheld: a mark without an index and a
+## futures price is not a priced market.
+invisible(wkterm_command(deriv_term, paste0(
+  '{"type":"FeedDerivatives","source":0,"symbol":"', recorder_symbol, '",',
+  '"update":{"funding_rate":0.0001,"mark_price":102.0,"index_price":100.0,',
+  '"futures_price":104.0,"open_interest":1000.0,"timestamp":9}}'
+)))
+deriv_after <- drive(deriv_term, "101", 2)
+stopifnot(grepl('"name":"FundingRate","value":0.0001', deriv_after, fixed = TRUE))
+
+## And an untracked market is refused rather than silently folded.
+untracked <- wkterm_new(recorder_config)
+stopifnot(inherits(
+  try(wkterm_command(untracked, paste0(
+    '{"type":"FeedDerivatives","source":0,"symbol":"', recorder_symbol, '",',
+    '"update":{"funding_rate":0.0001,"timestamp":1}}'
+  )), silent = TRUE),
+  "try-error"
+))
+
 cat("wickra-terminal R tests passed\n")

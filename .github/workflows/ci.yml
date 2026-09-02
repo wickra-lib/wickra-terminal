@@ -331,6 +331,19 @@ jobs:
       - run: pip install --no-index --find-links bindings/python/dist --force-reinstall --no-deps wickra-terminal
       - run: pytest bindings/python/tests -q
 
+      # Run them, not parse them. `examples-smoke` byte-compiles every example
+      # in five languages, and a script that compiles and dies on its first call
+      # passes that. This job already has the wheel installed, so running them
+      # costs a second and is the only check that says they work.
+      - name: Run the Python examples
+        shell: bash
+        run: |
+          set -euo pipefail
+          for example in examples/python/*.py; do
+            echo "== $example"
+            python "$example"
+          done
+
   # The Linux wheels are built in manylinux/musllinux containers at release time
   # and were never installed anywhere before being pushed to PyPI, which is
   # irreversible. The Python job above runs on the bare ubuntu runner, so it
@@ -460,6 +473,20 @@ jobs:
 
       - name: Run Node tests
         run: cd bindings/node && node --test
+
+      # Run them rather than parse them: `node --check` in `examples-smoke`
+      # passes for a script that dies on its first call, and this job already
+      # has the addon built.
+      - name: Run the Node examples
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd examples/node
+          npm install --no-audit --no-fund
+          for example in *.js; do
+            echo "== $example"
+            node "$example"
+          done
 
   wasm:
     name: WASM
@@ -651,6 +678,24 @@ jobs:
           go vet ./...
           go test ./...
 
+      # `examples-smoke` parses them with gofmt, which a program that panics on
+      # its first line also survives. The staged library is already here.
+      - name: Run the Go examples
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$WICKRA_GO_LIBDIR:$PATH"
+          export LD_LIBRARY_PATH="$WICKRA_GO_LIBDIR:${LD_LIBRARY_PATH:-}"
+          export DYLD_LIBRARY_PATH="$WICKRA_GO_LIBDIR:${DYLD_LIBRARY_PATH:-}"
+          # One program with two scenarios, not two programs: Go allows one
+          # main per package, so the second is selected by argument. Running
+          # the files one at a time would compile neither.
+          cd examples/go
+          for scenario in "" "time-machine"; do
+            echo "== go run . $scenario"
+            go run . $scenario
+          done
+
   csharp:
     name: C# on ${{ matrix.os }}
     strategy:
@@ -721,6 +766,27 @@ jobs:
       - name: Test the Java binding
         run: mvn -B -f bindings/java test
 
+      # `examples-smoke` compiles them, which is not running them: the binding
+      # loads its native library at first use, so a compiled example can still
+      # fail on its opening line. This job has the library built.
+      - name: Run the Java examples
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP:-/tmp}/java-examples"
+          mkdir -p "$out"
+          # Against the binding's compiled classes rather than its sources, so
+          # what runs is the jar this job just built and tested.
+          classes=bindings/java/target/classes
+          javac --release 22 -cp "$classes" -d "$out" examples/java/*.java
+          for example in examples/java/*.java; do
+            name=$(basename "$example" .java)
+            echo "== $name"
+            # `native.lib.dir` is the property the binding reads; the C ABI was
+            # built into target/debug two steps above.
+            java --enable-native-access=ALL-UNNAMED               -Dnative.lib.dir=target/debug               -cp "$classes:$out" "$name"
+          done
+
   r:
     name: R on ${{ matrix.os }}
     strategy:
@@ -777,6 +843,14 @@ jobs:
           fi
           R CMD INSTALL bindings/r
           Rscript bindings/r/tests/run_tests.R
+
+          # Run them rather than parse them. `examples-smoke` calls parse(),
+          # which reads a file without evaluating a line of it; the package is
+          # installed here, so these actually execute.
+          for example in examples/r/*.R; do
+            echo "== $example"
+            Rscript "$example"
+          done
 
   coverage:
     name: Coverage
@@ -949,6 +1023,14 @@ jobs:
   # runs). It does NOT prove an example works -- the C example is built and run
   # by the c-abi job, the C# one by the csharp job, and the Rust one is a
   # workspace member, so `cargo build --workspace` compiles it.
+  # The parse gate, and only that. Every example in a language with a binding job
+  # is now RUN by that job, which already has the binding built -- a byte-compile
+  # passes for a script that dies on its first call, and five languages were
+  # checked that way and no further. What is left here is what no job can run:
+  # the WASM example is a page needing a browser, and a parse of its module
+  # script plus a check that it imports the loader wasm-pack writes is the most
+  # that can be said without one. The rest stays as a cheap second opinion that
+  # fails before the heavier jobs do.
   examples-smoke:
     name: Examples (syntax smoke)
     runs-on: ubuntu-latest

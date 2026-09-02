@@ -381,6 +381,120 @@ fn the_citation_matches_the_release_state() {
     }
 }
 
+/// Every command the READMEs promise is driven by at least one binding suite.
+///
+/// `every_binding_readme_documents_every_command` below checks the promise is
+/// complete. Nothing checked it was kept, and that is exactly how four commands
+/// came to be documented in nine READMEs and executed by no binding at all:
+/// `SetRecording` and `ExportRecording` by none, `ReplayPosition` only by the C
+/// example, `FeedDerivatives` by none. The recorder had never run outside Rust
+/// while nine pages described how to use it.
+///
+/// One suite, not all of them. Holding every command to every language would
+/// fail for reasons that are not defects -- the two suites that carry no JSON
+/// dependency read answers by matching on the wire form, and some commands are
+/// only sensible against a source kind another suite happens to use. What must
+/// never be true again is a command that nine pages document and nothing
+/// anywhere runs.
+#[test]
+fn every_documented_command_is_driven_by_a_binding_suite() {
+    /// Where a binding proves its reach.
+    ///
+    /// `examples/c` is the C hub's suite: it is run by ctest in the `c-abi`
+    /// job, which is why it counts. `golden/commands` counts for a different
+    /// reason -- the scenarios there are driven by all nine suites through the
+    /// manifest, so a command in a scenario file is executed in nine languages
+    /// even though it appears in no suite's source. Leaving it out reported
+    /// `AddSource`, `RemoveSource`, `SetFocus`, `Unsubscribe` and
+    /// `SetTimeframe` as undriven, which is the opposite of true: they are the
+    /// best-covered commands there are.
+    const SUITE_DIRS: [&str; 9] = [
+        "bindings/python/tests",
+        "bindings/node/__tests__",
+        "bindings/wasm/tests",
+        "bindings/go",
+        "bindings/csharp/WickraTerminal.Tests",
+        "bindings/java/src/test/java/org/wickra/terminal",
+        "bindings/r/tests",
+        "examples/c",
+        "golden/commands",
+    ];
+
+    let root = repo_root();
+    let commands = command_variants(&root);
+    assert_eq!(
+        commands.len(),
+        16,
+        "expected sixteen commands: {commands:?}"
+    );
+
+    // Read once: eight directories against sixteen names is a hundred and
+    // twenty-eight scans of the same files otherwise.
+    let mut haystack = String::new();
+    for dir in SUITE_DIRS {
+        let path = root.join(dir);
+        let entries =
+            std::fs::read_dir(&path).unwrap_or_else(|err| panic!("{dir} is not readable: {err}"));
+        for entry in entries.flatten() {
+            if entry.path().is_file() {
+                if let Ok(text) = std::fs::read_to_string(entry.path()) {
+                    haystack.push_str(&text);
+                }
+            }
+        }
+    }
+    assert!(
+        haystack.len() > 10_000,
+        "the suites read as {} bytes, which is not the suites",
+        haystack.len()
+    );
+
+    let undriven: Vec<&str> = commands
+        .iter()
+        .copied()
+        .filter(|name| !haystack.contains(&format!("\"{name}\"")))
+        .collect();
+    assert!(
+        undriven.is_empty(),
+        "documented in every binding README and driven by no binding suite: {undriven:?}"
+    );
+}
+
+/// The `Command` variants, read out of the source.
+///
+/// `Command` is private -- it is an implementation detail of the JSON boundary,
+/// and making it public to be testable would be the test dictating the API.
+fn command_variants(root: &std::path::Path) -> Vec<&'static str> {
+    let source = read(root, "crates/wickra-terminal-core/src/terminal.rs");
+    let start = source
+        .find("enum Command {")
+        .expect("the Command enum moved or was renamed");
+    let body = &source[start..];
+    let body = &body[..body
+        .find(
+            "
+}",
+        )
+        .expect("an unterminated enum")];
+
+    // One variant per line at four spaces of indent, which is how the enum is
+    // written; deeper indents are a variant's fields.
+    body.lines()
+        .skip(1)
+        .filter_map(|line| {
+            let rest = line.strip_prefix("    ")?;
+            if rest.starts_with(' ') || !rest.starts_with(char::is_uppercase) {
+                return None;
+            }
+            let name = rest
+                .split(|c: char| !c.is_alphanumeric() && c != '_')
+                .next()
+                .unwrap_or_default();
+            (!name.is_empty()).then(|| Box::leak(name.to_owned().into_boxed_str()) as &'static str)
+        })
+        .collect()
+}
+
 /// The command table in every binding README lists exactly the commands that
 /// exist.
 ///

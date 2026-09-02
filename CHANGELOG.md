@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A recorder-and-scrubber suite in every binding. Counted across the eight
+  non-Rust surfaces, `SetRecording` and `ExportRecording` were driven by none of
+  them, `ReplayPosition` only by the C example and `FeedDerivatives` by none --
+  four commands documented in all nine binding READMEs and executed nowhere but
+  Rust. Each suite now arms the recorder, drives a market, exports what it kept
+  and builds a second terminal from exactly those bytes: a binding that mangled
+  the export is caught by the replay refusing it, which no assertion about a
+  string shape would find. Python, Node, WASM, Go, C#, Java, R and the C hub
+  through `examples/c`.
+- `docs_examples::every_documented_command_is_driven_by_a_binding_suite` keeps
+  it that way. `every_binding_readme_documents_every_command` checked the
+  promise was complete; nothing checked it was kept, which is exactly how those
+  four came to be described in nine places and run in none.
+- The examples are run rather than parsed. `examples-smoke` byte-compiled the
+  Node, Python, Java, R and Go examples, and a script that compiles and dies on
+  its first call passed that in five languages at once. Each of those languages
+  now runs its examples in the job that already has the binding built, which
+  costs a second and is the only check that says they work. What is left in the
+  parse gate is the WASM example, which is a page and needs a browser.
 - Repository scaffolding: Cargo workspace, supply-chain configuration
   (`deny.toml`, `osv-scanner.toml`), lint configuration, `repo-metadata.toml`,
   and dual `MIT OR Apache-2.0` licensing.
