@@ -1275,20 +1275,14 @@ mod tests {
         let mut app = synth_app();
         app.on_action(Action::SetRecording);
         type_and_submit(&mut app, "lots");
-        assert!(
-            app.status.starts_with("bad capacity"),
-            "status: {}",
-            app.status
-        );
+        let status = app.status.clone();
+        assert!(status.starts_with("bad capacity"), "status: {status}");
         assert!(app.terminal.config().record.is_none());
 
         app.on_action(Action::SetRecording);
         type_and_submit(&mut app, "0");
-        assert!(
-            app.status.contains("records nothing"),
-            "status: {}",
-            app.status
-        );
+        let status = app.status.clone();
+        assert!(status.contains("records nothing"), "status: {status}");
         assert!(app.terminal.config().record.is_none());
     }
 
@@ -1297,10 +1291,7 @@ mod tests {
     fn saving_with_the_recorder_off_names_the_key_that_starts_it() {
         let mut app = synth_app();
         app.on_action(Action::SaveRecording);
-        assert!(
-            app.status.contains("set_recording"),
-            "status: {}",
-            app.status
-        );
+        let status = app.status.clone();
+        assert!(status.contains("set_recording"), "status: {status}");
     }
 }

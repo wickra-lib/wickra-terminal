@@ -74,7 +74,93 @@ pub(crate) fn render(
 
 #[cfg(test)]
 mod tests {
-    use super::compact;
+    use super::{compact, render};
+    use crate::widgets::harness;
+    use ratatui::style::Color;
+    use wickra_terminal_core::view::{WatchRow, WatchlistView};
+
+    fn row(symbol: &str, last: f64, change: f64, bid: f64, ask: f64, volume: f64) -> WatchRow {
+        WatchRow {
+            source: 0,
+            symbol: symbol.to_owned(),
+            last,
+            bid,
+            ask,
+            volume,
+            change,
+        }
+    }
+
+    /// The colour of the change column, which is not the first thing in the row.
+    ///
+    /// `harness::row_colour` answers with the first cell a widget drew, and here
+    /// that is the untinted price prefix -- so the assertion has to look for the
+    /// cell carrying the percentage.
+    fn change_colour(buffer: &ratatui::buffer::Buffer, y: u16) -> Color {
+        use ratatui::layout::Position;
+        let at = (0..buffer.area.width)
+            .find(|x| {
+                buffer
+                    .cell(Position::new(*x, y))
+                    .is_some_and(|cell| cell.symbol() == "%")
+            })
+            .expect("the row draws a percentage");
+        buffer
+            .cell(Position::new(at, y))
+            .map_or(Color::Reset, |cell| cell.fg)
+    }
+
+    /// Only the movers carry colour.
+    ///
+    /// The change is the one column whose sign means something; tinting the
+    /// price as well would make the panel a wall of green that says nothing, and
+    /// leaving an unmoved market tinted would say it had moved.
+    #[test]
+    fn the_change_column_is_tinted_by_its_sign_and_nothing_else_is() {
+        let view = WatchlistView {
+            rows: vec![
+                row("BTC/USDT", 110.0, 10.0, 109.0, 111.0, 5_000.0),
+                row("ETH/USDT", 90.0, -10.0, 89.0, 91.0, 2_000.0),
+                row("SOL/USDT", 100.0, 0.0, 99.0, 101.0, 1_000.0),
+            ],
+        };
+        let buffer = harness::draw(70, 6, |frame, area| render(frame, area, &view, false, 0));
+        assert_eq!(change_colour(&buffer, 1), Color::Green);
+        assert_eq!(change_colour(&buffer, 2), Color::Red);
+        assert_eq!(change_colour(&buffer, 3), Color::Gray);
+        // The price ahead of it is untinted, so the row reads at a glance.
+        assert_eq!(harness::row_colour(&buffer, 1), Color::Reset);
+    }
+
+    /// A market with no ticker shows a dash, not a spread of nothing.
+    ///
+    /// On a watchlist that is the difference between a market locked at the
+    /// touch and one the terminal simply has no quote for.
+    #[test]
+    fn a_row_without_a_quote_draws_a_dash_rather_than_a_zero_spread() {
+        let view = WatchlistView {
+            rows: vec![
+                row("BTC/USDT", 100.0, 0.0, 0.0, 0.0, 0.0),
+                row("ETH/USDT", 100.0, 0.0, 99.5, 100.5, 3_500_000.0),
+            ],
+        };
+        let buffer = harness::draw(70, 5, |frame, area| render(frame, area, &view, false, 0));
+        let quoteless = harness::row(&buffer, 1);
+        assert!(quoteless.contains('-'), "{quoteless}");
+        let quoted = harness::row(&buffer, 2);
+        assert!(quoted.contains("1.00"), "the spread is missing: {quoted}");
+        assert!(
+            quoted.contains("3.50M"),
+            "the volume is not abbreviated: {quoted}"
+        );
+    }
+
+    #[test]
+    fn an_empty_watchlist_still_draws_its_panel() {
+        let view = WatchlistView { rows: Vec::new() };
+        let buffer = harness::draw(30, 4, |frame, area| render(frame, area, &view, true, 0));
+        assert!(harness::text(&buffer).contains("Watchlist"));
+    }
 
     /// The same thresholds the browser's `compactVolume` uses.
     ///
