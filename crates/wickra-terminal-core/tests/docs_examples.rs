@@ -422,10 +422,14 @@ fn every_documented_command_is_driven_by_a_binding_suite() {
 
     let root = repo_root();
     let commands = command_variants(&root);
-    assert_eq!(
-        commands.len(),
-        16,
-        "expected sixteen commands: {commands:?}"
+    // A floor, not the count. `every_binding_readme_documents_every_command`
+    // pins the exact number, and a second copy of it here is a second place to
+    // forget -- which is what happened the first time a command was added after
+    // this test was written. All this needs is the assurance that the parse
+    // found an enum at all.
+    assert!(
+        commands.len() >= 16,
+        "the command enum parsed as {commands:?}, which is not the enum"
     );
 
     // Read once: eight directories against sixteen names is a hundred and
