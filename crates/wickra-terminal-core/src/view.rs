@@ -156,6 +156,20 @@ pub struct WatchRow {
     pub symbol: String,
     /// The last traded price.
     pub last: f64,
+    /// The venue's best bid, or 0.0 before the first ticker.
+    pub bid: f64,
+    /// The venue's best ask, or 0.0 before the first ticker.
+    pub ask: f64,
+    /// The venue's rolling base-asset volume, or 0.0 before the first ticker.
+    pub volume: f64,
+    /// Percentage change from the first price this terminal folded for the
+    /// market, or 0.0 before there is one.
+    ///
+    /// Computed here rather than left to each renderer: two front-ends deriving
+    /// the same number from the same two fields is two places for it to be
+    /// derived differently, and a watchlist that disagreed with itself between
+    /// the terminal and the browser is the bug that would follow.
+    pub change: f64,
 }
 
 /// The watchlist panel's view-model.

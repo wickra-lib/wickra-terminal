@@ -127,6 +127,17 @@ filesystem-free — it has to, to run in a browser — so it records into memory
 hands the events over; writing them anywhere is the host's job. The TUI binds
 `w` to writing them beside itself, named by the wall clock rather than
 overwriting one path, because what a person saves is a moment they want to keep.
+The web renderer's `save` button hands the same bytes to the browser as a
+download.
+
+Neither the config field nor a restart is needed to start one. `r` in the TUI
+and the `record` field in the browser both send `SetRecording`: a count arms the
+recorder, an empty answer stops it. `wkterm --record <events>` does the same for
+a run that is starting, and applies on top of `--config` — a stored layout is a
+layout, and whether this run is being recorded is a decision about this run. A
+capacity of zero is refused rather than treated as off: it is a ring that drops
+everything it is handed, and reporting it as recording would promise a file that
+comes back empty.
 
 `SetRecording` clears what is already held, on and off alike: a capacity change
 that kept the old events would leave a recording that is part one size and part

@@ -36,7 +36,9 @@
 use std::fs;
 
 use rust_decimal::Decimal;
-use wickra_exchange_core::{BookDelta, BookLevel, Event, OrderBookSnapshot, OrderSide, TradePrint};
+use wickra_exchange_core::{
+    BookDelta, BookLevel, Event, OrderBookSnapshot, OrderSide, Ticker, TradePrint,
+};
 use wickra_terminal_core::config::{Keybinds, PanelSpec, RectSpec};
 use wickra_terminal_core::panels::PanelKind;
 use wickra_terminal_core::{Config, IndicatorSpec, SourceSpec, Symbol, Terminal, Timeframe};
@@ -79,6 +81,47 @@ fn canonical_feed() -> Vec<Event> {
         }),
         trade(20_002, 20, true, 4),
         trade(20_000, 10, false, 5),
+    ]
+}
+
+/// Trades with the venue's own ticker interleaved.
+///
+/// The corpus never carried a `Ticker`, so three of the four numbers a
+/// watchlist row shows -- the bid, the ask and the rolling volume -- were
+/// recorded as zero in every scenario, and the fourth, the change, was zero
+/// with them because nothing had moved off its open. A field pinned at zero
+/// everywhere is a field the nine language suites cannot tell apart from one
+/// that was dropped, which is exactly what the fold used to do with them.
+///
+/// The prices move both ways off the open, so the change is signed rather than
+/// merely non-zero, and the ticker's bid and ask are inside the trades' range
+/// so a renderer cannot pass by treating the spread as the trade range.
+fn ticker_feed() -> Vec<Event> {
+    vec![
+        trade(20_000, 50, true, 1),
+        Event::Ticker(Ticker {
+            symbol: sym(),
+            last: Decimal::from(20_010),
+            bid: Decimal::from(20_009),
+            ask: Decimal::from(20_011),
+            volume: Decimal::from(1_234_567),
+        }),
+        trade(20_100, 30, true, 2),
+        Event::Ticker(Ticker {
+            symbol: sym(),
+            last: Decimal::from(20_100),
+            bid: Decimal::from(20_099),
+            ask: Decimal::from(20_101),
+            volume: Decimal::from(1_240_000),
+        }),
+        trade(19_900, 40, false, 3),
+        Event::Ticker(Ticker {
+            symbol: sym(),
+            last: Decimal::from(19_900),
+            bid: Decimal::from(19_899),
+            ask: Decimal::from(19_902),
+            volume: Decimal::from(1_250_000),
+        }),
     ]
 }
 
@@ -214,6 +257,7 @@ fn replay_config(feed: &[Event]) -> Config {
 fn scenarios() -> Vec<Scenario> {
     let basic = canonical_feed();
     let deltas = book_delta_feed();
+    let tickers = ticker_feed();
     let footprint = footprint_feed();
     let indicators = indicator_feed();
 
@@ -295,6 +339,13 @@ fn scenarios() -> Vec<Scenario> {
             commands: [vec![subscribe(0)], tick(basic.len())].concat(),
             replay_path: Some("replay/basic.json"),
             feed: Some(basic),
+        },
+        Scenario {
+            name: "ticker",
+            config: replay_config(&tickers),
+            commands: [vec![subscribe(0)], tick(tickers.len())].concat(),
+            replay_path: Some("replay/ticker.json"),
+            feed: Some(tickers),
         },
         Scenario {
             name: "book_deltas",

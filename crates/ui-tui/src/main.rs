@@ -49,19 +49,45 @@ struct Cli {
     /// A TOML config file (overrides `--source`).
     #[arg(long)]
     config: Option<PathBuf>,
+
+    /// Record the session, keeping this many events.
+    ///
+    /// The recorder was a config field and nothing else, so keeping a session
+    /// meant writing a TOML file first. Applied on top of `--config` too: a
+    /// stored layout is a layout, and whether this run is being recorded is a
+    /// decision about this run.
+    #[arg(long, value_name = "EVENTS")]
+    record: Option<usize>,
+
+    /// How many historical bars a fresh subscription fetches (0 to turn it off).
+    ///
+    /// Also applied on top of `--config`, and for the same reason: how far back
+    /// to reach is a decision about this run, not part of the layout.
+    #[arg(long, value_name = "BARS")]
+    backfill: Option<usize>,
 }
 
 /// Build the config from `--config` or `--source` (or the bare default layout).
 fn build_config(cli: &Cli) -> Result<Config, Box<dyn Error>> {
-    if let Some(path) = &cli.config {
+    let mut config = if let Some(path) = &cli.config {
         let text = std::fs::read_to_string(path)?;
-        return Ok(Config::from_toml(&text)?);
-    }
-    let mut config = Config::default_layout();
-    if let Some(shorthand) = &cli.source {
+        Config::from_toml(&text)?
+    } else {
+        let mut config = Config::default_layout();
+        if let Some(shorthand) = &cli.source {
+            config
+                .sources
+                .push(spec::parse_source(shorthand).map_err(|e| -> Box<dyn Error> { e.into() })?);
+        }
         config
-            .sources
-            .push(spec::parse_source(shorthand).map_err(|e| -> Box<dyn Error> { e.into() })?);
+    };
+    // After the config rather than instead of it: `--config` chooses a layout,
+    // and these two are decisions about this run.
+    if let Some(capacity) = cli.record {
+        config.record = Some(capacity);
+    }
+    if let Some(bars) = cli.backfill {
+        config.backfill = bars;
     }
     Ok(config)
 }
@@ -155,6 +181,8 @@ mod tests {
         Cli {
             source: source.map(ToOwned::to_owned),
             config,
+            record: None,
+            backfill: None,
         }
     }
 
@@ -228,8 +256,49 @@ mod tests {
         let cli = Cli {
             source: Some("synth:1".to_string()),
             config: None,
+            record: None,
+            backfill: None,
         };
         let cfg = build_config(&cli).unwrap();
         assert_eq!(cfg.sources, vec![SourceSpec::Synth { seed: 1 }]);
+    }
+
+    /// `--record` and `--backfill` default to leaving the config alone.
+    ///
+    /// Absent has to mean absent rather than zero: `--backfill` taking a
+    /// default of 0 would have silently turned off the history a config asked
+    /// for, on every run that did not pass the flag.
+    #[test]
+    fn the_run_flags_left_off_do_not_touch_the_config() {
+        let cfg = build_config(&cli(Some("synth:1"), None)).unwrap();
+        let bare = Config::default_layout();
+        assert_eq!(cfg.record, bare.record);
+        assert_eq!(cfg.backfill, bare.backfill);
+    }
+
+    /// They apply on top of a config file rather than instead of it.
+    ///
+    /// A stored layout is a layout; whether this run is being recorded, and how
+    /// far back it reaches, are decisions about this run.
+    #[test]
+    fn the_run_flags_override_a_config_file() {
+        let stored = TempConfig::new(
+            "run-flags",
+            "record = 512
+backfill = 50
+[[sources]]
+Synth = { seed = 3 }
+",
+        );
+        let cli = Cli {
+            source: None,
+            config: Some(stored.0.clone()),
+            record: Some(64),
+            backfill: Some(0),
+        };
+        let cfg = build_config(&cli).unwrap();
+        assert_eq!(cfg.sources, vec![SourceSpec::Synth { seed: 3 }]);
+        assert_eq!(cfg.record, Some(64), "--record did not override the file");
+        assert_eq!(cfg.backfill, 0, "--backfill 0 did not turn the history off");
     }
 }

@@ -46,6 +46,8 @@ pub(crate) enum Action {
     ScrollDown,
     /// Write the recorded events to a file.
     SaveRecording,
+    /// Prompt for the recorder's capacity, or for nothing to stop it.
+    SetRecording,
     /// No bound action for this key.
     None,
 }
@@ -97,6 +99,7 @@ pub(crate) fn map_key(key: KeyEvent, binds: &Keybinds) -> Action {
         Some("scroll_up") => Action::ScrollUp,
         Some("scroll_down") => Action::ScrollDown,
         Some("save_recording") => Action::SaveRecording,
+        Some("set_recording") => Action::SetRecording,
         _ => Action::None,
     }
 }
@@ -168,6 +171,7 @@ mod tests {
             (KeyCode::Up, Action::ScrollUp),
             (KeyCode::Down, Action::ScrollDown),
             (KeyCode::Char('w'), Action::SaveRecording),
+            (KeyCode::Char('r'), Action::SetRecording),
         ] {
             assert_eq!(map_key(key(code), &binds), expected, "for {code:?}");
         }

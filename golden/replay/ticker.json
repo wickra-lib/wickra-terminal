@@ -1,0 +1,68 @@
+[
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20000",
+    "quantity": "0.50",
+    "aggressor": "Buy",
+    "timestamp": 1
+  },
+  {
+    "type": "ticker",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "last": "20010",
+    "bid": "20009",
+    "ask": "20011",
+    "volume": "1234567"
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "20100",
+    "quantity": "0.30",
+    "aggressor": "Buy",
+    "timestamp": 2
+  },
+  {
+    "type": "ticker",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "last": "20100",
+    "bid": "20099",
+    "ask": "20101",
+    "volume": "1240000"
+  },
+  {
+    "type": "trade",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "price": "19900",
+    "quantity": "0.40",
+    "aggressor": "Sell",
+    "timestamp": 3
+  },
+  {
+    "type": "ticker",
+    "symbol": {
+      "base": "BTC",
+      "quote": "USDT"
+    },
+    "last": "19900",
+    "bid": "19899",
+    "ask": "19902",
+    "volume": "1250000"
+  }
+]
