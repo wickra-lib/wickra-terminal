@@ -428,8 +428,8 @@ fn every_binding_readme_documents_every_command() {
         .collect();
     assert_eq!(
         variants.len(),
-        13,
-        "expected thirteen commands, found {variants:?}"
+        16,
+        "expected sixteen commands, found {variants:?}"
     );
 
     for rel in BINDING_READMES {
@@ -636,5 +636,65 @@ fn the_reach_table_sums_to_the_documented_total() {
         for claim in cited {
             assert_eq!(claim, total.to_string(), "{rel} claims a reach of {claim}");
         }
+    }
+}
+
+/// Every panel the core can emit is one the web renderer knows how to draw.
+///
+/// The core is where the list lives, so this is where the guard belongs. Two
+/// panels — `Profile` and `Bars` — were added to `PanelKind`, given view-models,
+/// given TUI widgets, and never taught to the web renderer. The core emitted
+/// them in every frame; `findPanel` never asked for them; they vanished without
+/// an error anywhere. ARCHITECTURE.md says adding a panel here makes it appear
+/// in every renderer at once, and for those two it was not true.
+///
+/// Nothing else could have caught it. The golden corpus compares frames, which
+/// were correct. The web suite tests the mappings it has. A panel a renderer has
+/// simply never heard of has no test to fail.
+///
+/// Checked in three places, because each is a separate way to drop a panel: the
+/// `PanelKind` union (the layout would place nothing), the `PanelView` union
+/// (`findPanel` would not type-check against it), and a section in the template
+/// (the placement exists and draws nothing).
+#[test]
+fn every_panel_kind_reaches_the_web_renderer() {
+    let root = repo_root();
+    let panels_rs = read(&root, "crates/wickra-terminal-core/src/panels/mod.rs");
+    let types_ts = read(&root, "web/src/types.ts");
+    let app_vue = read(&root, "web/src/App.vue");
+
+    // The variants of `enum PanelKind`, read from the enum itself rather than
+    // restated here — a list this test carried its own copy of would go stale
+    // in exactly the way the bug did.
+    let body = panels_rs
+        .split_once("pub enum PanelKind {")
+        .and_then(|(_, rest)| rest.split_once("\n}"))
+        .map(|(body, _)| body)
+        .expect("panels/mod.rs declares enum PanelKind");
+    let kinds: Vec<&str> = body
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| line.strip_suffix(','))
+        .filter(|name| {
+            name.chars().next().is_some_and(char::is_uppercase)
+                && name.chars().all(char::is_alphanumeric)
+        })
+        .collect();
+    assert!(kinds.len() >= 7, "found only {kinds:?} in PanelKind");
+
+    for kind in kinds {
+        let tag = kind.to_lowercase();
+        assert!(
+            types_ts.contains(&format!("'{kind}'")),
+            "web/src/types.ts: PanelKind has no {kind}, so the layout places nothing for it"
+        );
+        assert!(
+            types_ts.contains(&format!("panel: '{tag}'")),
+            "web/src/types.ts: PanelView has no {tag} variant, so the frame's is discarded"
+        );
+        assert!(
+            app_vue.contains(&format!("placements.{kind}")),
+            "web/src/App.vue: no section for {kind}, so it is placed and never drawn"
+        );
     }
 }

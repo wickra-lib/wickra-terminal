@@ -200,4 +200,69 @@ stopifnot(grepl("not a terminal handle", bad_arg(wkterm_command("nope", '{"type"
 ## The guards must not disturb a well-formed call.
 stopifnot(grepl('"panels"', wkterm_command(rterm, '{"type":"Tick"}'), fixed = TRUE))
 
+## Streaming a feed and re-folding it in one batch reach the same frame.
+##
+## The terminal reaches a state two ways. Streaming folds one event per tick as
+## it arrives; Seek throws the state away and re-folds the whole prefix in a
+## single batch. ARCHITECTURE.md calls that re-fold the moat -- it is what makes
+## a rewind deterministic and what lets the browser run the time-machine with no
+## engine behind it -- so the two must land on byte-identical frames.
+##
+## Byte-identical, not merely equal: the binding returns the core's compact
+## command output verbatim, so string equality here is the exact check with no
+## JSON comparison in the way. The Rust suite proves the core re-folds correctly;
+## this proves the binding carries the same bytes out.
+refold_ticks <- 4L
+refold_events <- 8L
+
+refold_config <- function() {
+  events <- vapply(seq_len(refold_events), function(i) {
+    paste0(
+      '{"type":"trade","symbol":{"base":"BTC","quote":"USDT"},',
+      '"price":"', 99L + i, '","quantity":"1","aggressor":"Buy","timestamp":', i, '}'
+    )
+  }, character(1))
+  feed <- paste0("[", paste(events, collapse = ","), "]")
+  ## The feed travels inside a JSON string, so its quotes are escaped once.
+  escaped <- gsub('"', '\\"', feed, fixed = TRUE)
+  paste0(
+    '{"sources":[{"Replay":{"dataset":"', escaped, '"}}],',
+    '"layout":{"panels":[{"kind":"Chart","rect":{"x":0,"y":0,"w":100,"h":100}}]}}'
+  )
+}
+
+subscribed_replay <- function() {
+  handle <- wkterm_new(refold_config())
+  invisible(wkterm_command(handle, '{"type":"Subscribe","source":0,"symbol":"BTC/USDT"}'))
+  handle
+}
+
+streamed <- subscribed_replay()
+streamed_frame <- ""
+for (i in seq_len(refold_ticks)) {
+  streamed_frame <- wkterm_command(streamed, '{"type":"Tick"}')
+}
+
+## A second terminal runs the feed out, then re-folds the same prefix in one
+## batch. Running past the point first is what makes this a rewind rather than a
+## replay of state it still had.
+rewound <- subscribed_replay()
+for (i in seq_len(refold_events)) {
+  invisible(wkterm_command(rewound, '{"type":"Tick"}'))
+}
+refolded_frame <- wkterm_command(
+  rewound,
+  paste0('{"type":"Seek","source":0,"index":', refold_ticks, '}')
+)
+
+stopifnot(identical(streamed_frame, refolded_frame))
+
+## A guard on the guard: two empty frames are also byte-identical, and an
+## equality test that passes on nothing proves nothing.
+stopifnot(grepl(
+  paste0('"last":', 99L + refold_ticks),
+  streamed_frame,
+  fixed = TRUE
+))
+
 cat("wickra-terminal R tests passed\n")

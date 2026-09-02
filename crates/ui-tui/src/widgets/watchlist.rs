@@ -7,7 +7,13 @@ use ratatui::Frame;
 use wickra_terminal_core::view::WatchlistView;
 
 /// Render the watchlist panel.
-pub(crate) fn render(frame: &mut Frame, area: Rect, view: &WatchlistView, focused: bool) {
+pub(crate) fn render(
+    frame: &mut Frame,
+    area: Rect,
+    view: &WatchlistView,
+    focused: bool,
+    scroll: u16,
+) {
     let lines: Vec<Line> = view
         .rows
         .iter()
@@ -19,7 +25,9 @@ pub(crate) fn render(frame: &mut Frame, area: Rect, view: &WatchlistView, focuse
         })
         .collect();
     frame.render_widget(
-        Paragraph::new(lines).block(super::panel_block("Watchlist".to_string(), focused)),
+        Paragraph::new(lines)
+            .scroll((scroll, 0))
+            .block(super::panel_block("Watchlist".to_string(), focused)),
         area,
     );
 }

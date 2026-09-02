@@ -15,7 +15,7 @@ use wickra_core::{self as wc, Indicator};
 use wickra_exchange_core::{BookDelta, BookLevel, Event, OrderBookSnapshot, OrderSide, TradePrint};
 
 use crate::candle::{CandleBuilder, Timeframe};
-use crate::config::IndicatorSpec;
+use crate::config::{IndicatorSpec, MAX_RECORDING};
 use crate::error::{Error, Result};
 use crate::registry::{self, TickIndicator, TickInput};
 use crate::source::{DataSource, SourceId, Symbol};
@@ -816,6 +816,14 @@ impl ProfileSet {
 /// with the session rather than with the screen.
 const ALT_BARS_KEPT: usize = 256;
 
+/// How many closed bars a market keeps for the chart.
+///
+/// Bounded for the same reason everything else here is: a terminal left running
+/// overnight must not grow without limit. 256 one-minute bars is four hours,
+/// which is more than any renderer draws at once and enough for the widest
+/// window a chart panel asks for.
+const OHLC_HISTORY: usize = 256;
+
 /// One named alternative bar stream and the bars it has completed.
 struct BarEntry {
     label: String,
@@ -1046,6 +1054,13 @@ pub struct SymbolState {
     pub history: VecDeque<Decimal>,
     /// Aggregates the trade stream into the bars the candle indicators read.
     pub candles: CandleBuilder,
+    /// The closed bars the chart draws, oldest first.
+    ///
+    /// Kept because the builder does not: it holds the bar in progress and
+    /// hands each closed one to the indicators, which read it and keep only
+    /// their own state. Without this ring a renderer could draw the last price
+    /// and nothing else -- which is what every renderer here did.
+    ohlc: VecDeque<wc::Candle>,
     /// What this market contributes to a market-wide cross-section.
     breadth: BreadthState,
     /// The derivatives microstructure of this market, folded from host updates.
@@ -1075,6 +1090,7 @@ impl SymbolState {
             last: Decimal::ZERO,
             history: VecDeque::with_capacity(512),
             candles: CandleBuilder::new(timeframe),
+            ohlc: VecDeque::with_capacity(OHLC_HISTORY),
             breadth: BreadthState::new(),
             derivatives: DerivativesState::default(),
         })
@@ -1089,6 +1105,61 @@ impl SymbolState {
 }
 
 impl SymbolState {
+    /// Seed this market from historical bars, oldest first.
+    ///
+    /// What a fresh subscription to a live venue starts with, and what the
+    /// terminal had no way to use: every bar was built from ticks it saw itself,
+    /// so a bar indicator was silent for its whole warmup in wall-clock time --
+    /// fourteen hours for `Atr(14)` at an hourly timeframe -- and the chart
+    /// opened empty on a market that has traded for years.
+    ///
+    /// The bars drive the same tick the live fold drives, with the close as the
+    /// price: that is all a bar carries, and it is what every charting platform
+    /// warms an indicator on. Only the bar-derived state is seeded. The book,
+    /// the tape and the footprint are not: a bar records that trading happened,
+    /// not the prints it was made of, and inventing those would put numbers on
+    /// screen that no venue ever published.
+    pub(crate) fn seed_bars(&mut self, bars: &[wc::Candle]) {
+        for bar in bars {
+            if self.ohlc.len() == OHLC_HISTORY {
+                self.ohlc.pop_front();
+            }
+            self.ohlc.push_back(*bar);
+
+            if self.history.len() == 512 {
+                self.history.pop_front();
+            }
+            if let Some(close) = Decimal::from_f64_retain(bar.close) {
+                self.history.push_back(close);
+                self.last = close;
+            }
+
+            self.breadth.update(bar);
+            let mut tick = TickInput::price(bar.close);
+            tick.candle = Some(*bar);
+            self.indicators.update(&tick);
+            self.profiles.update(&tick);
+            self.bars.update(&tick);
+        }
+    }
+
+    /// The most recent closed bars, oldest first, at most `n` of them.
+    ///
+    /// Closed only: the bar in progress is [`forming`](Self::forming), because
+    /// it is the one that will still change and a renderer draws it
+    /// differently.
+    #[must_use]
+    pub fn ohlc(&self, n: usize) -> Vec<wc::Candle> {
+        let skip = self.ohlc.len().saturating_sub(n);
+        self.ohlc.iter().skip(skip).copied().collect()
+    }
+
+    /// The bar still accumulating, or `None` before this market's first trade.
+    #[must_use]
+    pub fn forming(&self) -> Option<wc::Candle> {
+        self.candles.partial()
+    }
+
     /// A bounded recent price series (oldest first) for the chart.
     #[must_use]
     pub fn series(&self, n: usize) -> Vec<f64> {
@@ -1125,6 +1196,14 @@ pub struct AppState {
     pub bars: Vec<IndicatorSpec>,
     /// The bar size the candle-input indicators are fed at.
     pub timeframe: Timeframe,
+    /// How many recent events to keep for export, or `None` to record nothing.
+    ///
+    /// Crate-visible rather than public: a caller sets it through
+    /// [`set_recording`](Self::set_recording), which clamps the capacity and
+    /// clears what is held, so the two can never disagree.
+    pub(crate) record_capacity: Option<usize>,
+    /// The recorded events, oldest first, in the shape `Replay` takes.
+    pub(crate) recorded: VecDeque<Event>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -1140,6 +1219,11 @@ impl std::fmt::Debug for AppState {
             .field("profiles", &self.profiles)
             .field("bars", &self.bars)
             .field("timeframe", &self.timeframe)
+            .field("record_capacity", &self.record_capacity)
+            // By count, like `sources`: a reader wants to know a recording is
+            // running and how long it is, not to have thousands of trades
+            // printed into a panic message.
+            .field("recorded", &self.recorded.len())
             .finish()
     }
 }
@@ -1243,6 +1327,10 @@ impl AppState {
                 // declining several times inside one bar.
                 if let Some(bar) = closed.as_ref() {
                     state.breadth.update(bar);
+                    if state.ohlc.len() == OHLC_HISTORY {
+                        state.ohlc.pop_front();
+                    }
+                    state.ohlc.push_back(*bar);
                 }
                 // The taker flow is this terminal's own: the aggressor side
                 // is on every print, and the derivatives feeds do not carry
@@ -1420,6 +1508,11 @@ impl AppState {
         for state in self.symbols.values_mut() {
             state.candles = CandleBuilder::new(timeframe);
             state.indicators = IndicatorSet::from_specs(&self.indicators)?;
+            // The kept bars go too. They are bars of the *old* size, and a chart
+            // that drew them beside the new ones would show one series measured
+            // two ways -- the same reason the indicator set is rebuilt rather
+            // than continued.
+            state.ohlc.clear();
         }
         Ok(())
     }
@@ -1449,9 +1542,39 @@ impl AppState {
         }
         let folded = batch.len();
         for (id, sym, ev) in batch {
+            self.record(&ev);
             self.fold(id, &sym, &ev);
         }
         folded
+    }
+
+    /// Keep an event for export, if recording is on.
+    ///
+    /// Recorded here rather than inside `fold`, because `fold` is also how a
+    /// seek re-folds a recording: recording there would append the replayed
+    /// events back onto the recording, and every rewind would double it.
+    fn record(&mut self, event: &Event) {
+        let Some(capacity) = self.record_capacity else {
+            return;
+        };
+        if self.recorded.len() == capacity {
+            self.recorded.pop_front();
+        }
+        self.recorded.push_back(event.clone());
+    }
+
+    /// The recorded events, oldest first, in the shape `Replay` takes.
+    #[must_use]
+    pub fn recording(&self) -> Vec<Event> {
+        self.recorded.iter().cloned().collect()
+    }
+
+    /// Turn recording on with a capacity, or off with `None`. Clears what is
+    /// already held either way, so a capacity change never leaves a recording
+    /// that is part one size and part another.
+    pub fn set_recording(&mut self, capacity: Option<usize>) {
+        self.record_capacity = capacity.map(|c| c.clamp(1, MAX_RECORDING));
+        self.recorded = VecDeque::new();
     }
 
     /// Get the state for a key, if present.
@@ -1479,6 +1602,67 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Seeding more history than the rings hold keeps the newest of it.
+    ///
+    /// A live subscription asks for as many bars as the config's `backfill`
+    /// says, and nothing clamps that to what a `SymbolState` carries -- so a
+    /// config asking for a thousand bars on a venue that has them walks both
+    /// rings past their bound. They evict rather than grow, and the bar that
+    /// survives has to be the newest one, because that is the one the chart
+    /// draws and the one the next tick continues from.
+    #[test]
+    fn seeding_past_the_rings_evicts_the_oldest_bars() {
+        let bars: Vec<wickra_core::Candle> = (0..600)
+            .map(|i| {
+                let close = 100.0 + f64::from(i);
+                wickra_core::Candle::new(close, close, close, close, 1.0, i64::from(i))
+                    .expect("an ordered candle")
+            })
+            .collect();
+
+        let mut state = SymbolState::new(&[], &[], &[], Timeframe::default())
+            .expect("an empty indicator set is constructible");
+        state.seed_bars(&bars);
+
+        assert_eq!(
+            state.ohlc.len(),
+            OHLC_HISTORY,
+            "the bar ring grew past its bound"
+        );
+        assert_eq!(
+            state.history.len(),
+            512,
+            "the price ring grew past its bound"
+        );
+        let newest = state.ohlc.back().expect("the ring is not empty");
+        assert!(
+            (newest.close - 699.0).abs() < 1e-9,
+            "the newest bar was evicted"
+        );
+        let oldest = state.ohlc.front().expect("the ring is not empty");
+        let first_kept = 700.0 - f64::from(u16::try_from(OHLC_HISTORY).expect("the ring is small"));
+        assert!((oldest.close - first_kept).abs() < 1e-9);
+    }
+
+    /// `AppState` is what a panicking test prints, and it holds a recording that
+    /// can run to thousands of events. Printing the ring itself would bury the
+    /// fields a reader is actually after, so the recorder is reported by count
+    /// -- and that only stays true if something reads it.
+    #[test]
+    fn the_debug_view_reports_the_recording_by_count() {
+        let mut state = AppState::default();
+        state.set_recording(Some(16));
+        let sym = Symbol::new("BTC", "USDT");
+        let event = trade(&sym, dec!(100), OrderSide::Buy);
+        state.fold(0, &sym, &event);
+        state.record(&event);
+
+        let shown = format!("{state:?}");
+        assert!(shown.contains("record_capacity: Some(16)"), "{shown}");
+        assert!(shown.contains("recorded: 1"), "{shown}");
+        assert!(shown.contains("sources: 0"), "{shown}");
+    }
 
     /// A tick carrying one closed candle, which is all the bar streams read.
     fn candle_tick(open: f64, high: f64, low: f64, close: f64) -> TickInput {

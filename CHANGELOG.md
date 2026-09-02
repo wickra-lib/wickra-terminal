@@ -151,6 +151,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no attestation while the README badge claimed provenance for the release.
 - `[package.metadata.docs.rs] all-features = true` on `ui-tui`, so the setting is
   uniform across everything this workspace publishes.
+- The chart view-model carries the bars. `ChartView` gains `bars` -- up to 120
+  closed OHLCV bars of the configured timeframe -- and `forming`, the bar still
+  accumulating. Both are omitted from the JSON while empty, so a consumer
+  written against the earlier shape sees exactly the object it saw before. The
+  state keeps a bounded ring of 256 closed bars, which the candle builder did
+  not: it held the bar in progress and handed each closed one to the indicators,
+  which read it and kept only their own state, so a renderer could draw the last
+  price and nothing else.
 
 ### Changed
 
@@ -161,6 +169,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   section both keys must be absent, and the moment one is cut both must be
   present and agree with it. Cutting a release now fails until the citation is
   brought along, instead of shipping one that dates nothing.
+- Four error arms that nothing could reach are gone, each replaced by the
+  reasoning that made it unreachable. Changing the timeframe and seeking a
+  replay both handled a failure their own guards had already excluded -- the
+  indicator specs were validated when they were added, and `replay_position`
+  had just answered -- and saving a recording handled a failure of a constant
+  command with no failing path. `parse_indicator` guarded against `vs` with no
+  market after it, which the leading `trim` makes impossible: the pattern's
+  trailing space cannot match at the end of the text, so a dangling `vs` never
+  splits and is reported as the parameter it is not. A branch no input can take
+  is not defence; it is an untested path that reads like one.
 - README section headings follow the fixed order the repository blueprint sets:
   `## Performance` is now `## Benchmarks`, and `## Building from source` is now
   `## Building everything from source`.
@@ -189,6 +207,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A buffer overflow in the C examples, found by CodeQL's
+  `cpp/overflowing-snprintf` on the first run after C/C++ entered the analysis
+  matrix. `snprintf` returns the length it *would* have written, so accumulating
+  that return value walks the offset past the buffer on truncation -- and
+  `sizeof buf - at` then underflows to an enormous `size_t`, handing the next
+  call a length far larger than the space that is left. Both files use a guarded
+  append that refuses instead.
+
 - An indicator period is bounded, so an absurd one is refused rather than
   allocated. A period is a length and the indicator allocates it: a parameter of
   10^20 cast cleanly to `usize`, the indicator asked for a `Vec` that size, and
@@ -196,6 +222,121 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `registry_drive` fuzz target found it in under a minute. The ceiling is a
   million -- a million one-minute bars is two years -- and the refusal names the
   indicator and the number.
+- `upstream-drift.yml`, which watches whether the generated registry has fallen
+  behind the wickra-core it was made from. It had: the lockfile sat on 1.0.1
+  while crates.io carried 1.0.4, so ten indicators existed upstream that the
+  generator had never seen, and the repository's own guard catches shrinking
+  only -- growth upstream was invisible by construction.
+
+  A weekly notice that opens and edits one issue, rather than a check on every
+  pull request, and that is deliberate: following upstream is blocked on
+  wickra-exchange, which pins wickra-core 0.9, so bumping this side while that
+  stands compiles two copies of the indicator library into one binary. A gate
+  that failed every pull request until somebody else's release landed would be
+  turned off within a week, and then it would be watching nothing. It reports
+  both copies, because the duplicate is the blocker.
+- A second scenario in every language's examples: `time_machine` plays a
+  recorded feed to its end, rewinds to the second trade and shows the frame the
+  forward pass had at that point. One scenario per language showed how to open a
+  terminal and read a frame; it could not show the capability the repository is
+  named around, and a reader could not guess it.
+- `examples/wasm/`, which did not exist. Every other reach had an example and
+  the browser had only the full Vue renderer -- which is the product rather than
+  the shape. One HTML file, no build tool, the same three calls.
+- Historical backfill. A fresh subscription fetches bars from the venue and
+  seeds the chart, the price history and every bar-derived indicator with them.
+  Without it every bar came from ticks the terminal saw itself, so `Atr(14)` on
+  an hourly timeframe was silent for fourteen hours and the chart opened empty
+  on a market that has traded since 2017. 200 bars by default, 0 to turn it off,
+  and a failed fetch is not a failed subscription.
+
+  The book, the tape and the footprint are not seeded: a bar records that
+  trading happened rather than the prints it was made of, and inventing those
+  would put numbers on screen no venue published.
+- A live source can open a derivatives book. `market` picks spot, USD-margined,
+  coin-margined or margin, and the shorthand takes it as a third segment
+  (`live:binance:BTC/USDT:usdm`). It was hard-coded to spot, so a perpetual
+  could not be opened at all. Funding and open interest still have no live feed
+  and that is upstream: `wickra-exchange-core` defines `DerivativesFeed` but no
+  venue implements it and the `Exchange` trait exposes no subscription, so the
+  `FeedDerivatives` command remains the only path -- which is why it exists.
+- A recorder, so the time-machine has something to rewind. `Replay` takes a feed
+  and nothing in the repository could produce one: no session was ever written
+  out, and `dataset` takes the events themselves rather than a path, so the only
+  way to get a recording was to already have one. A config now sets `record` to
+  a capacity and the terminal keeps that many recent events; `ExportRecording`
+  hands them back in exactly the shape `Replay` takes, and `SetRecording` turns
+  it on or off at run time. The TUI binds `w` to writing them beside itself.
+
+  A ring rather than a log, because a terminal left running overnight must not
+  grow without limit. Recorded as events are polled rather than folded, because
+  `fold` is also how a seek re-folds a recording -- recording there would append
+  the replayed events back on and every rewind would double it.
+- The web renderer reads the shared keymap. `layout.keybinds` sits in the config
+  expressly so both front-ends share one, and only the TUI ever read it -- so
+  rebinding a key moved half the product. Key names are the TUI's, a key held
+  with Ctrl, Cmd or Alt is left to the browser, and a key pressed inside a field
+  is left to the field. `quit` and the panel-focus and scroll pairs are
+  deliberately unhandled in a browser, which the docs now say rather than leave
+  to be discovered.
+- Panels carry a configurable depth. Book levels, tape prints, footprint levels,
+  chart points and bars per stream were `const` in the code, so a config could
+  set exactly one thing per panel -- its rectangle. A `PanelSpec` now takes an
+  optional `depth`, clamped to 512 and refusing zero, and every panel that has a
+  bound reads it.
+- Panel focus finally means something. It was drawn and acted on nothing: `tab`
+  moved a border and no key did anything with it. `↑` / `↓` now scroll the
+  focused panel through the rows it carries, which is also why the depth had to
+  become configurable -- with twelve book levels there was nothing underneath
+  them to scroll to. The browser already scrolls its panels; a terminal has to
+  be told.
+- A streaming-versus-re-fold equivalence test in every binding: Python, Node,
+  WASM, Go, Java, C#, R, C and C++. The terminal reaches a state two ways --
+  streaming folds one event per tick as it arrives, `Seek` throws the state away
+  and re-folds the whole prefix in one batch -- and ARCHITECTURE.md calls that
+  re-fold the moat. The Rust suite proved the core re-folds correctly; nothing
+  proved each binding carries the same bytes out, which is what these check, by
+  string equality on the compact command output rather than a per-language JSON
+  comparison. Each carries a second assertion that the frames compared are not
+  empty ones: two empty frames are also byte-identical.
+- Every command the boundary carries is now reachable from both renderers.
+  `AddIndicator`, `RemoveIndicator`, `SetTimeframe`, `ListIndicators` and `Seek`
+  were bound to nothing in either front-end, so the registry could only be
+  configured from a file and the time-machine had no control anywhere. The TUI
+  binds `i`, `k`, `t`, `l` and `,` / `.`; the web renderer gets a second control
+  bar with the same five. The keymap is data and shared, so a rebinding moves
+  both. `Feed` and `FeedDerivatives` stay unbound on purpose -- they are how a
+  host pushes its own feed in, so their caller is an embedder rather than a
+  person at a keyboard.
+- `Terminal::add_indicator`, `remove_indicator`, `set_timeframe` and
+  `replay_position`. The first three existed only inside `command_json`, so a
+  Rust embedder had to assemble JSON to reach its own registry; `command_json`
+  now calls them, and the config stays in step either way.
+- A `ReplayPosition` command, the second that answers rather than renders. The
+  `DataSource` trait has carried `cursor` and `event_count` from the start and
+  nothing read them, so no renderer could show where in a recording it stood. A
+  source that is not a recording answers `0/0` rather than an error.
+- Both renderers draw candles. The TUI chart was two lines -- a sparkline of
+  eight block glyphs and a row of indicator text -- on the panel that occupies
+  seventy percent of the default layout: no axis, no price scale, no bar
+  structure. It now draws the bars on a braille canvas with a price scale beside
+  them, and the web canvas draws the same bars. Both fall back to the tick
+  series until the first bar closes, which at an hourly timeframe is the first
+  hour of a session.
+
+  Indicators stay a numeric readout rather than lines over the candles, and that
+  is deliberate: an indicator's series is sampled once per tick while the
+  candles are one per bar, so the two do not share an x-axis. Overlays are drawn
+  only in the fallback, where the price series and the indicator series do.
+- The web renderer knows all seven panels. `Profile` and `Bars` were added to
+  the core, given view-models and TUI widgets, and never taught to the web
+  front-end: `PanelKind` listed five kinds, `PanelView` had five variants, and
+  the frames for the other two arrived on every tick and were discarded without
+  an error anywhere. ARCHITECTURE.md says adding a panel to the core makes it
+  appear in every renderer at once, and for those two that was not true.
+  A guard in the core now reads its own `PanelKind` and fails when a renderer
+  has not been taught a panel — the golden corpus could not catch this, because
+  the frames were correct and it was the reader that was missing.
 
 - The seven shell problems actionlint found on its first run, each real. Three
   publish steps used `A && B || C`, where C also runs when A succeeded and B
@@ -217,11 +358,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The live source holds a `dyn MarketData`, not a `dyn Exchange`. `connect`
+  hands back the whole exchange -- order placement and balances alongside the
+  reads -- and the source kept it, so nothing but review stood between an edit
+  and an order path in a terminal that is documented not to have one. The
+  narrower type says it structurally: the method is not there to call.
 - `Swatinem/rust-cache` re-pinned to a commit a tag still points at.
 - cargo-deny scans the feature-expanded graph, so the `live` tree is checked at
   all; the dead `RUSTSEC-2024-0436` suppression was removed from both files.
 - The gated live-integration test fails on no data instead of passing, so the
   nightly job can report a real result.
+- Unsubscribing a live market stops the terminal folding it. `LiveSource`'s
+  `unsubscribe` was a comment noting that the exchange client has no per-symbol
+  unsubscribe, and doing nothing -- but the fold creates state for whatever
+  market an event names, so the dropped market came straight back on the next
+  poll and was folded for the rest of the session, invisible because the
+  watchlist no longer listed it. The source filters its own output now, the way
+  the replay, synthetic and manual sources already did. The socket is still the
+  venue's to close; the work is not.
 - `scripts/update-lockfiles.sh` no longer pipes `astral.sh/uv/install.sh` into a
   shell. That ran whatever was behind the URL at that moment, with the
   privileges of everyone who regenerated a lockfile. uv is now installed by hand

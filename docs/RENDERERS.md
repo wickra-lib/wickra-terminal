@@ -16,13 +16,66 @@ Terminal::version()                 the crate version
 ```
 
 Commands (`Tick`, `Subscribe`, `Unsubscribe`, `SetFocus`, `AddSource`,
-`RemoveSource`, `Seek`, `Feed`, `AddIndicator`, `RemoveIndicator`,
-`SetTimeframe`, `ListIndicators`) and the returned frame (the active panels'
-view-models) are JSON. No callbacks cross the boundary, so streaming is as
-trivial to carry as a synchronous call — across all ten languages. `Seek` is the
-time-machine (rewind a replay source and re-fold), and `Feed` pushes an external
-event into a host-fed `Manual` source — both are just data (see
-[SOURCES.md](SOURCES.md)).
+`RemoveSource`, `Seek`, `Feed`, `FeedDerivatives`, `AddIndicator`,
+`RemoveIndicator`, `SetTimeframe`, `ListIndicators`, `ReplayPosition`) and the
+returned frame (the active panels' view-models) are JSON. No callbacks cross the
+boundary, so streaming is as trivial to carry as a synchronous call — across all
+ten languages. `Seek` is the time-machine (rewind a replay source and re-fold),
+and `Feed` pushes an external event into a host-fed `Manual` source — both are
+just data (see [SOURCES.md](SOURCES.md)).
+
+Two commands answer rather than render. `ListIndicators` returns the catalogue,
+and `ReplayPosition` returns where a replayable source stands:
+
+```json
+{"type":"ReplayPosition","source":0}
+```
+
+```json
+{"cursor":128,"length":512}
+```
+
+A source that is not a recording answers `0/0` rather than an error — a live
+feed has no recorded length, and a renderer can ask about whatever is focused
+without first knowing what kind of source it is. The position is a command
+rather than a field on the frame because it belongs to a source, not to a panel:
+in the frame it would sit in front of every consumer that has no replay at all.
+
+## Everything the boundary offers is reachable from both renderers
+
+That is a rule, not an observation, and it was broken for five commands.
+`AddIndicator`, `RemoveIndicator`, `SetTimeframe`, `ListIndicators` and `Seek`
+were carried by the boundary, exercised by the bindings' tests, and bound to
+nothing in either front-end — so the registry could only be configured from a
+file, and the time-machine had no control anywhere. In the TUI they are `i`,
+`k`, `t`, `l` and `,` / `.`; in the web renderer they are the second control
+bar. The keymap is data, shared by both renderers, so a rebinding moves both.
+
+`Feed` and `FeedDerivatives` are deliberately not in that list: they are how a
+*host* pushes its own feed in, so their caller is an embedder rather than a
+person at a keyboard. The web renderer uses `Feed` exactly that way, from its
+Binance bridge.
+
+## One keymap, both renderers
+
+`layout.keybinds` is a map from action name to key name, and it sits in the
+config precisely so that rebinding a key moves both front-ends. Only the TUI
+read it, so that was true of the config and false of the product; the web
+renderer reads the same map now.
+
+The key names are the TUI's, because the config is shared: `backtab` means
+Shift+Tab in both, even though crossterm reports it as a key of its own and the
+browser reports Tab with a modifier. A key held with Ctrl, Cmd or Alt is left to
+the browser — a terminal that stole Ctrl+R would be a worse citizen than one
+with fewer shortcuts — and so is any key pressed inside a text field, or typing
+a symbol would fire the bindings on its way past.
+
+Where the two renderers differ, they differ in idiom rather than in meaning: an
+action that opens a modal prompt in the TUI focuses the matching field in the
+browser. Three do nothing in a browser and say so rather than pretending:
+`quit`, because a tab is not the terminal's to close, and the panel-focus and
+scroll pairs, because a web panel is a scrollable box the browser already
+drives.
 
 ## The two reference renderers
 

@@ -12,6 +12,14 @@
         590.88,
         590.94
       ],
+      "forming": {
+        "open": 590.97,
+        "high": 590.97,
+        "low": 590.88,
+        "close": 590.94,
+        "volume": 1.21,
+        "timestamp": 0
+      },
       "indicators": [
         {
           "name": "Sma(20)",

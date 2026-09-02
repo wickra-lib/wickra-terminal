@@ -10,7 +10,7 @@ because each renderer is only a mapping from `PanelView` to its own widget.
 
 | Kind | View-model | Shows |
 |------|------------|-------|
-| `Chart` | `ChartView` | a recent price series and the configured indicator overlays for the focused market |
+| `Chart` | `ChartView` | the bars of the configured timeframe, a tick-resolution price series, and the indicator readings for the focused market |
 | `Book` | `BookView` | the top of the L2 order book (bids and asks) and the spread |
 | `Tape` | `TapeView` | the most recent trade prints, coloured by aggressor side |
 | `Footprint` | `FootprintView` | per-price buy and sell volume (a volume profile) |
@@ -25,11 +25,35 @@ plain, language-neutral JSON document.
 This is the surface a binding consumer actually reads, so it is worth stating
 rather than leaving to be discovered from a sample frame.
 
-**`chart`** — `symbol`, `last`, `series` (up to 120 recent prices, oldest first),
-and `indicators`. Each indicator carries its `name` (the label from its spec,
+**`chart`** — `symbol`, `last`, `bars`, `forming`, `series` and `indicators`.
+
+`bars` is up to 120 closed bars of the configured timeframe, oldest first, each
+an `open`, `high`, `low`, `close`, `volume` and the bar's opening `timestamp`.
+It is omitted from the JSON until the first bar closes, which at an hourly
+timeframe is the first hour of a session.
+
+`forming` is the bar still accumulating, in the same shape. It is kept apart
+from `bars` rather than appended, because it is the one bar that will still
+change: an indicator never sees it — a reading that repainted as its bar filled
+would be a different number on every print — but a chart that omitted it would
+show the market frozen at the last close for a whole bar.
+
+`series` is up to 120 recent prices, oldest first, one point per trade. It is
+the finer of the two and does not wait for a bar to close, which is what makes
+it the right thing to draw before any bar has.
+
+Each entry in `indicators` carries its `name` (the label from its spec,
 `Sma(20)`), its primary `value` (`null` while warming up), an optional `fields`
 list for the multi-output ones, and an optional `series` of its own. See
 [INDICATORS.md](INDICATORS.md).
+
+> Both reference renderers draw the candles and report the indicators as
+> numbers, rather than drawing indicator lines over the candles. An indicator's
+> `series` is sampled once per tick and the bars are one per bar, so the two do
+> not share an x-axis; an average drawn on the candle axis would sit near, but
+> not on, the bar it was computed from. Overlays are drawn only in the
+> before-the-first-bar fallback, where the price series and the indicator series
+> do share an axis.
 
 **`book`** — `symbol`, `bids` and `asks` (up to 12 levels each, best first, every
 level a `price` and a `quantity`), and `spread` (`null` until both sides have a
@@ -81,18 +105,40 @@ that spans an odd fraction, a layout with gaps.
 A layout that omits a panel kind simply does not render it. Omitting the whole
 `layout` gives the standard five.
 
-## Bounds
+## Bounds, and how deep a panel carries
 
 Every panel reads from a bounded structure, so a session that runs for a week
 renders exactly as fast as one that just started:
 
-| Panel | Bound | Where |
-|-------|-------|-------|
-| `chart` | 120 price points, 120 points per indicator | `SymbolState::history`, `IndicatorSet` |
-| `book` | 12 levels a side | `DEFAULT_DEPTH` |
-| `tape` | 24 rendered of 256 kept | `TapeRing` |
-| `footprint` | 12 levels | `DEFAULT_DEPTH` |
-| `watchlist` | one row per subscribed market | the watchlist itself |
+| Panel | Default depth | Ceiling |
+|-------|--------------|---------|
+| `chart` | 120 bars, 120 price points, 120 points per indicator | 256 bars kept, 512 price points |
+| `book` | 12 levels a side | the book itself |
+| `tape` | 24 prints | 256 kept |
+| `footprint` | 12 levels | 1024 levels kept |
+| `bars` | 12 bars a stream | 256 kept |
+| `watchlist` | one row per subscribed market | — |
+| `profile` | one row per bin | — |
+
+A panel spec may set its own depth:
+
+```json
+{ "kind": "Book", "rect": { "x": 70, "y": 0, "w": 30, "h": 35 }, "depth": 40 }
+```
+
+One number rather than a name per panel, because every panel that has a bound
+has exactly one: book levels a side, tape prints, footprint levels, chart points
+and bars, alternative bars per stream. The watchlist and the profile panel have
+none and ignore it. Zero is refused rather than honoured — a panel carrying
+nothing renders blank with no error, which reads as a broken feed rather than as
+a configuration — and the value is clamped to 512, above which the state's own
+rings are the real ceiling anyway.
+
+It is the **carried** depth, not the drawn one. A renderer draws what fits and
+scrolls through the rest, so asking for more here is what makes scrolling
+possible at all: with twelve book levels there is nothing underneath them to
+scroll to. In the TUI that is `↑` / `↓` on the focused panel; in the browser the
+panel is a scrollable box and the browser does it.
 
 ## Adding a panel
 

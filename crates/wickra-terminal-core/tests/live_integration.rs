@@ -19,7 +19,7 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use rust_decimal::Decimal;
-use wickra_terminal_core::{Config, SourceSpec, Symbol, Terminal};
+use wickra_terminal_core::{Config, Market, SourceSpec, Symbol, Terminal};
 
 #[test]
 #[ignore = "hits live Binance public endpoints; run via testnet.yml"]
@@ -30,6 +30,7 @@ fn live_binance_streams_public_market_data() {
         venue: "binance".to_string(),
         symbol: "BTC/USDT".to_string(),
         testnet: false,
+        market: Market::Spot,
     }];
 
     // `Terminal::new` connects the read-only client and auto-subscribes the live

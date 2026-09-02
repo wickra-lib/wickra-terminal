@@ -2,20 +2,31 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Terminal } from 'wickra-terminal-wasm'
 import type {
+  BarsView,
   BookView,
   ChartView,
   FootprintView,
   Frame,
   PanelSpec,
   PanelView,
+  ProfileView,
   TapeView,
   WatchlistView,
 } from './types'
 import { placementsFor, readLayout } from './layout'
+import { binWidth, peakOf } from './profile'
+import { parseIndicator } from './indicator'
+import { actionFor, isTyping, readKeybinds, type Keybinds } from './keybinds'
 import { drawChart } from './render/chart'
 import { openBinanceFeed } from './binance'
 
 const CONFIG_KEY = 'wickra-terminal-config'
+
+/** How many catalogue names the search shows at once. */
+const CATALOGUE_SHOWN = 40
+
+/** How many steps one traversal of a recording takes. */
+const SEEK_STEPS = 20
 
 function defaultConfig(seed: number): string {
   return JSON.stringify({
@@ -34,6 +45,9 @@ function defaultConfig(seed: number): string {
 
 const seed = ref(1)
 const symbol = ref('BTC/USDT')
+// Which market the keyboard acts on. The core owns focus; this mirrors it so a
+// key can move it without a round trip to ask where it is.
+const focusedSymbol = ref('BTC/USDT')
 const frame = ref<Frame>({ panels: [] })
 const chartCanvas = ref<HTMLCanvasElement | null>(null)
 
@@ -42,6 +56,26 @@ const sourceShorthand = ref('')
 const subSource = ref(0)
 const subSymbol = ref('ETH/USDT')
 const status = ref('')
+
+// The registry, the timeframe and the time-machine. Five of the core's commands
+// -- AddIndicator, RemoveIndicator, SetTimeframe, ListIndicators and Seek --
+// reached neither renderer, so the indicator catalogue was settable only from a
+// config file and a recording could not be scrubbed at all.
+const indicatorShorthand = ref('Rsi 14')
+const catalogueFilter = ref('')
+const catalogue = ref<string[]>([])
+const timeframe = ref('1m')
+const replayCursor = ref(0)
+const replayLength = ref(0)
+
+// The keymap the config declares. It exists so both renderers share one, and
+// until now only the TUI read it -- so rebinding a key moved half the product.
+const keybinds = ref<Keybinds>({})
+const indicatorField = ref<HTMLInputElement | null>(null)
+const symbolField = ref<HTMLInputElement | null>(null)
+const sourceField = ref<HTMLInputElement | null>(null)
+const timeframeField = ref<HTMLInputElement | null>(null)
+const catalogueField = ref<HTMLInputElement | null>(null)
 
 let terminal: Terminal | null = null
 let timer: number | undefined
@@ -142,6 +176,191 @@ function unsubscribe(source: number, sym: string): void {
   status.value = `unsubscribed ${sym}`
 }
 
+/** Apply a command and keep the frame the core answers with. */
+function send(command: Record<string, unknown>): boolean {
+  if (!terminal) {
+    return false
+  }
+  try {
+    const answer = terminal.command(JSON.stringify(command))
+    // Every command answers with a frame except ListIndicators, which answers
+    // with the catalogue; the caller for that one reads it instead.
+    if (command.type !== 'ListIndicators') {
+      frame.value = JSON.parse(answer) as Frame
+    }
+    status.value = `${String(command.type)} ok`
+    return true
+  } catch (err) {
+    status.value = String(err)
+    return false
+  }
+}
+
+function addIndicator(): void {
+  const spec = parseIndicator(indicatorShorthand.value)
+  if (!spec) {
+    status.value = 'bad indicator (Sma 20 | Macd 12 26 9 | Beta 20 vs ETH/USDT)'
+    return
+  }
+  if (send({ type: 'AddIndicator', spec })) {
+    status.value = `tracking ${spec.kind}`
+  }
+}
+
+function removeIndicator(label: string): void {
+  if (send({ type: 'RemoveIndicator', label })) {
+    status.value = `removed ${label}`
+  }
+}
+
+function applyTimeframe(): void {
+  if (send({ type: 'SetTimeframe', timeframe: timeframe.value })) {
+    status.value = `timeframe ${timeframe.value}`
+  }
+}
+
+/** Search the catalogue. It is five hundred entries, so a list is only useful
+ *  once it is filtered — what a reader wants from it is the exact spelling of a
+ *  name they half remember. */
+function searchCatalogue(): void {
+  if (!terminal) {
+    return
+  }
+  try {
+    const answer = JSON.parse(terminal.command(JSON.stringify({ type: 'ListIndicators' }))) as {
+      indicators: Array<{ kind: string }>
+    }
+    const needle = catalogueFilter.value.trim().toLowerCase()
+    catalogue.value = answer.indicators
+      .map((entry) => entry.kind)
+      .filter((kind) => needle === '' || kind.toLowerCase().includes(needle))
+      .slice(0, CATALOGUE_SHOWN)
+    status.value = `${catalogue.value.length} shown`
+  } catch (err) {
+    status.value = String(err)
+  }
+}
+
+/** Scrub the replay source by a twentieth of its length. A recording is
+ *  whatever length it is, and stepping one event at a time through fifty
+ *  thousand of them is not scrubbing. */
+function seekBy(direction: number): void {
+  if (replayLength.value === 0) {
+    status.value = 'the focused source is not replayable'
+    return
+  }
+  const step = Math.max(1, Math.floor(replayLength.value / SEEK_STEPS))
+  const target = Math.min(replayLength.value, Math.max(0, replayCursor.value + direction * step))
+  if (send({ type: 'Seek', source: 0, index: target })) {
+    refreshReplayPosition()
+    status.value = `replay ${replayCursor.value}/${replayLength.value}`
+  }
+}
+
+/** Where the config's source stands in its recording, or 0/0 if it is not one. */
+function refreshReplayPosition(): void {
+  if (!terminal) {
+    return
+  }
+  try {
+    const answer = JSON.parse(
+      terminal.command(JSON.stringify({ type: 'ReplayPosition', source: 0 })),
+    ) as { cursor: number; length: number }
+    replayCursor.value = answer.cursor
+    replayLength.value = answer.length
+  } catch {
+    replayLength.value = 0
+  }
+}
+
+/** Move focus to the next or previous watched market. */
+function cycleSymbol(forward: boolean): void {
+  const rows = watchlist.value?.rows ?? []
+  if (rows.length === 0) {
+    status.value = 'nothing subscribed to focus'
+    return
+  }
+  const at = rows.findIndex((row) => row.symbol === focusedSymbol.value)
+  const next = (((at < 0 ? 0 : at) + (forward ? 1 : -1)) % rows.length + rows.length) % rows.length
+  const row = rows[next]
+  if (send({ type: 'SetFocus', source: row.source, symbol: row.symbol })) {
+    focusedSymbol.value = row.symbol
+    status.value = `focus ${row.symbol}`
+  }
+}
+
+/**
+ * Apply the action a key was bound to.
+ *
+ * The actions that open a prompt in the TUI focus the matching field here --
+ * the same intent in the idiom each front-end has. `quit` is deliberately
+ * unhandled: a browser tab is not the terminal's to close, and a page that
+ * tried would be asking the user to confirm a dialog it had no business
+ * raising.
+ */
+function runAction(action: string): boolean {
+  switch (action) {
+    case 'next_symbol':
+      cycleSymbol(true)
+      return true
+    case 'prev_symbol':
+      cycleSymbol(false)
+      return true
+    case 'seek_back':
+      seekBy(-1)
+      return true
+    case 'seek_forward':
+      seekBy(1)
+      return true
+    case 'list_indicators':
+      catalogueField.value?.focus()
+      return true
+    case 'add_indicator':
+      indicatorField.value?.focus()
+      return true
+    case 'remove_indicator': {
+      const first = chart.value?.indicators[0]
+      if (first) {
+        removeIndicator(first.name)
+      } else {
+        status.value = 'no indicator to remove'
+      }
+      return true
+    }
+    case 'set_timeframe':
+      timeframeField.value?.focus()
+      return true
+    case 'source_menu':
+      sourceField.value?.focus()
+      return true
+    case 'add_symbol':
+      symbolField.value?.focus()
+      return true
+    case 'remove_symbol': {
+      const row = (watchlist.value?.rows ?? []).find((r) => r.symbol === focusedSymbol.value)
+      if (row) {
+        unsubscribe(row.source, row.symbol)
+      }
+      return true
+    }
+    default:
+      // quit, the panel-focus pair and the scroll pair: a browser tab is not
+      // ours to close, and the panels are scrollable boxes the browser already
+      // drives. Reporting them as unhandled leaves the key to the browser.
+      return false
+  }
+}
+
+function onKeydown(event: KeyboardEvent): void {
+  if (isTyping(event.target)) {
+    return
+  }
+  const action = actionFor(event, keybinds.value)
+  if (action !== null && runAction(action)) {
+    event.preventDefault()
+  }
+}
+
 function findPanel<T extends PanelView['panel']>(
   name: T,
 ): Extract<PanelView, { panel: T }> | undefined {
@@ -165,6 +384,9 @@ const book = computed<BookView | undefined>(() => findPanel('book'))
 const tape = computed<TapeView | undefined>(() => findPanel('tape'))
 const watchlist = computed<WatchlistView | undefined>(() => findPanel('watchlist'))
 const footprint = computed<FootprintView | undefined>(() => findPanel('footprint'))
+const profile = computed<ProfileView | undefined>(() => findPanel('profile'))
+const bars = computed<BarsView | undefined>(() => findPanel('bars'))
+
 
 function stop(): void {
   if (timer !== undefined) {
@@ -188,17 +410,22 @@ function start(): void {
     localStorage.setItem(CONFIG_KEY, cfg)
   }
   layout.value = readLayout(cfg)
+  keybinds.value = readKeybinds(cfg)
   terminal = new Terminal(cfg)
   terminal.command(
     JSON.stringify({ type: 'Subscribe', source: 0, symbol: symbol.value }),
   )
   // The config opened one source (id 0); the next runtime source is id 1.
   nextSourceId = 1
+  refreshReplayPosition()
   timer = window.setInterval(() => {
     if (!terminal) {
       return
     }
     frame.value = JSON.parse(terminal.command(JSON.stringify({ type: 'Tick' }))) as Frame
+    // A replay advances by itself as its events are consumed, so the scrubber
+    // has to follow the source rather than only the seeks the user makes.
+    refreshReplayPosition()
   }, 100)
 }
 
@@ -215,8 +442,14 @@ watch(frame, () => {
   }
 })
 
-onMounted(start)
-onBeforeUnmount(stop)
+onMounted(() => {
+  start()
+  window.addEventListener('keydown', onKeydown)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown)
+  stop()
+})
 </script>
 
 <template>
@@ -232,6 +465,7 @@ onBeforeUnmount(stop)
     <div class="bar controls">
       <label>add source
         <input
+          ref="sourceField"
           type="text"
           v-model="sourceShorthand"
           placeholder="synth:2 | live:binance:ETH/USDT | replay:[…]"
@@ -239,9 +473,45 @@ onBeforeUnmount(stop)
       </label>
       <button @click="addSource">add</button>
       <label>subscribe src <input type="number" v-model.number="subSource" min="0" /></label>
-      <input type="text" v-model="subSymbol" />
+      <input ref="symbolField" type="text" v-model="subSymbol" />
       <button @click="subscribe">go</button>
       <span class="muted">{{ status }}</span>
+    </div>
+
+    <div class="bar controls">
+      <label>indicator
+        <input
+          ref="indicatorField"
+          type="text"
+          v-model="indicatorShorthand"
+          placeholder="Sma 20 | Beta 20 vs ETH/USDT"
+        />
+      </label>
+      <button @click="addIndicator">add</button>
+
+      <label>timeframe <input ref="timeframeField" type="text" v-model="timeframe" size="4" /></label>
+      <button @click="applyTimeframe">set</button>
+
+      <label>catalogue <input ref="catalogueField" type="text" v-model="catalogueFilter" placeholder="filter" /></label>
+      <button @click="searchCatalogue">search</button>
+
+      <!-- The time-machine. Disabled rather than hidden when the focused source
+           cannot replay: a synthetic feed looks identical to a recording until
+           you try to scrub it, and a control that silently does nothing is the
+           worse of the two. -->
+      <button @click="seekBy(-1)" :disabled="replayLength === 0" title="rewind">&#9664;</button>
+      <span class="muted" v-if="replayLength > 0">{{ replayCursor }}/{{ replayLength }}</span>
+      <span class="muted" v-else>not replayable</span>
+      <button @click="seekBy(1)" :disabled="replayLength === 0" title="advance">&#9654;</button>
+    </div>
+
+    <div class="bar catalogue" v-if="catalogue.length > 0">
+      <button
+        v-for="kind in catalogue"
+        :key="kind"
+        class="chip"
+        @click="indicatorShorthand = kind"
+      >{{ kind }}</button>
     </div>
 
     <main class="grid">
@@ -251,6 +521,7 @@ onBeforeUnmount(stop)
         <div class="indicators">
           <span v-for="ind in chart?.indicators ?? []" :key="ind.name">
             {{ ind.name }}={{ ind.value === null ? '…' : ind.value.toFixed(2) }}
+            <button class="x" @click="removeIndicator(ind.name)" title="stop tracking">×</button>
           </span>
         </div>
       </section>
@@ -291,6 +562,56 @@ onBeforeUnmount(stop)
             <td>{{ pr.price.toFixed(2) }}</td><td>{{ pr.quantity.toFixed(3) }}</td><td>{{ pr.side }}</td>
           </tr>
         </table>
+      </section>
+
+      <section class="panel profile" v-if="placements.Profile" :style="placements.Profile">
+        <h2>Profiles {{ profile?.symbol }}</h2>
+        <div v-for="row in profile?.profiles ?? []" :key="row.label" class="dist">
+          <h3>
+            {{ row.label }}
+            <span v-if="row.price_low !== undefined && row.price_high !== undefined" class="muted">
+              [{{ row.price_low.toFixed(2) }} – {{ row.price_high.toFixed(2) }}]
+            </span>
+          </h3>
+          <p v-if="row.bins.length === 0" class="muted">warming up</p>
+          <div v-else class="bins">
+            <div
+              v-for="(bin, i) in row.bins"
+              :key="i"
+              class="bin"
+              :style="{ width: binWidth(bin, peakOf(row.bins)) }"
+            ></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel bars" v-if="placements.Bars" :style="placements.Bars">
+        <h2>Bars {{ bars?.symbol }}</h2>
+        <div v-for="stream in bars?.streams ?? []" :key="stream.label" class="stream">
+          <h3>{{ stream.label }}</h3>
+          <p v-if="stream.bars.length === 0" class="muted">no bars completed yet</p>
+          <template v-else>
+            <!-- A mark per bar rather than a candle: these charts have no time
+                 axis, so the sequence of ups and downs and the length of each
+                 run is the whole shape. -->
+            <div class="marks">
+              <span
+                v-for="(bar, i) in stream.bars"
+                :key="i"
+                :class="bar.direction >= 0 ? 'up' : 'down'"
+              >{{ bar.direction >= 0 ? '▲' : '▼' }}</span>
+            </div>
+            <p class="muted last-bar">
+              {{ stream.bars[stream.bars.length - 1].open.toFixed(2) }}
+              &rarr; {{ stream.bars[stream.bars.length - 1].close.toFixed(2) }}
+              [{{ stream.bars[stream.bars.length - 1].low.toFixed(2) }}
+              {{ stream.bars[stream.bars.length - 1].high.toFixed(2) }}]
+              <template v-if="stream.bars[stream.bars.length - 1].volume !== undefined">
+                vol {{ stream.bars[stream.bars.length - 1].volume!.toFixed(3) }}
+              </template>
+            </p>
+          </template>
+        </div>
       </section>
 
       <section class="panel watchlist" v-if="placements.Watchlist" :style="placements.Watchlist">

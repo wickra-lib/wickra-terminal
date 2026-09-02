@@ -11,6 +11,14 @@
         651.21,
         651.23
       ],
+      "forming": {
+        "open": 651.17,
+        "high": 651.23,
+        "low": 651.15,
+        "close": 651.23,
+        "volume": 1.29,
+        "timestamp": 0
+      },
       "indicators": [
         {
           "name": "Sma(20)",

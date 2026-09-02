@@ -685,6 +685,11 @@ jobs:
       - name: Build and run the C# example
         run: dotnet run --project examples/csharp -c Release
 
+      # Both scenarios, because the second one is where the interesting failure
+      # is: a rewind that lands on the wrong frame still prints a frame.
+      - name: Run the C# time-machine scenario
+        run: dotnet run --project examples/csharp -c Release -- time-machine
+
   java:
     name: Java on ${{ matrix.os }}
     strategy:
@@ -968,6 +973,20 @@ jobs:
         with:
           r-version: "release"
           use-public-rspm: true
+
+      # The WASM example is a page rather than a script, so what can be checked
+      # without a browser is that its module script parses and that the loader
+      # path it imports is the one wasm-pack writes.
+      - name: WASM example, module script parses
+        shell: bash
+        run: |
+          set -euo pipefail
+          page=examples/wasm/index.html
+          test -f "$page" || { echo "::error::$page is missing"; exit 1; }
+          grep -q 'bindings/wasm/pkg/wickra_terminal_wasm.js' "$page"             || { echo "::error::$page does not import the wasm-pack loader"; exit 1; }
+          sed -n '/<script type="module">/,/<\/script>/p' "$page"             | sed '1d;$d' > "${RUNNER_TEMP:-/tmp}/wasm-example.mjs"
+          node --check "${RUNNER_TEMP:-/tmp}/wasm-example.mjs"
+          echo "checked the WASM example's module script"
 
       - name: Node examples, syntax check
         shell: bash

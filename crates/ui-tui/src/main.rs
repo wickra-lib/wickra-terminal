@@ -86,6 +86,7 @@ fn run(mut app: App) -> Result<(), Box<dyn Error>> {
                 app.terminal.config(),
                 &footer,
                 app.focused_panel,
+                &app.scroll,
             );
         })?;
         if event::poll(Duration::from_millis(100))? {

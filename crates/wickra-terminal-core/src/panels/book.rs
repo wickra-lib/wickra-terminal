@@ -3,14 +3,18 @@
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 
-use super::{Panel, PanelKind, DEFAULT_DEPTH};
+use super::{Panel, PanelKind};
 use crate::source::{SourceId, Symbol};
 use crate::state::AppState;
 use crate::view::{BookView, Level, PanelView};
 
 /// An L2 order book for the focused market.
 #[derive(Debug)]
-pub struct BookPanel;
+pub struct BookPanel {
+    /// How many levels a side this panel carries. A renderer draws what fits
+    /// and scrolls through the rest.
+    pub(crate) depth: usize,
+}
 
 fn levels(side: Vec<(Decimal, Decimal)>) -> Vec<Level> {
     side.into_iter()
@@ -31,8 +35,8 @@ impl Panel for BookPanel {
         let book = match state.get(&(focus.0, focus.1.clone())) {
             Some(st) => BookView {
                 symbol,
-                bids: levels(st.book.top_bids(DEFAULT_DEPTH)),
-                asks: levels(st.book.top_asks(DEFAULT_DEPTH)),
+                bids: levels(st.book.top_bids(self.depth)),
+                asks: levels(st.book.top_asks(self.depth)),
                 spread: st.book.spread().and_then(|s| s.to_f64()),
             },
             None => BookView {
