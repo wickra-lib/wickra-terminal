@@ -178,7 +178,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+      - uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: cargo-deny
@@ -268,7 +268,7 @@ jobs:
 
       - name: Install cargo-semver-checks
         if: steps.baseline.outputs.published == 'yes'
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: cargo-semver-checks
@@ -330,6 +330,25 @@ jobs:
       # which is what Scorecard reads as an unpinned dependency.
       - run: pip install --no-index --find-links bindings/python/dist --force-reinstall --no-deps wickra-terminal
       - run: pytest bindings/python/tests -q
+
+      # Run them, not parse them. `examples-smoke` byte-compiles every example
+      # in five languages, and a script that compiles and dies on its first call
+      # passes that. This job already has the wheel installed, so running them
+      # costs a second and is the only check that says they work.
+      - name: Run the Python examples
+        # One row of the matrix, not all three. The examples exercise the
+        # binding's API, which is the same on every operating system; the part
+        # that is not -- loading the native library -- is already proven on all
+        # three by this job's own test step. Running them everywhere buys
+        # repetition rather than coverage.
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for example in examples/python/*.py; do
+            echo "== $example"
+            python "$example"
+          done
 
   # The Linux wheels are built in manylinux/musllinux containers at release time
   # and were never installed anywhere before being pushed to PyPI, which is
@@ -461,6 +480,26 @@ jobs:
       - name: Run Node tests
         run: cd bindings/node && node --test
 
+      # Run them rather than parse them: `node --check` in `examples-smoke`
+      # passes for a script that dies on its first call, and this job already
+      # has the addon built.
+      - name: Run the Node examples
+        # One row of the matrix, not all three. The examples exercise the
+        # binding's API, which is the same on every operating system; the part
+        # that is not -- loading the native library -- is already proven on all
+        # three by this job's own test step. Running them everywhere buys
+        # repetition rather than coverage.
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd examples/node
+          npm install --no-audit --no-fund
+          for example in *.js; do
+            echo "== $example"
+            node "$example"
+          done
+
   wasm:
     name: WASM
     runs-on: ubuntu-latest
@@ -477,7 +516,7 @@ jobs:
         timeout-minutes: 6
       - uses: ./.github/actions/warm-cargo
       - name: Install wasm-pack
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: wasm-pack
@@ -516,7 +555,7 @@ jobs:
         timeout-minutes: 6
       - uses: ./.github/actions/warm-cargo
       - name: Install wasm-pack
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: wasm-pack
@@ -562,7 +601,7 @@ jobs:
         timeout-minutes: 6
       - uses: ./.github/actions/warm-cargo
       - name: Install cbindgen
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: cbindgen
@@ -651,6 +690,30 @@ jobs:
           go vet ./...
           go test ./...
 
+      # `examples-smoke` parses them with gofmt, which a program that panics on
+      # its first line also survives. The staged library is already here.
+      - name: Run the Go examples
+        # One row of the matrix, not all three. The examples exercise the
+        # binding's API, which is the same on every operating system; the part
+        # that is not -- loading the native library -- is already proven on all
+        # three by this job's own test step. Running them everywhere buys
+        # repetition rather than coverage.
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$WICKRA_GO_LIBDIR:$PATH"
+          export LD_LIBRARY_PATH="$WICKRA_GO_LIBDIR:${LD_LIBRARY_PATH:-}"
+          export DYLD_LIBRARY_PATH="$WICKRA_GO_LIBDIR:${DYLD_LIBRARY_PATH:-}"
+          # One program with two scenarios, not two programs: Go allows one
+          # main per package, so the second is selected by argument. Running
+          # the files one at a time would compile neither.
+          cd examples/go
+          for scenario in "" "time-machine"; do
+            echo "== go run . $scenario"
+            go run . $scenario
+          done
+
   csharp:
     name: C# on ${{ matrix.os }}
     strategy:
@@ -721,6 +784,33 @@ jobs:
       - name: Test the Java binding
         run: mvn -B -f bindings/java test
 
+      # `examples-smoke` compiles them, which is not running them: the binding
+      # loads its native library at first use, so a compiled example can still
+      # fail on its opening line. This job has the library built.
+      - name: Run the Java examples
+        # One row of the matrix, not all three. The examples exercise the
+        # binding's API, which is the same on every operating system; the part
+        # that is not -- loading the native library -- is already proven on all
+        # three by this job's own test step. Running them everywhere buys
+        # repetition rather than coverage.
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP:-/tmp}/java-examples"
+          mkdir -p "$out"
+          # Against the binding's compiled classes rather than its sources, so
+          # what runs is the jar this job just built and tested.
+          classes=bindings/java/target/classes
+          javac --release 22 -cp "$classes" -d "$out" examples/java/*.java
+          for example in examples/java/*.java; do
+            name=$(basename "$example" .java)
+            echo "== $name"
+            # `native.lib.dir` is the property the binding reads; the C ABI was
+            # built into target/debug two steps above.
+            java --enable-native-access=ALL-UNNAMED               -Dnative.lib.dir=target/debug               -cp "$classes:$out" "$name"
+          done
+
   r:
     name: R on ${{ matrix.os }}
     strategy:
@@ -753,7 +843,7 @@ jobs:
       # links -lwickra_terminal from WKTERM_LIB; build the library first.
       - name: Build the C ABI library
         run: cargo build -p wickra-terminal-c --release
-      - uses: r-lib/actions/setup-r@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2.12.1
+      - uses: r-lib/actions/setup-r@465b7d8e732ca3921382b1674c59bada9cbf3399 # v2.13.0
         with:
           r-version: "release"
           use-public-rspm: true
@@ -778,6 +868,22 @@ jobs:
           R CMD INSTALL bindings/r
           Rscript bindings/r/tests/run_tests.R
 
+          # Run them rather than parse them. `examples-smoke` calls parse(),
+          # which reads a file without evaluating a line of it; the package is
+          # installed here, so these actually execute.
+          #
+          # One row of the matrix, for the reason the other four jobs give: the
+          # examples exercise the binding's API, and loading the library is
+          # already proven on all three by the suite above. The guard is in the
+          # shell rather than an `if:` because the loader path this needs is set
+          # inside this step.
+          if [ "${RUNNER_OS:-Linux}" = "Linux" ]; then
+            for example in examples/r/*.R; do
+              echo "== $example"
+              Rscript "$example"
+            done
+          fi
+
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
@@ -799,7 +905,7 @@ jobs:
         timeout-minutes: 6
       - uses: ./.github/actions/warm-cargo
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: cargo-llvm-cov
@@ -882,7 +988,7 @@ jobs:
         with:
           working-directory: fuzz
       - name: Install cargo-fuzz
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: cargo-fuzz
@@ -949,6 +1055,14 @@ jobs:
   # runs). It does NOT prove an example works -- the C example is built and run
   # by the c-abi job, the C# one by the csharp job, and the Rust one is a
   # workspace member, so `cargo build --workspace` compiles it.
+  # The parse gate, and only that. Every example in a language with a binding job
+  # is now RUN by that job, which already has the binding built -- a byte-compile
+  # passes for a script that dies on its first call, and five languages were
+  # checked that way and no further. What is left here is what no job can run:
+  # the WASM example is a page needing a browser, and a parse of its module
+  # script plus a check that it imports the loader wasm-pack writes is the most
+  # that can be said without one. The rest stays as a cheap second opinion that
+  # fails before the heavier jobs do.
   examples-smoke:
     name: Examples (syntax smoke)
     runs-on: ubuntu-latest
@@ -969,7 +1083,7 @@ jobs:
           distribution: temurin
           java-version: "25"
 
-      - uses: r-lib/actions/setup-r@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2.12.1
+      - uses: r-lib/actions/setup-r@465b7d8e732ca3921382b1674c59bada9cbf3399 # v2.13.0
         with:
           r-version: "release"
           use-public-rspm: true
