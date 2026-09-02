@@ -179,6 +179,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   trailing space cannot match at the end of the text, so a dangling `vs` never
   splits and is reported as the parameter it is not. A branch no input can take
   is not defence; it is an untested path that reads like one.
+- `wickra-core` resolves to 1.0.4. The lockfile sat on 1.0.1 against a published
+  1.0.4, and the drift notice reported it every Monday. The registry did not move
+  with it and was not supposed to: wickra-core carried the same 514 indicator
+  modules at 1.0.1, regenerating against 1.0.4 produces the same 497 registered
+  indicators and the same file, and the note that claimed ten unseen indicators
+  upstream was a miscount. It is corrected where it was written rather than left
+  to send the next reader looking for them.
 - README section headings follow the fixed order the repository blueprint sets:
   `## Performance` is now `## Benchmarks`, and `## Building from source` is now
   `## Building everything from source`.

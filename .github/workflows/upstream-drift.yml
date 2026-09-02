@@ -1,18 +1,23 @@
 name: Upstream drift
 
 # The registry is generated from a snapshot of wickra-core's indicator set, and
-# nothing watched whether that snapshot had fallen behind. It had: the lockfile
-# sat on 1.0.1 while crates.io carried 1.0.4, so ten indicators existed upstream
-# that the generator had never seen — and the repository's own guard,
-# `the_registry_has_not_silently_shrunk`, catches shrinking only. Growth upstream
-# was invisible by construction.
+# nothing watched whether that snapshot had fallen behind. The repository's own
+# guard, `the_registry_has_not_silently_shrunk`, catches shrinking only; growth
+# upstream is invisible to it by construction, which is what this watches.
+#
+# It has not yet had anything to report. When the lockfile sat on 1.0.1 against a
+# published 1.0.4, this comment said ten indicators existed upstream that the
+# generator had never seen. They did not: wickra-core carried the same 514
+# modules at 1.0.1 as at 1.0.4, and regenerating against either produced the same
+# 497 registered indicators. A version behind is not a catalogue behind, and
+# saying so sent a reader after ten indicators that were not there.
 #
 # This is a notice rather than a gate, and that is deliberate rather than
-# lenient. Following upstream is blocked on a different repository:
-# wickra-exchange pins wickra-core 0.9, so bumping this side to 1.x while that
-# stands compiles two copies of the indicator library into one binary. A check
-# that failed every pull request until somebody else's release landed would be
-# turned off within a week, and then it would be watching nothing.
+# lenient. A version bump here can be blocked on a different repository:
+# wickra-exchange pins wickra-core 0.9, so its copy is compiled alongside this
+# one whatever this side resolves to. A check that failed every pull request
+# until somebody else's release landed would be turned off within a week, and
+# then it would be watching nothing.
 #
 # So it runs on a schedule, opens one issue and keeps editing it. The number in
 # that issue is the thing that must not drift quietly; a red pull request is not.
