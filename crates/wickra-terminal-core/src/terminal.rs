@@ -2013,4 +2013,131 @@ mod tests {
             "the error should name it: {err}"
         );
     }
+
+    /// The layout can be changed while the terminal runs.
+    ///
+    /// It was read once in `new` and never again, so a terminal opened with the
+    /// wrong panels had to be restarted with a different config -- which is not
+    /// something a person does while watching a market move.
+    #[test]
+    fn a_panel_can_be_added_removed_and_moved_at_run_time() {
+        let mut config = synth_config();
+        config.layout.panels = vec![PanelSpec::new(
+            PanelKind::Chart,
+            RectSpec::new(0, 0, 100, 50),
+        )];
+        let mut terminal = Terminal::new(&config).expect("the config builds");
+        terminal
+            .subscribe(0, &Symbol::new("BTC", "USDT"))
+            .expect("the synth source accepts");
+        assert_eq!(terminal.frame().panels.len(), 1);
+
+        let at = terminal.add_panel(&PanelSpec::new(
+            PanelKind::Book,
+            RectSpec::new(0, 50, 100, 50),
+        ));
+        assert_eq!(at, 1, "a panel is appended, not inserted");
+        let panels = terminal.frame().panels;
+        assert_eq!(panels.len(), 2);
+        assert!(matches!(panels[1], PanelView::Book(_)), "{:?}", panels[1]);
+
+        // The config moves with it, because the config is what a renderer reads
+        // to place the panels a frame carries.
+        assert_eq!(terminal.config().layout.panels.len(), 2);
+
+        terminal
+            .move_panel(1, RectSpec::new(50, 0, 50, 100))
+            .expect("panel 1 exists");
+        assert_eq!(
+            terminal.config().layout.panels[1].rect,
+            RectSpec::new(50, 0, 50, 100)
+        );
+
+        terminal.remove_panel(0).expect("panel 0 exists");
+        let panels = terminal.frame().panels;
+        assert_eq!(panels.len(), 1);
+        assert!(matches!(panels[0], PanelView::Book(_)), "the wrong panel went");
+        assert_eq!(terminal.config().layout.panels.len(), 1);
+    }
+
+    /// An index past the end is refused, and says how many panels there are.
+    ///
+    /// A renderer holds indices between frames, and a layout that shrank under
+    /// it must get an error rather than silently act on the wrong panel.
+    #[test]
+    fn a_panel_command_past_the_end_is_refused() {
+        let mut config = synth_config();
+        config.layout.panels = vec![PanelSpec::new(PanelKind::Chart, RectSpec::new(0, 0, 100, 100))];
+        let mut terminal = Terminal::new(&config).expect("the config builds");
+
+        let err = terminal.remove_panel(1).expect_err("there is no panel 1");
+        assert!(err.to_string().contains("no panel at 1"), "{err}");
+        assert!(err.to_string().contains("has 1"), "{err}");
+
+        let err = terminal
+            .move_panel(9, RectSpec::new(0, 0, 10, 10))
+            .expect_err("there is no panel 9");
+        assert!(err.to_string().contains("no panel at 9"), "{err}");
+
+        // And the layout is untouched by either refusal.
+        assert_eq!(terminal.config().layout.panels.len(), 1);
+    }
+
+    /// The three panel commands reach the same code over the JSON boundary.
+    #[test]
+    fn the_panel_commands_cross_the_boundary() {
+        let mut config = synth_config();
+        config.layout.panels = vec![PanelSpec::new(PanelKind::Chart, RectSpec::new(0, 0, 100, 100))];
+        let mut terminal = Terminal::new(&config).expect("the config builds");
+        terminal
+            .subscribe(0, &Symbol::new("BTC", "USDT"))
+            .expect("the synth source accepts");
+
+        let frame = terminal
+            .command_json(
+                r#"{"type":"AddPanel","spec":{"kind":"Tape","rect":{"x":0,"y":0,"w":50,"h":50}}}"#,
+            )
+            .expect("AddPanel is accepted");
+        assert!(frame.contains(r#""panel":"tape""#), "{frame}");
+
+        terminal
+            .command_json(r#"{"type":"MovePanel","index":1,"rect":{"x":50,"y":0,"w":50,"h":100}}"#)
+            .expect("MovePanel is accepted");
+        assert_eq!(
+            terminal.config().layout.panels[1].rect,
+            RectSpec::new(50, 0, 50, 100)
+        );
+
+        let frame = terminal
+            .command_json(r#"{"type":"RemovePanel","index":1}"#)
+            .expect("RemovePanel is accepted");
+        assert!(!frame.contains(r#""panel":"tape""#), "{frame}");
+
+        let err = terminal
+            .command_json(r#"{"type":"RemovePanel","index":7}"#)
+            .expect_err("there is no panel 7");
+        assert!(err.to_string().contains("no panel at 7"), "{err}");
+    }
+
+    /// A panel added with a depth carries it, the way a configured one does.
+    #[test]
+    fn an_added_panel_honours_the_depth_it_was_given() {
+        let (sym, mut config) = replay_config();
+        config.layout.panels = vec![PanelSpec::new(PanelKind::Chart, RectSpec::new(0, 0, 100, 100))];
+        let mut terminal = Terminal::new(&config).expect("the config builds");
+        terminal.subscribe(0, &sym).expect("the replay accepts");
+        for _ in 0..3 {
+            terminal.tick();
+        }
+
+        let mut deep = PanelSpec::new(PanelKind::Tape, RectSpec::new(0, 0, 100, 100));
+        deep.depth = Some(1);
+        terminal.add_panel(&deep);
+
+        let panels = terminal.frame().panels;
+        let PanelView::Tape(tape) = &panels[1] else {
+            panic!("the added panel is a tape")
+        };
+        assert_eq!(tape.prints.len(), 1, "the depth was ignored");
+    }
 }
