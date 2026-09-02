@@ -175,6 +175,7 @@ impl Default for Keybinds {
             ("scroll_up", "up"),
             ("scroll_down", "down"),
             ("save_recording", "w"),
+            ("set_recording", "r"),
         ]
         .into_iter()
         .map(|(a, k)| (a.to_string(), k.to_string()))

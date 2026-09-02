@@ -79,6 +79,11 @@ export interface WatchRow {
   source: number
   symbol: string
   last: number
+  bid: number
+  ask: number
+  volume: number
+  /** Percent move from the first price the core folded for this market. */
+  change: number
 }
 
 export interface WatchlistView {

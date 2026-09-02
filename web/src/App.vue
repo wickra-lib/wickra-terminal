@@ -17,8 +17,9 @@ import { placementsFor, readLayout } from './layout'
 import { binWidth, peakOf } from './profile'
 import { parseIndicator } from './indicator'
 import { actionFor, isTyping, readKeybinds, type Keybinds } from './keybinds'
+import { changeClass, compactVolume, spread } from './watchlist'
 import { drawChart } from './render/chart'
-import { openBinanceFeed } from './binance'
+import { backfill, openBinanceFeed, type FeedEvent, type FeedState } from './binance'
 
 const CONFIG_KEY = 'wickra-terminal-config'
 
@@ -76,6 +77,11 @@ const symbolField = ref<HTMLInputElement | null>(null)
 const sourceField = ref<HTMLInputElement | null>(null)
 const timeframeField = ref<HTMLInputElement | null>(null)
 const catalogueField = ref<HTMLInputElement | null>(null)
+const recordField = ref<HTMLInputElement | null>(null)
+/** The recorder's capacity as typed, empty meaning stopped. */
+const recordCapacity = ref('')
+/** Whether this session is recording, so the export control can say so. */
+const recording = ref(false)
 
 let terminal: Terminal | null = null
 let timer: number | undefined
@@ -83,6 +89,8 @@ let timer: number | undefined
 let nextSourceId = 0
 // Cleanup functions for open browser-side exchange WebSocket bridges.
 const feedBridges: Array<() => void> = []
+/** What the browser's live bridge is doing, so the header can say which. */
+const feedState = ref<FeedState>('closed')
 
 function parseSourceSpec(shorthand: string): Record<string, unknown> | null {
   const idx = shorthand.indexOf(':')
@@ -104,6 +112,11 @@ function parseSourceSpec(shorthand: string): Record<string, unknown> | null {
 // `live:binance:BASE/QUOTE` — the WASM core cannot open sockets, so the browser
 // opens the Binance stream itself and bridges it into a `Manual` source through
 // the `Feed` command. Returns true if it handled the shorthand.
+//
+// Binance only. The native source reaches ten venues through `wickra-exchange`,
+// and each speaks a stream dialect that would have to be written again here, so
+// the limit is said out loud rather than discovered on the second venue anyone
+// tries.
 function addLiveBridge(shorthand: string): boolean {
   if (!terminal || !shorthand.startsWith('live:')) {
     return false
@@ -113,24 +126,48 @@ function addLiveBridge(shorthand: string): boolean {
   const venue = j < 0 ? rest : rest.slice(0, j)
   const market = j < 0 ? '' : rest.slice(j + 1)
   if (venue !== 'binance' || !market) {
-    status.value = 'browser live supports only live:binance:BASE/QUOTE'
+    status.value =
+      'the browser feed is Binance spot only (live:binance:BASE/QUOTE); the native terminal reaches ten venues'
     return true
   }
   const id = nextSourceId
   nextSourceId += 1
   terminal.command(JSON.stringify({ type: 'AddSource', spec: 'Manual' }))
   terminal.command(JSON.stringify({ type: 'Subscribe', source: id, symbol: market }))
+
+  /** Hand one event to the core, ignoring anything that arrives after teardown. */
+  const push = (event: FeedEvent): void => {
+    try {
+      terminal?.command(JSON.stringify({ type: 'Feed', source: id, event }))
+    } catch {
+      /* terminal gone */
+    }
+  }
+
   try {
-    const close = openBinanceFeed(market, (event) => {
-      // Late messages can arrive after the terminal is torn down; ignore them.
-      try {
-        terminal?.command(JSON.stringify({ type: 'Feed', source: id, event }))
-      } catch {
-        /* terminal gone */
+    const handle = openBinanceFeed(market, push, (state) => {
+      feedState.value = state
+      if (state === 'reconnecting') {
+        // A dropped socket used to leave the chart frozen at the last print with
+        // nothing said. A frozen chart that says it is frozen is a different
+        // product from one that does not.
+        status.value = `live binance ${market}: reconnecting`
       }
     })
-    feedBridges.push(close)
+    feedBridges.push(handle.close)
     status.value = `live binance ${market} on source ${id}`
+
+    // History before the stream, the way a native subscription is seeded from
+    // the venue's klines. Best effort and asynchronous: a market with no
+    // history, or a REST call that fails, means a terminal that starts empty
+    // rather than one that refuses to open the market. Late live prints
+    // interleaving with the seed is harmless -- the fold is per event and the
+    // bar builder is driven by timestamps, not by arrival order.
+    void backfill(market).then((seed) => {
+      for (const event of seed) {
+        push(event)
+      }
+    })
   } catch (err) {
     status.value = `live failed: ${String(err)}`
   }
@@ -211,6 +248,81 @@ function removeIndicator(label: string): void {
   if (send({ type: 'RemoveIndicator', label })) {
     status.value = `removed ${label}`
   }
+}
+
+/** Drop a source and everything it owns.
+ *
+ * `RemoveSource` is in the boundary and bound in the TUI, and the browser had
+ * no control for it: a source added here could be subscribed and unsubscribed
+ * but never closed, so a mistyped venue stayed for the life of the tab.
+ */
+function removeSource(source: number): void {
+  if (send({ type: 'RemoveSource', source })) {
+    status.value = `removed source ${source}`
+  }
+}
+
+/** Arm the recorder with a capacity, or stop it with an empty field.
+ *
+ * `SetRecording` is documented in all nine binding READMEs and was bound in
+ * neither renderer, so the only way to record was a config field read once at
+ * start-up -- which is the one thing nobody can reach when the market has just
+ * done something worth keeping.
+ */
+function applyRecording(): void {
+  const text = recordCapacity.value.trim()
+  if (text === '') {
+    if (send({ type: 'SetRecording', capacity: null })) {
+      recording.value = false
+      status.value = 'recording off'
+    }
+    return
+  }
+  const capacity = Number(text)
+  if (!Number.isInteger(capacity) || capacity <= 0) {
+    // Zero is not "off": it is a ring that drops everything it is handed, and a
+    // control reporting "recording" against one would promise an empty file.
+    status.value = 'capacity must be a whole number above zero, or empty to stop'
+    return
+  }
+  if (send({ type: 'SetRecording', capacity })) {
+    recording.value = true
+    status.value = `recording, keeping ${capacity} events`
+  }
+}
+
+/** Hand the recorded events to the browser as the file `Replay` takes.
+ *
+ * Through `ExportRecording` rather than serialising here, for the same reason
+ * the TUI does: the format is the core's to decide, and this way the file is
+ * byte-for-byte what every other binding produces.
+ */
+function saveRecording(): void {
+  if (!terminal) {
+    return
+  }
+  let json: string
+  try {
+    json = terminal.command(JSON.stringify({ type: 'ExportRecording' }))
+  } catch (err) {
+    status.value = String(err)
+    return
+  }
+  const events = JSON.parse(json) as unknown[]
+  if (events.length === 0) {
+    status.value = recording.value ? 'nothing recorded yet' : 'recording is off'
+    return
+  }
+  const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
+  const link = document.createElement('a')
+  link.href = url
+  // Named by the wall clock rather than one path, because the thing a person
+  // saves is a moment they want to keep and the next click must not take it
+  // away.
+  link.download = `wickra-recording-${Date.now()}.json`
+  link.click()
+  URL.revokeObjectURL(url)
+  status.value = `wrote ${events.length} events`
 }
 
 function applyTimeframe(): void {
@@ -336,6 +448,23 @@ function runAction(action: string): boolean {
     case 'add_symbol':
       symbolField.value?.focus()
       return true
+    case 'set_recording':
+      recordField.value?.focus()
+      return true
+    case 'save_recording':
+      saveRecording()
+      return true
+    case 'remove_source': {
+      // The source that owns the focused market, the way `remove_symbol` finds
+      // the market itself: the watchlist row is where the two are paired.
+      const row = (watchlist.value?.rows ?? []).find((r) => r.symbol === focusedSymbol.value)
+      if (row) {
+        removeSource(row.source)
+      } else {
+        status.value = 'no source to remove'
+      }
+      return true
+    }
     case 'remove_symbol': {
       const row = (watchlist.value?.rows ?? []).find((r) => r.symbol === focusedSymbol.value)
       if (row) {
@@ -344,9 +473,9 @@ function runAction(action: string): boolean {
       return true
     }
     default:
-      // quit, the panel-focus pair and the scroll pair: a browser tab is not
-      // ours to close, and the panels are scrollable boxes the browser already
-      // drives. Reporting them as unhandled leaves the key to the browser.
+      // quit and the panel-focus and scroll pairs: a browser tab is not ours to
+      // close, and the panels are scrollable boxes the browser already drives.
+      // Reporting them as unhandled leaves the key to the browser.
       return false
   }
 }
@@ -457,6 +586,10 @@ onBeforeUnmount(() => {
     <header class="bar">
       <strong>Wickra Terminal</strong>
       <span class="muted">web renderer</span>
+      <span
+        v-if="feedState !== 'closed'"
+        :class="feedState === 'open' ? 'muted' : 'reconnecting'"
+      >{{ feedState === 'open' ? 'live' : 'reconnecting…' }}</span>
       <label>seed <input type="number" v-model.number="seed" min="0" /></label>
       <label>symbol <input type="text" v-model="symbol" /></label>
       <button @click="restart">restart</button>
@@ -468,7 +601,7 @@ onBeforeUnmount(() => {
           ref="sourceField"
           type="text"
           v-model="sourceShorthand"
-          placeholder="synth:2 | live:binance:ETH/USDT | replay:[…]"
+          placeholder="synth:2 | live:binance:ETH/USDT (Binance only) | replay:[…]"
         />
       </label>
       <button @click="addSource">add</button>
@@ -503,6 +636,19 @@ onBeforeUnmount(() => {
       <span class="muted" v-if="replayLength > 0">{{ replayCursor }}/{{ replayLength }}</span>
       <span class="muted" v-else>not replayable</span>
       <button @click="seekBy(1)" :disabled="replayLength === 0" title="advance">&#9654;</button>
+
+      <label>record
+        <input
+          ref="recordField"
+          type="text"
+          v-model="recordCapacity"
+          size="6"
+          placeholder="events"
+        />
+      </label>
+      <button @click="applyRecording">{{ recording ? 'restart' : 'start' }}</button>
+      <button @click="saveRecording">save</button>
+      <span class="muted" v-if="recording">recording</span>
     </div>
 
     <div class="bar catalogue" v-if="catalogue.length > 0">
@@ -619,7 +765,11 @@ onBeforeUnmount(() => {
         <table>
           <tr v-for="(row, i) in watchlist?.rows ?? []" :key="i">
             <td>[{{ row.source }}]</td><td>{{ row.symbol }}</td><td>{{ row.last.toFixed(2) }}</td>
-            <td><button class="x" @click="unsubscribe(row.source, row.symbol)">×</button></td>
+            <td :class="changeClass(row.change)">{{ row.change.toFixed(2) }}%</td>
+            <td>{{ spread(row) }}</td>
+            <td>{{ compactVolume(row.volume) }}</td>
+            <td><button class="x" @click="unsubscribe(row.source, row.symbol)" title="unsubscribe">×</button></td>
+            <td><button class="x" @click="removeSource(row.source)" title="drop the source">⌫</button></td>
           </tr>
         </table>
       </section>
