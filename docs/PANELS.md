@@ -47,13 +47,29 @@ Each entry in `indicators` carries its `name` (the label from its spec,
 list for the multi-output ones, and an optional `series` of its own. See
 [INDICATORS.md](INDICATORS.md).
 
+`value` is the *first* field of a multi-output indicator, so that a consumer
+wanting one line does not have to know which field that is -- and both reference
+renderers read only it for a while, which drew `Macd(12,26,9)=1.42` and dropped
+the signal line and the histogram. They read `fields` now and write
+`Macd(12,26,9)[macd=1.42 signal=1.25 histogram=0.17]`, the same shape in both,
+because one indicator read in two places should not look like two.
+
 > Both reference renderers draw the candles and report the indicators as
 > numbers, rather than drawing indicator lines over the candles. An indicator's
 > `series` is sampled once per tick and the bars are one per bar, so the two do
 > not share an x-axis; an average drawn on the candle axis would sit near, but
 > not on, the bar it was computed from. Overlays are drawn only in the
 > before-the-first-bar fallback, where the price series and the indicator series
-> do share an axis.
+> do share an axis -- in **both** renderers, which was true of the browser alone
+> for a while: the terminal drew a single row of block glyphs from the same
+> frame the browser drew lines from.
+>
+> An overlay is drawn only where its range overlaps the price's. Without that
+> test an `Rsi` running 0..100 would be plotted on a chart of a market near
+> twenty thousand and drawn as a flat line at the bottom -- present, meaningless,
+> and impossible to tell from a broken indicator. The core does not declare which
+> readings are prices, so the ranges are what says it, and both renderers apply
+> the same rule.
 
 **`book`** — `symbol`, `bids` and `asks` (up to 12 levels each, best first, every
 level a `price` and a `quantity`), and `spread` (`null` until both sides have a
@@ -91,6 +107,34 @@ in each renderer, so the terminal and the browser cannot derive it differently.
 Every number crosses the boundary as a JSON number. Internally prices and
 quantities are `Decimal`; the conversion happens here, at the edge, because a
 view-model is drawn rather than compared.
+
+## Changing the layout while it runs
+
+`Config.layout.panels` was read once when the terminal was built and never
+again, so a terminal opened with the wrong panels had to be restarted with a
+different config -- which is not something a person does while watching a market
+move. Three commands change it:
+
+```json
+{"type":"AddPanel","spec":{"kind":"Book","rect":{"x":50,"y":0,"w":50,"h":100},"depth":24}}
+{"type":"MovePanel","index":1,"rect":{"x":0,"y":50,"w":100,"h":50}}
+{"type":"RemovePanel","index":1}
+```
+
+A panel is named by its index in the layout, counting from zero, and `AddPanel`
+appends rather than inserting: the index is how the other two name their target,
+and inserting would renumber the ones a caller is already holding. An index past
+the end is refused with the count, so a renderer that kept an index across a
+frame in which the layout shrank gets an error rather than acting on the wrong
+panel.
+
+`MovePanel` changes the rectangle and nothing else. A panel's depth is what it
+was built with, so changing that means building a different panel -- a remove
+and an add, which says plainly that the old one's state goes with it.
+
+The config moves with the layout, because the config is what a renderer reads to
+place the panels a frame carries. A host that persists its config after a
+session gets the layout the session ended on.
 
 ## Focus
 

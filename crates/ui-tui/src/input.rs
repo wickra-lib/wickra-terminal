@@ -48,6 +48,12 @@ pub(crate) enum Action {
     SaveRecording,
     /// Prompt for the recorder's capacity, or for nothing to stop it.
     SetRecording,
+    /// Prompt for a panel to place on the layout.
+    AddPanel,
+    /// Take the focused panel off the layout.
+    RemovePanel,
+    /// Prompt for a new rectangle for the focused panel.
+    MovePanel,
     /// No bound action for this key.
     None,
 }
@@ -100,6 +106,9 @@ pub(crate) fn map_key(key: KeyEvent, binds: &Keybinds) -> Action {
         Some("scroll_down") => Action::ScrollDown,
         Some("save_recording") => Action::SaveRecording,
         Some("set_recording") => Action::SetRecording,
+        Some("add_panel") => Action::AddPanel,
+        Some("remove_panel") => Action::RemovePanel,
+        Some("move_panel") => Action::MovePanel,
         _ => Action::None,
     }
 }
@@ -172,6 +181,9 @@ mod tests {
             (KeyCode::Down, Action::ScrollDown),
             (KeyCode::Char('w'), Action::SaveRecording),
             (KeyCode::Char('r'), Action::SetRecording),
+            (KeyCode::Char('p'), Action::AddPanel),
+            (KeyCode::Char('o'), Action::RemovePanel),
+            (KeyCode::Char('m'), Action::MovePanel),
         ] {
             assert_eq!(map_key(key(code), &binds), expected, "for {code:?}");
         }

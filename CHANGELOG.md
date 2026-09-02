@@ -91,6 +91,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now runs its examples in the job that already has the binding built, which
   costs a second and is the only check that says they work. What is left in the
   parse gate is the WASM example, which is a page and needs a browser.
+- The README's performance table and `BENCHMARKS.md` are checked against each
+  other. Both are published claims about how fast this is, measured once and
+  written twice, and a re-measurement that updated one would leave the repository
+  asserting two speeds for the same path -- with the README, which a reader meets
+  first, the one that would be believed.
+- The bounds `docs/PANELS.md` and `docs/STREAMING.md` state are checked against
+  the constants they restate. Those numbers are a contract a reader plans a layout around -- what a
+  panel carries by default and how much is behind it to scroll to -- and they
+  were written once in the source and again in the table, which is exactly how
+  the indicator count, the binding command tables and the fuzz target list each
+  drifted.
+- The price history and the tape ring have named bounds. Each was a bare number
+  in the code -- the price history three times, the tape once -- while both
+  documents state them as ceilings a reader is entitled to trust, and every
+  other bound in that file has been named all along.
+- `THREAT_MODEL.md` lists what is fuzzed correctly, and a test keeps it that
+  way. It named four of the five targets and mapped two of the four to the wrong
+  one -- and the target it left out, `registry_drive`, is the one that found a
+  real fault: an indicator period of 10^20 cast cleanly to a `usize`, the
+  indicator asked for a `Vec` that size, and the process aborted on a panic no
+  caller could catch. A promise about what is tested is worth exactly what
+  checks it, so `every_fuzz_target_is_named_in_the_threat_model` now does, in
+  both directions -- a target missing from the list, and a name in the list with
+  no target behind it.
+- The terminal draws indicator overlays in the before-the-first-bar fallback,
+  which the browser has always done. From one frame the browser drew the price
+  and its indicator lines on a shared axis and the terminal drew a single row of
+  block glyphs -- the same data showing as two different products. Both plot the
+  price and every overlay that shares its scale now, and both apply the same
+  rule for which those are: an `Rsi` running 0..100 is not drawn on a chart of a
+  market near twenty thousand, where it would be a flat line at the bottom,
+  indistinguishable from a broken indicator. The overlay colours follow the
+  browser's order, so the second indicator added is the second colour in both.
+- Both renderers show every output of a multi-output indicator. `value` is the
+  first field, so a readout that showed only it drew `Macd(12,26,9)=1.42` and
+  dropped the signal line and the histogram -- the two numbers the indicator
+  exists to be read against. The core had carried them across the boundary all
+  along, two binding suites tested them, and neither renderer drew them. Both
+  write the same shape now, because one indicator read in two places should not
+  look like two.
+- The one piece of policy inside the TUI event loop is testable now. What a key
+  means depends on whether a prompt is open -- a prompt takes the keyboard whole,
+  because mapping keys to actions while one is open fires `quit` for the `q` in a
+  symbol -- and that decision sat four levels deep in a function no test can
+  enter, needing a terminal and an event stream to reach. `on_key` needs neither,
+  and five tests now cover the prompt, the action path, and the press filter that
+  keeps a held key from repeating its action on every report the terminal sends.
+- The book panel's empty-market branch and the terminal guard have tests. The
+  guard is the one piece the renderer must get right however the event loop
+  exits, and it was at zero.
+- The browser writes a changed layout back to `localStorage`. `web/README.md`
+  said the layout is persisted, and the config was written once and never again
+  -- so a panel added while the terminal ran was gone on the next reload, which
+  made the panel controls something to use and then lose. The whole config is
+  rewritten rather than a layout stored beside it: two places holding a layout is
+  one more than can be kept in step. A config that does not parse is handed back
+  unchanged rather than replaced, so a display fault cannot become data loss.
+- A `host_feed` scenario in the golden corpus. `Feed` was driven by two binding
+  suites and the runtime indicator commands by none of the corpus at all, so the
+  frames they produce were never held to byte parity across languages -- a
+  binding that serialised a fed event or a changed indicator set differently
+  would have passed everywhere. The corpus now reaches fifteen of the nineteen
+  commands; the four it does not are the four it cannot, because each answers
+  with something other than a frame and the corpus records the last answer as
+  one. Those are driven per binding instead, and
+  `every_documented_command_is_driven_by_a_binding_suite` holds the whole set.
+- The README and the cookbook say what the two renderers do not share. Live
+  market data reaches ten venues natively and one in the browser, which was true
+  before and written nowhere a user would meet it. The cookbook gains recipes for
+  the layout commands and the recorder.
+- The layout can be changed while the terminal runs. `Config.layout.panels` was
+  read once when the terminal was built and never again, in both renderers, so a
+  terminal opened with the wrong panels had to be restarted with a different
+  config -- which is not something a person does while watching a market move.
+  `AddPanel`, `RemovePanel` and `MovePanel` change it, and a panel is named by
+  its index: `AddPanel` appends rather than inserting, because inserting would
+  renumber the ones a caller already holds, and an index past the end is refused
+  with the count rather than acted on.
+- The renderers bind them in their own idiom. The TUI has a focused panel, so
+  `p` adds one and focuses it, `o` takes the focused one off and `m` moves it,
+  each from the same shorthand the source and indicator prompts use --
+  `Book 70 0 30 35`, or `Tape 0 70 100 30 48` with the depth. The browser has no
+  focused panel, so it binds the add to its panel field and removes with the `x`
+  on the panel's own heading; `move_panel` joins the panel-focus pair it already
+  declines, and the guard requires that refusal to be written down rather than
+  inferred from silence.
+- A rectangle that runs off the grid is refused rather than drawn clipped, in
+  both renderers. It is a typo every time, and trimming it silently would leave
+  a panel the config says is one size and the screen says is another.
+- The renderers' own per-panel state follows the layout now. The TUI kept one
+  scroll offset per panel and a focused-panel index, both sized once at
+  construction -- an invariant that held for exactly as long as the layout could
+  not change, and that an earlier change in this cycle leaned on. `sync_panels`
+  restores both after every layout change.
+- A `panels` scenario in the golden corpus, so the nine language suites hold the
+  three commands to byte parity: a panel added with a depth, moved, and another
+  taken off, with the frame recorded after each.
 - Repository scaffolding: Cargo workspace, supply-chain configuration
   (`deny.toml`, `osv-scanner.toml`), lint configuration, `repo-metadata.toml`,
   and dual `MIT OR Apache-2.0` licensing.

@@ -462,16 +462,63 @@ mod tests {
         // so a NaN could not raise the high -- but it could open a bar, and then
         // open, high, low and close were all NaN.
         let mut builder = CandleBuilder::new(Timeframe::parse("1m").unwrap());
+
+        // Refused before a bar exists, which is the case the guard was written
+        // for: a NaN must not be the price that opens one.
         assert!(builder.update(f64::NAN, 1.0, 0).is_none());
         assert!(builder.update(f64::INFINITY, 1.0, 1_000).is_none());
-        let bar = builder.partial();
-        let ok = bar.is_none_or(|bar| {
-            bar.open.is_finite()
-                && bar.high.is_finite()
-                && bar.low.is_finite()
-                && bar.close.is_finite()
-        });
-        assert!(ok, "a non-finite price reached a bar");
+        assert!(
+            builder.partial().is_none(),
+            "a non-finite price opened a bar"
+        );
+
+        // And refused into a bar that already exists. Asserting only the case
+        // above passes for a builder holding nothing at all, which is what this
+        // test used to do -- it inspected a bar that was never there.
+        builder.update(100.0, 1.0, 2_000);
+        assert!(builder.update(f64::NAN, 1.0, 3_000).is_none());
+        assert!(builder.update(f64::NEG_INFINITY, 1.0, 4_000).is_none());
+        let bar = builder.partial().expect("the good price opened a bar");
+        assert!(bar.open.is_finite(), "open: {}", bar.open);
+        assert!(bar.high.is_finite(), "high: {}", bar.high);
+        assert!(bar.low.is_finite(), "low: {}", bar.low);
+        assert!(bar.close.is_finite(), "close: {}", bar.close);
+    }
+
+    /// A timeframe whose milliseconds do not fit is refused, not wrapped.
+    ///
+    /// The count parses as an `i64` before it is multiplied by the unit, so a
+    /// large enough count overflows the product -- and a wrapped duration would
+    /// be a negative or tiny timeframe that every later bucket computation
+    /// silently believes.
+    #[test]
+    fn a_timeframe_whose_duration_overflows_is_refused() {
+        let err = Timeframe::parse("9223372036854775807d").expect_err("the product overflows");
+        assert!(err.to_string().contains("overflows"), "{err}");
+    }
+
+    /// The builder reports the timeframe it bars at.
+    ///
+    /// Read by anything that has a builder and needs to know the bar size
+    /// without carrying the config alongside it.
+    #[test]
+    fn a_builder_reports_its_timeframe() {
+        let timeframe = Timeframe::parse("4h").expect("4h is a timeframe");
+        assert_eq!(CandleBuilder::new(timeframe).timeframe(), timeframe);
+    }
+
+    /// `bucket` panics where `checked_bucket` answers `None`.
+    ///
+    /// Documented rather than hidden: the opening timestamp of a bar within one
+    /// bar of `i64::MIN` is not representable, and a saturated answer would not
+    /// be aligned to the timeframe -- which every caller relies on. The fold
+    /// uses `checked_bucket`; this is the contract for everyone else.
+    #[test]
+    #[should_panic(expected = "no representable bar opening")]
+    fn bucketing_the_far_past_panics_rather_than_misaligning() {
+        let timeframe = Timeframe::parse("1m").expect("1m is a timeframe");
+        assert!(timeframe.checked_bucket(i64::MIN).is_none());
+        let _ = timeframe.bucket(i64::MIN);
     }
 
     #[test]

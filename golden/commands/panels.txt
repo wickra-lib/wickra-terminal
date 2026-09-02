@@ -1,0 +1,13 @@
+{"type":"Subscribe","source":0,"symbol":"BTC/USDT"}
+{"type":"Tick"}
+{"type":"Tick"}
+{"type":"AddPanel","spec":{"kind":"Tape","rect":{"x":0,"y":50,"w":100,"h":50},"depth":3}}
+{"type":"Tick"}
+{"type":"Tick"}
+{"type":"MovePanel","index":1,"rect":{"x":50,"y":0,"w":50,"h":100}}
+{"type":"AddPanel","spec":{"kind":"Book","rect":{"x":0,"y":0,"w":50,"h":50}}}
+{"type":"Tick"}
+{"type":"Tick"}
+{"type":"RemovePanel","index":0}
+{"type":"Tick"}
+{"type":"Tick"}

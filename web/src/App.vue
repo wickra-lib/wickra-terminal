@@ -10,13 +10,16 @@ import type {
   PanelSpec,
   PanelView,
   ProfileView,
+  PanelKind,
   TapeView,
   WatchlistView,
 } from './types'
-import { placementsFor, readLayout } from './layout'
+import { placementsFor, readLayout, withLayout } from './layout'
 import { binWidth, peakOf } from './profile'
 import { parseIndicator } from './indicator'
 import { actionFor, isTyping, readKeybinds, type Keybinds } from './keybinds'
+import { reading } from './indicator'
+import { parsePanel } from './panel'
 import { changeClass, compactVolume, spread } from './watchlist'
 import { drawChart } from './render/chart'
 import { backfill, openBinanceFeed, type FeedEvent, type FeedState } from './binance'
@@ -78,6 +81,9 @@ const sourceField = ref<HTMLInputElement | null>(null)
 const timeframeField = ref<HTMLInputElement | null>(null)
 const catalogueField = ref<HTMLInputElement | null>(null)
 const recordField = ref<HTMLInputElement | null>(null)
+const panelField = ref<HTMLInputElement | null>(null)
+/** The panel shorthand as typed: a kind, a rectangle, and an optional depth. */
+const panelShorthand = ref('')
 /** The recorder's capacity as typed, empty meaning stopped. */
 const recordCapacity = ref('')
 /** Whether this session is recording, so the export control can say so. */
@@ -291,6 +297,44 @@ function applyRecording(): void {
   }
 }
 
+/** Place a panel on the layout from the same shorthand the TUI prompt takes.
+ *
+ * The layout was read once from the config and never again, in both renderers.
+ * The local copy is updated in step rather than re-read, because there is no
+ * command that answers with the config -- and this renderer is the one issuing
+ * the change, so it knows exactly what it did. Gated on the command being
+ * accepted, so a refusal leaves the copy alone.
+ */
+function addPanel(): void {
+  const spec = parsePanel(panelShorthand.value)
+  if (!spec) {
+    status.value = 'bad panel (Book 70 0 30 35 | Tape 0 70 100 30 48)'
+    return
+  }
+  if (send({ type: 'AddPanel', spec })) {
+    setLayout([...layout.value, spec])
+    panelShorthand.value = ''
+    status.value = `added ${spec.kind}`
+  }
+}
+
+/** Take a panel off the layout, named by the kind its section draws.
+ *
+ * By kind rather than by index because that is what the browser has: the
+ * placement map keeps the first spec per kind, so the section a person clicks
+ * on is the first panel of that kind.
+ */
+function removePanel(kind: PanelKind): void {
+  const index = layout.value.findIndex((spec) => spec.kind === kind)
+  if (index < 0) {
+    return
+  }
+  if (send({ type: 'RemovePanel', index })) {
+    setLayout(layout.value.filter((_, at) => at !== index))
+    status.value = `removed ${kind}`
+  }
+}
+
 /** Hand the recorded events to the browser as the file `Replay` takes.
  *
  * Through `ExportRecording` rather than serialising here, for the same reason
@@ -451,6 +495,9 @@ function runAction(action: string): boolean {
     case 'set_recording':
       recordField.value?.focus()
       return true
+    case 'add_panel':
+      panelField.value?.focus()
+      return true
     case 'save_recording':
       saveRecording()
       return true
@@ -475,6 +522,11 @@ function runAction(action: string): boolean {
     default:
       // quit and the panel-focus and scroll pairs: a browser tab is not ours to
       // close, and the panels are scrollable boxes the browser already drives.
+      // `remove_panel` and `move_panel` go with the focus pair and for the same
+      // reason -- with no focused panel here there is nothing for them to act
+      // on, and a key that removed an arbitrary one would be worse than a key
+      // that does nothing. Removing is the ✕ on the panel itself, which names
+      // its target by being on it.
       // Reporting them as unhandled leaves the key to the browser.
       return false
   }
@@ -507,6 +559,20 @@ function findPanel<T extends PanelView['panel']>(
 // component.
 const layout = ref<PanelSpec[]>([])
 const placements = computed(() => placementsFor(layout.value))
+
+/** Hold the drawn layout and the stored config to the same set of panels.
+ *
+ * The config in `localStorage` is what the next reload starts from. Writing it
+ * back here is what makes the panel controls worth using: a layout arranged
+ * once survives, which is what `web/README.md` has always said happens.
+ */
+function setLayout(panels: PanelSpec[]): void {
+  layout.value = panels
+  const stored = localStorage.getItem(CONFIG_KEY)
+  if (stored !== null) {
+    localStorage.setItem(CONFIG_KEY, withLayout(stored, panels))
+  }
+}
 
 const chart = computed<ChartView | undefined>(() => findPanel('chart'))
 const book = computed<BookView | undefined>(() => findPanel('book'))
@@ -649,6 +715,16 @@ onBeforeUnmount(() => {
       <button @click="applyRecording">{{ recording ? 'restart' : 'start' }}</button>
       <button @click="saveRecording">save</button>
       <span class="muted" v-if="recording">recording</span>
+
+      <label>panel
+        <input
+          ref="panelField"
+          type="text"
+          v-model="panelShorthand"
+          placeholder="Book 70 0 30 35"
+        />
+      </label>
+      <button @click="addPanel">add</button>
     </div>
 
     <div class="bar catalogue" v-if="catalogue.length > 0">
@@ -662,18 +738,18 @@ onBeforeUnmount(() => {
 
     <main class="grid">
       <section class="panel chart" v-if="placements.Chart" :style="placements.Chart">
-        <h2>Chart {{ chart?.symbol }} <span class="last">{{ chart?.last.toFixed(2) }}</span></h2>
+        <h2>Chart {{ chart?.symbol }} <span class="last">{{ chart?.last.toFixed(2) }}</span><button class="x drop" @click="removePanel('Chart')" title="take this panel off the layout">×</button></h2>
         <canvas ref="chartCanvas" width="600" height="300"></canvas>
         <div class="indicators">
           <span v-for="ind in chart?.indicators ?? []" :key="ind.name">
-            {{ ind.name }}={{ ind.value === null ? '…' : ind.value.toFixed(2) }}
+            {{ reading(ind) }}
             <button class="x" @click="removeIndicator(ind.name)" title="stop tracking">×</button>
           </span>
         </div>
       </section>
 
       <section class="panel book" v-if="placements.Book" :style="placements.Book">
-        <h2>Book</h2>
+        <h2>Book<button class="x drop" @click="removePanel('Book')" title="take this panel off the layout">×</button></h2>
         <table>
           <tr v-for="(lvl, i) in (book?.asks ?? []).slice().reverse()" :key="'a' + i" class="ask">
             <td>{{ lvl.price.toFixed(2) }}</td><td>{{ lvl.quantity.toFixed(3) }}</td>
@@ -686,7 +762,7 @@ onBeforeUnmount(() => {
       </section>
 
       <section class="panel footprint" v-if="placements.Footprint" :style="placements.Footprint">
-        <h2>Footprint {{ footprint?.symbol }}</h2>
+        <h2>Footprint {{ footprint?.symbol }}<button class="x drop" @click="removePanel('Footprint')" title="take this panel off the layout">×</button></h2>
         <table>
           <tr
             v-for="(lvl, i) in footprint?.levels ?? []"
@@ -702,7 +778,7 @@ onBeforeUnmount(() => {
       </section>
 
       <section class="panel tape" v-if="placements.Tape" :style="placements.Tape">
-        <h2>Tape</h2>
+        <h2>Tape<button class="x drop" @click="removePanel('Tape')" title="take this panel off the layout">×</button></h2>
         <table>
           <tr v-for="(pr, i) in tape?.prints ?? []" :key="i" :class="pr.side">
             <td>{{ pr.price.toFixed(2) }}</td><td>{{ pr.quantity.toFixed(3) }}</td><td>{{ pr.side }}</td>
@@ -711,7 +787,7 @@ onBeforeUnmount(() => {
       </section>
 
       <section class="panel profile" v-if="placements.Profile" :style="placements.Profile">
-        <h2>Profiles {{ profile?.symbol }}</h2>
+        <h2>Profiles {{ profile?.symbol }}<button class="x drop" @click="removePanel('Profile')" title="take this panel off the layout">×</button></h2>
         <div v-for="row in profile?.profiles ?? []" :key="row.label" class="dist">
           <h3>
             {{ row.label }}
@@ -732,7 +808,7 @@ onBeforeUnmount(() => {
       </section>
 
       <section class="panel bars" v-if="placements.Bars" :style="placements.Bars">
-        <h2>Bars {{ bars?.symbol }}</h2>
+        <h2>Bars {{ bars?.symbol }}<button class="x drop" @click="removePanel('Bars')" title="take this panel off the layout">×</button></h2>
         <div v-for="stream in bars?.streams ?? []" :key="stream.label" class="stream">
           <h3>{{ stream.label }}</h3>
           <p v-if="stream.bars.length === 0" class="muted">no bars completed yet</p>
@@ -761,7 +837,7 @@ onBeforeUnmount(() => {
       </section>
 
       <section class="panel watchlist" v-if="placements.Watchlist" :style="placements.Watchlist">
-        <h2>Watchlist</h2>
+        <h2>Watchlist<button class="x drop" @click="removePanel('Watchlist')" title="take this panel off the layout">×</button></h2>
         <table>
           <tr v-for="(row, i) in watchlist?.rows ?? []" :key="i">
             <td>[{{ row.source }}]</td><td>{{ row.symbol }}</td><td>{{ row.last.toFixed(2) }}</td>

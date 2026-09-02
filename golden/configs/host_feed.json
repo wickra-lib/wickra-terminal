@@ -1,0 +1,29 @@
+{
+  "bars": [],
+  "indicators": [
+    {
+      "kind": "Sma",
+      "params": [
+        3.0
+      ]
+    }
+  ],
+  "layout": {
+    "panels": [
+      {
+        "kind": "Chart",
+        "rect": {
+          "h": 100,
+          "w": 100,
+          "x": 0,
+          "y": 0
+        }
+      }
+    ]
+  },
+  "profiles": [],
+  "sources": [
+    "Manual"
+  ],
+  "timeframe": "1m"
+}

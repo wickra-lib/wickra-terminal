@@ -199,3 +199,10 @@ td {
 .reconnecting {
   color: #fbbf24;
 }
+
+/* The panel's own remove control, on its heading rather than in a menu: a
+   button that sits on the thing it acts on needs no label saying which. */
+.panel h2 .drop {
+  float: right;
+  margin-left: 6px;
+}

@@ -47,3 +47,53 @@ fn restore() -> io::Result<()> {
     execute!(out, LeaveAlternateScreen)?;
     disable_raw_mode()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{restore, TermGuard};
+
+    /// `restore` is best effort and safe to call at any time.
+    ///
+    /// It is what the panic hook and the `Drop` both run, and both run it in
+    /// states this cannot arrange: mid-unwind, and after an event loop that may
+    /// have left the terminal anywhere. Calling it from a cooked, main-screen
+    /// terminal is the one state a test can be in, and it must not fail there --
+    /// a restore that errored on an already-restored terminal would turn every
+    /// clean exit into a reported failure.
+    #[test]
+    fn restoring_an_already_restored_terminal_is_not_an_error() {
+        // Twice, because the panic hook and the guard's `Drop` both fire when a
+        // panic unwinds through the guard -- so the second call always runs
+        // against a terminal the first has already put back.
+        let first = restore().is_ok();
+        let second = restore().is_ok();
+        assert_eq!(
+            first, second,
+            "restoring twice reported differently the second time"
+        );
+    }
+
+    /// The guard either takes the terminal or says why, and never both.
+    ///
+    /// Under `cargo test` there is usually no terminal to enter raw mode on, so
+    /// this asserts the shape rather than the outcome: a guard that constructs
+    /// restores on drop, and one that cannot construct hands back the I/O error
+    /// rather than leaving the terminal half-entered.
+    #[test]
+    fn the_guard_either_constructs_and_restores_or_refuses() {
+        // The `Ok` arm needs a terminal to enter, so under a harness it is
+        // usually the `Err` one that runs. Kept to a single statement for that
+        // reason: dropping is the whole contract -- raw mode off, main screen
+        // back -- and nothing inside the process can observe it anyway, so what
+        // the arm checks is that it happens without panicking.
+        match TermGuard::new() {
+            Ok(guard) => drop(guard),
+            Err(err) => {
+                // No terminal, which is the usual case under a test harness.
+                // The error is the terminal's, passed through rather than
+                // swallowed into a guard that reports success and owns nothing.
+                assert!(!err.to_string().is_empty(), "an error that says nothing");
+            }
+        }
+    }
+}

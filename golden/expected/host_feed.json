@@ -1,0 +1,35 @@
+{
+  "panels": [
+    {
+      "panel": "chart",
+      "symbol": "BTC/USDT",
+      "last": 106.0,
+      "series": [
+        100.0,
+        101.0,
+        102.0,
+        103.0,
+        104.0,
+        105.0,
+        106.0
+      ],
+      "forming": {
+        "open": 100.0,
+        "high": 106.0,
+        "low": 100.0,
+        "close": 106.0,
+        "volume": 3.5,
+        "timestamp": 0
+      },
+      "indicators": [
+        {
+          "name": "Ema(3)",
+          "value": 105.0,
+          "series": [
+            105.0
+          ]
+        }
+      ]
+    }
+  ]
+}

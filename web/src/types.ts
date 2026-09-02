@@ -177,4 +177,6 @@ export type PanelKind =
 export interface PanelSpec {
   kind: PanelKind
   rect: RectSpec
+  /** How many rows the panel carries, or absent for its default. */
+  depth?: number
 }

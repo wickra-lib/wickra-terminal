@@ -47,6 +47,37 @@ pub enum PanelKind {
     Bars,
 }
 
+/// The kind names as a config writes them, in layout order.
+///
+/// Read from here rather than restated wherever a name has to be parsed or
+/// listed: a kind added to the enum and forgotten in a prompt is a panel the
+/// core can build and no renderer can ask for.
+pub const PANEL_KINDS: [(&str, PanelKind); 7] = [
+    ("Chart", PanelKind::Chart),
+    ("Book", PanelKind::Book),
+    ("Tape", PanelKind::Tape),
+    ("Watchlist", PanelKind::Watchlist),
+    ("Footprint", PanelKind::Footprint),
+    ("Profile", PanelKind::Profile),
+    ("Bars", PanelKind::Bars),
+];
+
+impl std::str::FromStr for PanelKind {
+    type Err = String;
+
+    /// Case-insensitive, because this is what a person types at a prompt.
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        PANEL_KINDS
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(text))
+            .map(|(_, kind)| *kind)
+            .ok_or_else(|| {
+                let names: Vec<&str> = PANEL_KINDS.iter().map(|(name, _)| *name).collect();
+                format!("unknown panel {text:?} ({})", names.join(" | "))
+            })
+    }
+}
+
 /// A panel: a pure mapping from state to a view-model.
 pub trait Panel {
     /// The panel's kind.

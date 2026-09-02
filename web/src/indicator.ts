@@ -4,6 +4,8 @@
 // The grammar is the TUI's, deliberately: a user who reads a label off one
 // renderer can type it into the other.
 
+import type { IndicatorValue } from './types'
+
 /** An indicator spec as the `AddIndicator` command takes it. */
 export interface IndicatorSpec {
   kind: string
@@ -52,4 +54,27 @@ export function parseIndicator(text: string): IndicatorSpec | null {
     params.push(value)
   }
   return reference === undefined ? { kind, params } : { kind, params, reference }
+}
+
+/**
+ * One reading as text: a number, or the named outputs when it has several.
+ *
+ * `value` is the first field of a multi-output indicator, so a readout that
+ * showed only it drew `Macd(12,26,9)=1.42` and dropped the signal line and the
+ * histogram — the two numbers the indicator exists to be read against. The core
+ * has carried them across the boundary all along; neither renderer drew them.
+ *
+ * The same shape the TUI writes, because one indicator read in two places
+ * should not look like two.
+ */
+export function reading(indicator: IndicatorValue): string {
+  const number = (value: number | null): string =>
+    value === null ? '…' : value.toFixed(2)
+  if (!indicator.fields || indicator.fields.length === 0) {
+    return `${indicator.name}=${number(indicator.value)}`
+  }
+  const named = indicator.fields
+    .map((field) => `${field.name}=${number(field.value)}`)
+    .join(' ')
+  return `${indicator.name}[${named}]`
 }

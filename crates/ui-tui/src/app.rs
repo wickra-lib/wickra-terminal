@@ -86,6 +86,10 @@ pub(crate) enum InputKind {
     ListIndicators,
     /// Arm the recorder with a capacity, or stop it with an empty answer.
     SetRecording,
+    /// Place a panel on the layout (`Book 70 0 30 35`).
+    AddPanel,
+    /// Move the focused panel to a new rectangle (`0 50 100 50`).
+    MovePanel,
 }
 
 /// The current interaction mode.
@@ -128,7 +132,7 @@ impl App {
             should_quit: false,
             frame: Frame { panels: Vec::new() },
             mode: Mode::Normal,
-            status: "s source · a symbol · d unsub · x drop source · i/k indicator · t timeframe · l catalogue · ,/. seek · r record · w save · ↑/↓ scroll · ←/→ symbol · tab panel · q quit"
+            status: "s source · a symbol · d unsub · x drop source · i/k indicator · t timeframe · l catalogue · ,/. seek · r record · w save · p/o/m panel · ↑/↓ scroll · ←/→ symbol · tab panel · q quit"
                 .to_string(),
             focused_panel: 0,
             scroll: vec![0; panels],
@@ -167,6 +171,9 @@ impl App {
             Action::ScrollDown => self.scroll_by(1),
             Action::SaveRecording => self.save_recording(),
             Action::SetRecording => self.begin_input(InputKind::SetRecording),
+            Action::AddPanel => self.begin_input(InputKind::AddPanel),
+            Action::MovePanel => self.begin_input(InputKind::MovePanel),
+            Action::RemovePanel => self.remove_focused_panel(),
             Action::None => {}
         }
     }
@@ -215,6 +222,8 @@ impl App {
             InputKind::SetTimeframe => self.set_timeframe(&buffer),
             InputKind::ListIndicators => self.list_indicators(&buffer),
             InputKind::SetRecording => self.set_recording(&buffer),
+            InputKind::AddPanel => self.add_panel(&buffer),
+            InputKind::MovePanel => self.move_focused_panel(&buffer),
         }
     }
 
@@ -241,6 +250,8 @@ impl App {
                         "search the catalogue (a substring, blank for all)"
                     }
                     InputKind::SetRecording => "recording (how many events to keep, blank to stop)",
+                    InputKind::AddPanel => "panel (Book 70 0 30 35 | Tape 0 70 100 30 48)",
+                    InputKind::MovePanel => "move the focused panel (x y w h, 0 50 100 50)",
                 };
                 format!("{label}: {buffer}\u{2588}")
             }
@@ -311,6 +322,87 @@ impl App {
         if let Some((source, _)) = self.terminal.state().focus.clone() {
             self.terminal.remove_source(source);
             self.status = format!("removed source {source}");
+        }
+    }
+
+    /// Place a panel on the layout from a shorthand, and focus it.
+    ///
+    /// Focused because it is the one a person just asked for: leaving focus
+    /// where it was would make the next panel-local key act on something else.
+    fn add_panel(&mut self, shorthand: &str) {
+        let spec = match spec::parse_panel(shorthand) {
+            Ok(spec) => spec,
+            Err(err) => {
+                self.status = format!("bad panel: {err}");
+                return;
+            }
+        };
+        let kind = spec.kind;
+        let at = self.terminal.add_panel(&spec);
+        self.sync_panels();
+        self.focused_panel = at;
+        self.status = format!("added {kind:?} as panel {at}");
+    }
+
+    /// Take the focused panel off the layout.
+    fn remove_focused_panel(&mut self) {
+        let at = self.focused_panel;
+        // The kind is read before the removal, because afterwards there is
+        // nothing to read it from -- and the same lookup answers whether there
+        // is a panel there at all. One question, so there is no arm for the
+        // combination where the kind is missing and the removal succeeds, which
+        // is a state neither answer can produce.
+        let Some(kind) = self
+            .terminal
+            .config()
+            .layout
+            .panels
+            .get(at)
+            .map(|spec| spec.kind)
+        else {
+            self.status = format!("no panel at {at} to remove");
+            return;
+        };
+        self.terminal
+            .remove_panel(at)
+            .expect("the lookup above found a panel at this index");
+        self.sync_panels();
+        self.status = format!("removed {kind:?}");
+    }
+
+    /// Move the focused panel to a new rectangle.
+    fn move_focused_panel(&mut self, text: &str) {
+        let rect = match spec::parse_rect(text) {
+            Ok(rect) => rect,
+            Err(err) => {
+                self.status = format!("bad rectangle: {err}");
+                return;
+            }
+        };
+        match self.terminal.move_panel(self.focused_panel, rect) {
+            Ok(()) => {
+                self.status = format!(
+                    "moved panel {} to {} {} {} {}",
+                    self.focused_panel, rect.x, rect.y, rect.w, rect.h
+                );
+            }
+            Err(err) => self.status = format!("move failed: {err}"),
+        }
+    }
+
+    /// Hold the renderer's per-panel state to the layout the core now has.
+    ///
+    /// `scroll` is one offset per panel and `focused_panel` indexes the layout,
+    /// and both were sized once at construction -- true for as long as the
+    /// layout was fixed at start-up, and false the moment a panel can be added
+    /// or taken away. A focus left past the end draws no border and scrolls
+    /// nothing; a scroll vector left short does the same for the panels beyond
+    /// it.
+    fn sync_panels(&mut self) {
+        let panels = self.terminal.config().layout.panels.len();
+        self.scroll.resize(panels, 0);
+        if self.focused_panel >= panels {
+            self.focused_panel = panels.saturating_sub(1);
         }
     }
 
@@ -490,8 +582,11 @@ impl App {
             .unwrap_or(i64::MAX)
             .saturating_add(direction);
         *offset = usize::try_from(moved.max(0)).unwrap_or(0);
-        // `scroll` is built with one entry per panel and neither can grow after
-        // that, so the lookup above having succeeded is proof this one does too.
+        // `scroll` carries one offset per panel and `focused_panel` indexes the
+        // layout, and `sync_panels` restores both after every layout change --
+        // so the lookup above having succeeded is proof this one does too. That
+        // used to hold because the layout was fixed at start-up; now it holds
+        // because something puts it back.
         let kind = self.terminal.config().layout.panels[self.focused_panel].kind;
         let clamped = self.clamp_scroll();
         self.status = format!("{kind:?} row {clamped}");
@@ -924,6 +1019,9 @@ mod tests {
             (Action::RemoveIndicator, "remove indicator"),
             (Action::SetTimeframe, "timeframe"),
             (Action::ListIndicators, "catalogue"),
+            (Action::SetRecording, "recording"),
+            (Action::AddPanel, "panel"),
+            (Action::MovePanel, "move the focused panel"),
         ] {
             app.on_action(action);
             let footer = app.footer();
@@ -1293,5 +1391,89 @@ mod tests {
         app.on_action(Action::SaveRecording);
         let status = app.status.clone();
         assert!(status.contains("set_recording"), "status: {status}");
+    }
+
+    /// The layout can be changed from the keyboard, and the renderer's own
+    /// per-panel state follows it.
+    ///
+    /// `scroll` carries one offset per panel and `focused_panel` indexes the
+    /// layout; both were sized once at construction, which was true only for as
+    /// long as the layout was fixed at start-up. A focus left past the end draws
+    /// no border and scrolls nothing.
+    #[test]
+    fn panels_can_be_added_moved_and_removed_from_the_keyboard() {
+        let mut config = Config::default_layout();
+        config.sources = vec![SourceSpec::Synth { seed: 1 }];
+        config.layout.panels = vec![PanelSpec::new(
+            wickra_terminal_core::PanelKind::Chart,
+            wickra_terminal_core::RectSpec::new(0, 0, 100, 50),
+        )];
+        let mut app = App::new(Terminal::new(&config).unwrap());
+        assert_eq!(app.scroll.len(), 1);
+
+        app.on_action(Action::AddPanel);
+        type_and_submit(&mut app, "Tape 0 50 100 50 48");
+        assert_eq!(app.terminal.config().layout.panels.len(), 2);
+        assert_eq!(app.scroll.len(), 2, "the scroll vector did not follow");
+        assert_eq!(app.focused_panel, 1, "focus did not move to the new panel");
+        assert_eq!(app.terminal.config().layout.panels[1].depth, Some(48));
+
+        app.on_action(Action::MovePanel);
+        type_and_submit(&mut app, "50 0 50 100");
+        assert_eq!(
+            app.terminal.config().layout.panels[1].rect,
+            wickra_terminal_core::RectSpec::new(50, 0, 50, 100)
+        );
+
+        app.on_action(Action::RemovePanel);
+        assert_eq!(app.terminal.config().layout.panels.len(), 1);
+        assert_eq!(app.scroll.len(), 1);
+        assert_eq!(app.focused_panel, 0, "focus was left past the end");
+    }
+
+    /// Removing the last panel leaves a terminal that still draws and scrolls.
+    #[test]
+    fn removing_every_panel_leaves_a_layout_nothing_indexes_past() {
+        let mut config = Config::default_layout();
+        config.sources = vec![SourceSpec::Synth { seed: 1 }];
+        config.layout.panels = vec![PanelSpec::new(
+            wickra_terminal_core::PanelKind::Chart,
+            wickra_terminal_core::RectSpec::new(0, 0, 100, 100),
+        )];
+        let mut app = App::new(Terminal::new(&config).unwrap());
+        app.on_action(Action::RemovePanel);
+        assert!(app.terminal.config().layout.panels.is_empty());
+        assert!(app.scroll.is_empty());
+
+        // And the panel-local keys are no-ops rather than panics.
+        app.on_action(Action::ScrollDown);
+        app.on_action(Action::NextPanel);
+        app.on_action(Action::RemovePanel);
+        let status = app.status.clone();
+        assert!(status.starts_with("no panel at 0"), "status: {status}");
+
+        // A move against an empty layout is the core's refusal reaching the
+        // status line: the shorthand parses, and there is nothing to move.
+        app.on_action(Action::MovePanel);
+        type_and_submit(&mut app, "0 0 50 50");
+        let status = app.status.clone();
+        assert!(status.starts_with("move failed"), "status: {status}");
+    }
+
+    /// A shorthand that does not parse is reported and changes nothing.
+    #[test]
+    fn an_unparseable_panel_is_reported_and_adds_nothing() {
+        let mut app = synth_app();
+        let before = app.terminal.config().layout.panels.len();
+        app.on_action(Action::AddPanel);
+        type_and_submit(&mut app, "Ladder 0 0 10 10");
+        let status = app.status.clone();
+        assert!(status.starts_with("bad panel:"), "status: {status}");
+        assert_eq!(app.terminal.config().layout.panels.len(), before);
+
+        app.on_action(Action::MovePanel);
+        type_and_submit(&mut app, "0 0 900 900");
+        let status = app.status.clone();
+        assert!(status.starts_with("bad rectangle:"), "status: {status}");
     }
 }

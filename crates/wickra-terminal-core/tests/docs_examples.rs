@@ -381,6 +381,208 @@ fn the_citation_matches_the_release_state() {
     }
 }
 
+/// The README's performance table and `BENCHMARKS.md` state the same numbers.
+///
+/// Both are published claims about how fast this is, measured once and written
+/// twice. A re-measurement that updated one and not the other would leave the
+/// repository asserting two speeds for the same path -- and the README is the
+/// one a reader meets first, so it is the one that would be believed.
+///
+/// The pairs are matched by their measurement rather than by their wording: the
+/// two tables describe the same benchmark in different words on purpose, one for
+/// a reader choosing the project and one for a reader running the suite.
+#[test]
+fn the_readme_and_the_benchmark_page_agree_on_the_numbers() {
+    let root = repo_root();
+    let readme = read(&root, "README.md");
+    let bench = read(&root, "BENCHMARKS.md");
+
+    // Row by row from the benchmark page, which is the one measured against.
+    let rows: Vec<(String, String)> = bench
+        .lines()
+        .filter(|line| line.starts_with("| `"))
+        .filter_map(|line| {
+            let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+            // | name | what | median | throughput |
+            (cells.len() >= 6).then(|| (cells[3].to_owned(), cells[4].to_owned()))
+        })
+        .filter(|(median, _)| median.ends_with("ns") || median.ends_with("\u{b5}s"))
+        .collect();
+    assert!(
+        rows.len() >= 5,
+        "found only {rows:?} measured rows in BENCHMARKS.md"
+    );
+
+    let mut checked = 0;
+    for (median, throughput) in rows {
+        // The last row is the no-boundary comparison, which the README does not
+        // carry: it exists to make two numbers on that page comparable, not to
+        // describe the product.
+        if !readme.contains(&median) {
+            continue;
+        }
+        assert!(
+            readme.contains(&format!("| {median} | {throughput} |")),
+            "the README pairs {median} with a throughput BENCHMARKS.md does not: {throughput}"
+        );
+        checked += 1;
+    }
+    assert!(
+        checked >= 5,
+        "only {checked} of the benchmark rows reached the README"
+    );
+}
+
+/// The documented bounds are the constants the code actually uses.
+///
+/// Those numbers are a contract a reader plans a layout around -- how much a
+/// panel carries by default, and how much is behind it to scroll to. They are
+/// written once in the source and again in the table, and this repository has
+/// already watched the indicator count, the binding command tables and the fuzz
+/// target list drift the same way.
+///
+/// The constants are `pub(crate)`, so they are read out of the source rather
+/// than imported: making them public to be testable would be the test dictating
+/// the API, which is the reasoning `every_binding_readme_documents_every_command`
+/// gives for reading the `Command` enum the same way.
+#[test]
+fn the_documented_bounds_are_the_real_ones() {
+    /// The value of a `const NAME: usize = N;` in the given source.
+    fn constant(source: &str, name: &str) -> usize {
+        let needle = format!("const {name}: usize = ");
+        let at = source
+            .find(&needle)
+            .unwrap_or_else(|| panic!("{name} is gone or was renamed"));
+        source[at + needle.len()..]
+            .split(';')
+            .next()
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or_else(|| panic!("{name} is no longer a plain number"))
+    }
+
+    let root = repo_root();
+    let panels = read(&root, "crates/wickra-terminal-core/src/panels/mod.rs");
+    let state = read(&root, "crates/wickra-terminal-core/src/state.rs");
+    let doc = read(&root, "docs/PANELS.md");
+
+    let depth = constant(&panels, "DEFAULT_DEPTH");
+    let points = constant(&panels, "CHART_POINTS");
+    let bars_kept = constant(&state, "OHLC_HISTORY");
+    let prices_kept = constant(&state, "PRICE_HISTORY");
+    let levels_kept = constant(&state, "MAX_FOOTPRINT_LEVELS");
+    let alt_kept = constant(&state, "ALT_BARS_KEPT");
+    // `TAPE_ROWS` is written in terms of `DEFAULT_DEPTH`, which is the point:
+    // the tape carries twice what a ladder does because it is a stream rather
+    // than a snapshot.
+    assert!(
+        panels.contains("const TAPE_ROWS: usize = DEFAULT_DEPTH * 2;"),
+        "TAPE_ROWS is no longer twice the default depth"
+    );
+    let tape_rows = depth * 2;
+
+    // `docs/STREAMING.md` restates the same ceilings in prose, which is a second
+    // copy of every number above and drifts the same way.
+    let streaming = read(&root, "docs/STREAMING.md");
+    let pending = constant(
+        &read(&root, "crates/wickra-terminal-core/src/source/manual.rs"),
+        "MAX_PENDING_EVENTS",
+    );
+    let series = constant(&state, "INDICATOR_SERIES");
+    let tape_kept = constant(&state, "TAPE_PRINTS_KEPT");
+    for claim in [
+        format!("the tape ring at {tape_kept} prints"),
+        format!("the price history at {prices_kept}"),
+        format!("each indicator's series at {series}"),
+        format!("the footprint at {levels_kept:} price levels").replace("1024", "1,024"),
+        format!("pending queue at {pending} events").replace("4096", "4,096"),
+    ] {
+        assert!(
+            streaming.contains(&claim),
+            "docs/STREAMING.md does not say {claim:?}"
+        );
+    }
+
+    for claim in [
+        format!("| `chart` | {points} bars, {points} price points"),
+        format!("{bars_kept} bars kept, {prices_kept} price points"),
+        format!("| `book` | {depth} levels a side"),
+        format!("| `tape` | {tape_rows} prints | {tape_kept} kept"),
+        format!("| `footprint` | {depth} levels | {levels_kept} levels kept"),
+        format!("| `bars` | {depth} bars a stream | {alt_kept} kept"),
+    ] {
+        assert!(
+            doc.contains(&claim),
+            "docs/PANELS.md does not say {claim:?}"
+        );
+    }
+}
+
+/// Every fuzz target is named in the threat model, and every name is a target.
+///
+/// The threat model lists what is fuzzed as one of the guarantees the code is
+/// held to, and nothing checked the list against the directory. It had drifted
+/// both ways: it named four of the five targets and mapped two of the four to
+/// the wrong one. The target it omitted, `registry_drive`, is the one that found
+/// a real fault -- an indicator period of 10^20 that aborted the process.
+///
+/// A promise about what is tested is worth exactly what checks it.
+#[test]
+fn every_fuzz_target_is_named_in_the_threat_model() {
+    let root = repo_root();
+    let model = read(&root, "THREAT_MODEL.md");
+    let manifest = read(&root, "fuzz/Cargo.toml");
+
+    let dir = root.join("fuzz/fuzz_targets");
+    let mut targets: Vec<String> = std::fs::read_dir(&dir)
+        .expect("fuzz/fuzz_targets is readable")
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            (path.extension()? == "rs").then(|| path.file_stem()?.to_str().map(str::to_owned))?
+        })
+        .collect();
+    targets.sort();
+    assert!(
+        targets.len() >= 5,
+        "found only {targets:?} in fuzz/fuzz_targets"
+    );
+
+    for target in &targets {
+        assert!(
+            model.contains(&format!("`{target}`")),
+            "THREAT_MODEL.md does not name the {target} fuzz target"
+        );
+        // A target the manifest does not build is a file cargo-fuzz never runs,
+        // which the threat model would then be crediting for nothing.
+        assert!(
+            manifest.contains(&format!("fuzz_targets/{target}.rs")),
+            "fuzz/Cargo.toml does not build the {target} target"
+        );
+    }
+
+    // And nothing named there that does not exist: a list that outlives its
+    // targets claims coverage the repository has stopped having.
+    for line in model
+        .lines()
+        .filter(|line| line.trim_start().starts_with('|'))
+    {
+        let Some(name) = line.split('`').nth(1) else {
+            continue;
+        };
+        if name.ends_with("_parse")
+            || name.ends_with("_event")
+            || name.ends_with("_fold")
+            || name.ends_with("_model")
+            || name.ends_with("_drive")
+        {
+            assert!(
+                targets.iter().any(|target| target == name),
+                "THREAT_MODEL.md names a {name} fuzz target that does not exist"
+            );
+        }
+    }
+}
+
 /// Every command the READMEs promise is driven by at least one binding suite.
 ///
 /// `every_binding_readme_documents_every_command` below checks the promise is
@@ -422,10 +624,14 @@ fn every_documented_command_is_driven_by_a_binding_suite() {
 
     let root = repo_root();
     let commands = command_variants(&root);
-    assert_eq!(
-        commands.len(),
-        16,
-        "expected sixteen commands: {commands:?}"
+    // A floor, not the count. `every_binding_readme_documents_every_command`
+    // pins the exact number, and a second copy of it here is a second place to
+    // forget -- which is what happened the first time a command was added after
+    // this test was written. All this needs is the assurance that the parse
+    // found an enum at all.
+    assert!(
+        commands.len() >= 16,
+        "the command enum parsed as {commands:?}, which is not the enum"
     );
 
     // Read once: eight directories against sixteen names is a hundred and
@@ -542,8 +748,8 @@ fn every_binding_readme_documents_every_command() {
         .collect();
     assert_eq!(
         variants.len(),
-        16,
-        "expected sixteen commands, found {variants:?}"
+        19,
+        "expected nineteen commands, found {variants:?}"
     );
 
     for rel in BINDING_READMES {
@@ -787,12 +993,23 @@ fn the_reach_table_sums_to_the_documented_total() {
 #[test]
 fn every_bound_action_reaches_a_renderer() {
     /// Answered by the TUI alone, each for a reason a browser cannot argue with.
-    const BROWSER_DECLINES: [&str; 5] = [
+    ///
+    /// `quit`, because a tab is not the terminal's to close. The scroll pair,
+    /// because a web panel is a scrollable box the browser already drives. The
+    /// panel-focus pair, because focus is a renderer's own idea and the browser
+    /// does not have one -- and `remove_panel` and `move_panel` go with it for
+    /// exactly that reason: with no focused panel there is nothing for them to
+    /// act on, and a key that removed an arbitrary panel would be worse than a
+    /// key that does nothing. The browser removes with the `x` on the panel
+    /// itself, which names its target by sitting on it.
+    const BROWSER_DECLINES: [&str; 7] = [
         "quit",
         "next_panel",
         "prev_panel",
         "scroll_up",
         "scroll_down",
+        "remove_panel",
+        "move_panel",
     ];
 
     let root = repo_root();

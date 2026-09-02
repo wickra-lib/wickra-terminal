@@ -13,6 +13,18 @@
       "name": "ticker"
     },
     {
+      "commands": "commands/host_feed.txt",
+      "config": "configs/host_feed.json",
+      "expected": "expected/host_feed.min.json",
+      "name": "host_feed"
+    },
+    {
+      "commands": "commands/panels.txt",
+      "config": "configs/panels.json",
+      "expected": "expected/panels.min.json",
+      "name": "panels"
+    },
+    {
       "commands": "commands/book_deltas.txt",
       "config": "configs/book_deltas.json",
       "expected": "expected/book_deltas.min.json",
