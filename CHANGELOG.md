@@ -91,6 +91,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now runs its examples in the job that already has the binding built, which
   costs a second and is the only check that says they work. What is left in the
   parse gate is the WASM example, which is a page and needs a browser.
+- The README's performance table and `BENCHMARKS.md` are checked against each
+  other. Both are published claims about how fast this is, measured once and
+  written twice, and a re-measurement that updated one would leave the repository
+  asserting two speeds for the same path -- with the README, which a reader meets
+  first, the one that would be believed.
 - The bounds `docs/PANELS.md` and `docs/STREAMING.md` state are checked against
   the constants they restate. Those numbers are a contract a reader plans a layout around -- what a
   panel carries by default and how much is behind it to scroll to -- and they

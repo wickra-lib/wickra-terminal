@@ -381,6 +381,58 @@ fn the_citation_matches_the_release_state() {
     }
 }
 
+/// The README's performance table and `BENCHMARKS.md` state the same numbers.
+///
+/// Both are published claims about how fast this is, measured once and written
+/// twice. A re-measurement that updated one and not the other would leave the
+/// repository asserting two speeds for the same path -- and the README is the
+/// one a reader meets first, so it is the one that would be believed.
+///
+/// The pairs are matched by their measurement rather than by their wording: the
+/// two tables describe the same benchmark in different words on purpose, one for
+/// a reader choosing the project and one for a reader running the suite.
+#[test]
+fn the_readme_and_the_benchmark_page_agree_on_the_numbers() {
+    let root = repo_root();
+    let readme = read(&root, "README.md");
+    let bench = read(&root, "BENCHMARKS.md");
+
+    // Row by row from the benchmark page, which is the one measured against.
+    let rows: Vec<(String, String)> = bench
+        .lines()
+        .filter(|line| line.starts_with("| `"))
+        .filter_map(|line| {
+            let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+            // | name | what | median | throughput |
+            (cells.len() >= 6).then(|| (cells[3].to_owned(), cells[4].to_owned()))
+        })
+        .filter(|(median, _)| median.ends_with("ns") || median.ends_with("\u{b5}s"))
+        .collect();
+    assert!(
+        rows.len() >= 5,
+        "found only {rows:?} measured rows in BENCHMARKS.md"
+    );
+
+    let mut checked = 0;
+    for (median, throughput) in rows {
+        // The last row is the no-boundary comparison, which the README does not
+        // carry: it exists to make two numbers on that page comparable, not to
+        // describe the product.
+        if !readme.contains(&median) {
+            continue;
+        }
+        assert!(
+            readme.contains(&format!("| {median} | {throughput} |")),
+            "the README pairs {median} with a throughput BENCHMARKS.md does not: {throughput}"
+        );
+        checked += 1;
+    }
+    assert!(
+        checked >= 5,
+        "only {checked} of the benchmark rows reached the README"
+    );
+}
+
 /// The documented bounds are the constants the code actually uses.
 ///
 /// Those numbers are a contract a reader plans a layout around -- how much a
