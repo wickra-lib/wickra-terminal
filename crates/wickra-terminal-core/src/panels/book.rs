@@ -67,12 +67,20 @@ mod tests {
         let sym = Symbol::new("BTC", "USDT");
         let state = AppState::default();
 
-        let PanelView::Book(view) = (BookPanel {
+        // `find_map` rather than a refutable `let`: the `else` arm of a `let`
+        // that destructures the one variant this panel returns is a line no run
+        // can reach, and an unreachable arm inside a test reads like tested
+        // code.
+        let view = [(BookPanel {
             depth: DEFAULT_DEPTH,
         })
-        .view(&state, (0, &sym)) else {
-            panic!("the book panel answers with a book")
-        };
+        .view(&state, (0, &sym))]
+        .into_iter()
+        .find_map(|panel| match panel {
+            PanelView::Book(view) => Some(view),
+            _ => None,
+        })
+        .expect("the book panel answers with a book");
 
         assert_eq!(view.symbol, "BTC/USDT");
         assert!(view.bids.is_empty());

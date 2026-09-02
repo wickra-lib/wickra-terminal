@@ -241,11 +241,11 @@ fn draw_series(
     // stays aligned with the end of the price rather than stopping short of it:
     // they are two samplings of one run, and the reading a person compares is
     // the one at the right-hand edge.
-    let step = if series.len() > 1 {
-        points / (series.len() - 1) as f64
-    } else {
-        0.0
-    };
+    // `max(2) - 1` rather than a branch on the length: a series of fewer than
+    // two points has no window to draw, so the loop below runs zero times and
+    // the step is never used -- an `else` arm here would be a line no run can
+    // reach.
+    let step = points / (series.len().max(2) - 1) as f64;
     for (index, pair) in series.windows(2).enumerate() {
         if !pair[0].is_finite() || !pair[1].is_finite() {
             continue;
@@ -713,6 +713,54 @@ mod tests {
         let drawn = super::overlays(&view);
         assert_eq!(drawn.len(), 1, "the RSI was drawn on a price axis");
         assert!((drawn[0][0] - 20_005.0).abs() < 1e-9);
+    }
+
+    /// A series of nothing usable shares no scale with anything.
+    ///
+    /// `overlays` filters short series out before this is asked, so the answer
+    /// matters for a direct caller: a series that is all NaN has no range, and
+    /// "no range" is not "any range".
+    #[test]
+    fn a_series_with_no_usable_numbers_is_on_no_scale() {
+        let price = [100.0, 101.0];
+        assert!(!super::on_price_scale(&[f64::NAN, f64::INFINITY], &price));
+        assert!(!super::on_price_scale(&[], &price));
+        assert!(!super::on_price_scale(&price, &[]));
+    }
+
+    /// A hole in an overlay is stepped over rather than drawn through.
+    ///
+    /// A NaN between two readings would otherwise be a line to nowhere, and the
+    /// canvas would carry it at whatever the projection made of it.
+    #[test]
+    fn a_hole_in_an_overlay_does_not_reach_the_canvas() {
+        let view = with_series(
+            (0..10).map(|i| 100.0 + f64::from(i)).collect(),
+            vec![(
+                "Sma(2)",
+                vec![
+                    99.0,
+                    100.0,
+                    f64::NAN,
+                    102.0,
+                    103.0,
+                    104.0,
+                    105.0,
+                    106.0,
+                    107.0,
+                    108.0,
+                ],
+            )],
+        );
+        let buffer = harness::draw(40, 10, |frame, area| {
+            render(frame, area, &view, false);
+        });
+        // Drawn, and without panicking on the hole.
+        let colours: Vec<Color> = buffer.content().iter().map(|cell| cell.fg).collect();
+        assert!(
+            colours.contains(&OVERLAY_COLOURS[0]),
+            "the overlay is missing"
+        );
     }
 
     /// A series too short to be a line is not one.

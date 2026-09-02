@@ -348,11 +348,8 @@ Synth = { seed = 3 }
             on_key(&mut app, press(KeyCode::Char(ch)));
         }
         assert!(app.is_input(), "a bound key ended the prompt");
-        assert!(
-            app.footer().contains("BTQ/USDT"),
-            "footer: {}",
-            app.footer()
-        );
+        let footer = app.footer();
+        assert!(footer.contains("BTQ/USDT"), "footer: {footer}");
 
         on_key(&mut app, press(KeyCode::Backspace));
         on_key(&mut app, press(KeyCode::Esc));

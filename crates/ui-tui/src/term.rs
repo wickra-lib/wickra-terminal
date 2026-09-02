@@ -81,13 +81,13 @@ mod tests {
     /// rather than leaving the terminal half-entered.
     #[test]
     fn the_guard_either_constructs_and_restores_or_refuses() {
+        // The `Ok` arm needs a terminal to enter, so under a harness it is
+        // usually the `Err` one that runs. Kept to a single statement for that
+        // reason: dropping is the whole contract -- raw mode off, main screen
+        // back -- and nothing inside the process can observe it anyway, so what
+        // the arm checks is that it happens without panicking.
         match TermGuard::new() {
-            Ok(guard) => {
-                // Dropping is the whole contract: raw mode off, main screen
-                // back. Nothing here can observe that from inside the process,
-                // so what is checked is that it happens without panicking.
-                drop(guard);
-            }
+            Ok(guard) => drop(guard),
             Err(err) => {
                 // No terminal, which is the usual case under a test harness.
                 // The error is the terminal's, passed through rather than

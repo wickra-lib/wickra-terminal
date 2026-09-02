@@ -1019,6 +1019,9 @@ mod tests {
             (Action::RemoveIndicator, "remove indicator"),
             (Action::SetTimeframe, "timeframe"),
             (Action::ListIndicators, "catalogue"),
+            (Action::SetRecording, "recording"),
+            (Action::AddPanel, "panel"),
+            (Action::MovePanel, "move the focused panel"),
         ] {
             app.on_action(action);
             let footer = app.footer();

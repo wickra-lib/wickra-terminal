@@ -2143,10 +2143,19 @@ mod tests {
         deep.depth = Some(1);
         terminal.add_panel(&deep);
 
-        let panels = terminal.frame().panels;
-        let PanelView::Tape(tape) = &panels[1] else {
-            panic!("the added panel is a tape")
-        };
-        assert_eq!(tape.prints.len(), 1, "the depth was ignored");
+        // `find_map` over the frame rather than an indexed destructure: the
+        // `else` arm of a `let` on a known index is a line no run can reach,
+        // while the arm that skips a panel of another kind is taken by the
+        // chart sitting in front of it.
+        let prints = terminal
+            .frame()
+            .panels
+            .into_iter()
+            .find_map(|panel| match panel {
+                PanelView::Tape(tape) => Some(tape.prints.len()),
+                _ => None,
+            })
+            .expect("the added panel is a tape");
+        assert_eq!(prints, 1, "the depth was ignored");
     }
 }

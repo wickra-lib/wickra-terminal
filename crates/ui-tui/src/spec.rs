@@ -361,6 +361,13 @@ mod tests {
         );
     }
 
+    /// More than one number after the rectangle is a typo, not a second depth.
+    #[test]
+    fn parse_panel_rejects_more_than_a_depth_after_the_rectangle() {
+        let err = parse_panel("Book 0 0 10 10 5 5").unwrap_err();
+        assert!(err.contains("at most a depth"), "{err}");
+    }
+
     #[test]
     fn parse_panel_rejects_a_kind_with_no_rectangle() {
         assert!(parse_panel("Book").unwrap_err().contains("Book 70 0 30 35"));
