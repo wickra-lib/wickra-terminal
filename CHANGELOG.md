@@ -348,6 +348,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The live source holds a `dyn MarketData`, not a `dyn Exchange`. `connect`
+  hands back the whole exchange -- order placement and balances alongside the
+  reads -- and the source kept it, so nothing but review stood between an edit
+  and an order path in a terminal that is documented not to have one. The
+  narrower type says it structurally: the method is not there to call.
 - `Swatinem/rust-cache` re-pinned to a commit a tag still points at.
 - cargo-deny scans the feature-expanded graph, so the `live` tree is checked at
   all; the dead `RUSTSEC-2024-0436` suppression was removed from both files.
