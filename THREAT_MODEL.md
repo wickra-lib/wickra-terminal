@@ -41,6 +41,13 @@ completely and this document changes first.
 - **No credentials anywhere.** `LiveSource` constructs its client with
   `Credentials::new("", "")`. There is no key handling to get wrong, no key to
   leak into a log, and no code path that reads one from the environment or disk.
+- **No order path, checked by the compiler rather than by review.** `connect`
+  hands back a `dyn Exchange`, which carries order placement and balances
+  alongside the reads; the live source narrows it to `dyn MarketData` and holds
+  only that. The methods are not there to call, so an edit that reached for one
+  fails to build rather than needing to be noticed. This section used to rest on
+  the absence of such code, which is a weaker thing: absence is a fact about
+  today, and a type is a fact about tomorrow.
 - **Panics never unwind across the C ABI.** The release profile is
   `panic = "abort"`, because unwinding through C is undefined behaviour. Every
   export null-checks its pointers and returns a typed error code.

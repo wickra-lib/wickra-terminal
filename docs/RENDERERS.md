@@ -125,6 +125,14 @@ layout, updated in step with the commands it sends rather than re-read, because
 no command answers with the config and the renderer issuing the change is the
 one that knows what it did.
 
+**A layout arranged in the browser survives a reload; one arranged in the
+terminal does not.** The browser owns its config -- it lives in `localStorage`
+and nothing else reads it -- so it writes a changed layout back. The terminal was
+handed a config file by whoever ran it, and rewriting someone's file because
+they pressed `p` would be a surprise rather than a service. The core keeps the
+change either way: `Terminal::config()` returns the layout the session is
+actually running, so a host that wants to persist it can.
+
 ## One keymap, both renderers
 
 `layout.keybinds` is a map from action name to key name, and it sits in the
