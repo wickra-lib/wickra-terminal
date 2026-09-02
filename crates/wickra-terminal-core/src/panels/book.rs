@@ -49,3 +49,34 @@ impl Panel for BookPanel {
         PanelView::Book(book)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::DEFAULT_DEPTH;
+    use super::*;
+
+    /// A market the state has never folded still answers with a book.
+    ///
+    /// Focus moves to a market the moment it is subscribed, which is before its
+    /// first depth message arrives -- so this is the view every live market is
+    /// drawn from for its first frame. A renderer handed nothing there would
+    /// have to guess, and an empty spread is not the same as a spread of zero:
+    /// one says no quote has arrived, the other says the book is locked.
+    #[test]
+    fn a_market_with_no_state_yet_has_an_empty_book_and_no_spread() {
+        let sym = Symbol::new("BTC", "USDT");
+        let state = AppState::default();
+
+        let PanelView::Book(view) = (BookPanel {
+            depth: DEFAULT_DEPTH,
+        })
+        .view(&state, (0, &sym)) else {
+            panic!("the book panel answers with a book")
+        };
+
+        assert_eq!(view.symbol, "BTC/USDT");
+        assert!(view.bids.is_empty());
+        assert!(view.asks.is_empty());
+        assert!(view.spread.is_none(), "a spread appeared from nowhere");
+    }
+}
