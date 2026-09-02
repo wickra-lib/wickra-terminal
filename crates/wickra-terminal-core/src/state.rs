@@ -1739,6 +1739,117 @@ mod tests {
         assert!((state.open.to_f64().unwrap_or(0.0) - 100.0).abs() < 1e-9);
     }
 
+    /// The rings answer whether they hold anything, and nothing asked.
+    ///
+    /// `is_empty` beside a `len` is not decoration -- it is what a caller reads
+    /// to decide whether to draw a panel at all, and a `len() == 0` written at
+    /// each call site is the same question answered four ways.
+    #[test]
+    fn the_rings_report_emptiness_before_and_after_a_print() {
+        let sym = Symbol::new("BTC", "USDT");
+        let mut state = AppState::default();
+
+        let market = SymbolState::new(&[], &[], &[], Timeframe::default())
+            .expect("an empty indicator set is constructible");
+        assert!(market.tape.is_empty());
+        assert!(market.footprint.is_empty());
+
+        state.fold(0, &sym, &trade(&sym, dec!(100), OrderSide::Buy));
+        let market = state.get(&(0, sym)).expect("the trade created the market");
+        assert!(!market.tape.is_empty());
+        assert!(!market.footprint.is_empty());
+    }
+
+    /// A set says whether it needs a reference market, and a set with none says
+    /// so.
+    ///
+    /// The fold reads this to decide whether to gather the other markets'
+    /// prices at all, so a set that answered wrongly would either do the work
+    /// for nothing or leave a pairwise indicator without its second input.
+    #[test]
+    fn an_indicator_set_says_whether_it_needs_a_reference() {
+        let plain = IndicatorSet::from_specs(&[IndicatorSpec::new("Sma", vec![3.0])])
+            .expect("Sma is registered");
+        assert!(!plain.wants_references());
+
+        let paired = IndicatorSet::from_specs(&[IndicatorSpec::paired(
+            "RollingCorrelation",
+            vec![20.0],
+            "ETH/USDT",
+        )])
+        .expect("RollingCorrelation is registered");
+        assert!(paired.wants_references());
+    }
+
+    /// A bar with a close that is not a number is dropped, not folded.
+    ///
+    /// A NaN close would make the change NaN and stay there, and every breadth
+    /// reading taken afterwards with it -- so the guard is the difference
+    /// between one bad bar and a session of them.
+    #[test]
+    fn a_breadth_bar_with_no_usable_close_is_ignored() {
+        let mut breadth = BreadthState::new();
+        let good =
+            wickra_core::Candle::new(100.0, 101.0, 99.0, 100.0, 5.0, 0).expect("an ordered candle");
+        breadth.update(&good);
+        let after_good = breadth.previous_close;
+
+        // `Candle::new` refuses a NaN, so the bad bar is assembled past it --
+        // which is exactly how one reaches the fold: from a feed, not from a
+        // constructor.
+        let mut bad = good;
+        bad.close = f64::NAN;
+        breadth.update(&bad);
+        assert_eq!(
+            breadth.previous_close, after_good,
+            "a NaN close moved the previous close"
+        );
+        assert!(breadth.change.is_finite(), "the change went to NaN");
+    }
+
+    /// A bar with an unusable volume folds as zero rather than poisoning it.
+    #[test]
+    fn a_breadth_bar_with_no_usable_volume_reads_as_zero() {
+        let mut breadth = BreadthState::new();
+        let mut bar =
+            wickra_core::Candle::new(100.0, 101.0, 99.0, 100.0, 5.0, 0).expect("an ordered candle");
+        bar.volume = f64::NEG_INFINITY;
+        breadth.update(&bar);
+        assert!(
+            breadth.volume.abs() < f64::EPSILON,
+            "volume: {}",
+            breadth.volume
+        );
+    }
+
+    /// `IndicatorEntry` prints its label and the length of its series.
+    ///
+    /// The indicator is a trait object with no `Debug` bound, so the label
+    /// stands in for it; dumping the series would bury the fields a reader of a
+    /// panic message is actually after.
+    #[test]
+    fn an_indicator_entry_prints_its_label_and_not_its_series() {
+        let sym = Symbol::new("BTC", "USDT");
+        let mut state = AppState {
+            indicators: vec![IndicatorSpec::new("Sma", vec![2.0])],
+            ..AppState::default()
+        };
+        for price in [dec!(100), dec!(101), dec!(102)] {
+            state.fold(0, &sym, &trade(&sym, price, OrderSide::Buy));
+        }
+
+        let shown = format!("{:?}", state.get(&(0, sym)).expect("the market exists"));
+        assert!(shown.contains("IndicatorEntry"), "{shown}");
+        assert!(shown.contains("Sma(2)"), "the label is missing: {shown}");
+        // Two, not three: a two-period average has no reading until its second
+        // price, so the series is one shorter than the prints that fed it. The
+        // number is what matters -- a length rather than the values themselves.
+        assert!(
+            shown.contains("series: 2"),
+            "the series was not counted: {shown}"
+        );
+    }
+
     /// Seeding more history than the rings hold keeps the newest of it.
     ///
     /// A live subscription asks for as many bars as the config's `backfill`
@@ -1886,13 +1997,22 @@ mod tests {
     use wickra_exchange_core::{Symbol, Ticker};
 
     fn trade(sym: &Symbol, price: Decimal, side: OrderSide) -> Event {
-        Event::Trade(TradePrint {
+        Event::Trade(stamped(sym, price, side, 0))
+    }
+
+    /// A print with a chosen timestamp.
+    ///
+    /// Built directly rather than by destructuring what `trade` returns: taking
+    /// the variant apart needs an `else` arm for a shape the constructor above
+    /// cannot produce, and a branch no run can take is one no test can cover.
+    fn stamped(sym: &Symbol, price: Decimal, side: OrderSide, timestamp: i64) -> TradePrint {
+        TradePrint {
             symbol: sym.clone(),
             price,
             quantity: dec!(2),
             aggressor: side,
-            timestamp: 0,
-        })
+            timestamp,
+        }
     }
 
     #[test]
@@ -1932,10 +2052,10 @@ mod tests {
             state.fold(0, &sym, &print_at(&sym, price));
         }
         let st = state.get(&(0, sym)).unwrap();
+        let levels = st.footprint.len();
         assert!(
-            st.footprint.len() <= MAX_FOOTPRINT_LEVELS,
-            "the footprint holds {} levels",
-            st.footprint.len()
+            levels <= MAX_FOOTPRINT_LEVELS,
+            "the footprint holds {levels} levels"
         );
     }
 
@@ -2133,11 +2253,11 @@ mod tests {
         }
         let series = &set.snapshot()[0].series;
         assert!(!series.is_empty(), "Atr recorded nothing over ten bars");
+        let kept = series.len();
+        let bars = ticks / 4;
         assert!(
-            series.len() > ticks / 4,
-            "series of {} is barely longer than the {} bars, so it is not carrying forward",
-            series.len(),
-            ticks / 4
+            kept > bars,
+            "series of {kept} is barely longer than the {bars} bars, so it is not carrying forward"
         );
     }
 
@@ -2197,10 +2317,7 @@ mod tests {
             ..AppState::default()
         };
         for step in 0..30_i64 {
-            let Event::Trade(mut print) = trade(&sym, dec!(100), OrderSide::Buy) else {
-                panic!("the trade helper must produce a trade event");
-            };
-            print.timestamp = step * 1_000;
+            let print = stamped(&sym, dec!(100), OrderSide::Buy, step * 1_000);
             state.fold(0, &sym, &Event::Trade(print));
         }
         let market = state.get(&(0, sym.clone())).unwrap();
