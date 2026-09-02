@@ -60,7 +60,16 @@ because one indicator read in two places should not look like two.
 > not share an x-axis; an average drawn on the candle axis would sit near, but
 > not on, the bar it was computed from. Overlays are drawn only in the
 > before-the-first-bar fallback, where the price series and the indicator series
-> do share an axis.
+> do share an axis -- in **both** renderers, which was true of the browser alone
+> for a while: the terminal drew a single row of block glyphs from the same
+> frame the browser drew lines from.
+>
+> An overlay is drawn only where its range overlaps the price's. Without that
+> test an `Rsi` running 0..100 would be plotted on a chart of a market near
+> twenty thousand and drawn as a flat line at the bottom -- present, meaningless,
+> and impossible to tell from a broken indicator. The core does not declare which
+> readings are prices, so the ranges are what says it, and both renderers apply
+> the same rule.
 
 **`book`** — `symbol`, `bids` and `asks` (up to 12 levels each, best first, every
 level a `price` and a `quantity`), and `spread` (`null` until both sides have a

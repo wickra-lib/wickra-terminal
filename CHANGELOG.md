@@ -91,6 +91,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now runs its examples in the job that already has the binding built, which
   costs a second and is the only check that says they work. What is left in the
   parse gate is the WASM example, which is a page and needs a browser.
+- The terminal draws indicator overlays in the before-the-first-bar fallback,
+  which the browser has always done. From one frame the browser drew the price
+  and its indicator lines on a shared axis and the terminal drew a single row of
+  block glyphs -- the same data showing as two different products. Both plot the
+  price and every overlay that shares its scale now, and both apply the same
+  rule for which those are: an `Rsi` running 0..100 is not drawn on a chart of a
+  market near twenty thousand, where it would be a flat line at the bottom,
+  indistinguishable from a broken indicator. The overlay colours follow the
+  browser's order, so the second indicator added is the second colour in both.
 - Both renderers show every output of a multi-output indicator. `value` is the
   first field, so a readout that showed only it drew `Macd(12,26,9)=1.42` and
   dropped the signal line and the histogram -- the two numbers the indicator

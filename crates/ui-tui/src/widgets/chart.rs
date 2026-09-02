@@ -163,6 +163,103 @@ fn reading(indicator: &IndicatorValue) -> String {
     format!("{}[{named}]", indicator.name)
 }
 
+/// The colours an overlay cycles through.
+///
+/// The nearest terminal colours to the browser's palette, in the browser's
+/// order -- amber, violet, green, pink, cyan (`OVERLAY_COLOURS` in
+/// `web/src/render/chart.ts`). A terminal cannot match a hex triple, but it can
+/// keep the order, so the second indicator added is the second colour in both
+/// and a chart read in one renderer and then the other does not renumber its
+/// lines.
+const OVERLAY_COLOURS: [Color; 5] = [
+    Color::Yellow,
+    Color::Magenta,
+    Color::Green,
+    Color::LightMagenta,
+    Color::Cyan,
+];
+
+/// The lowest and highest value in a set of series, or `None` if all are empty.
+pub(crate) fn series_range(series: &[&[f64]]) -> Option<(f64, f64)> {
+    let mut low = f64::INFINITY;
+    let mut high = f64::NEG_INFINITY;
+    for values in series {
+        for value in values.iter().copied().filter(|value| value.is_finite()) {
+            low = low.min(value);
+            high = high.max(value);
+        }
+    }
+    (low <= high).then_some((low, high))
+}
+
+/// Whether an indicator's series can honestly share the price axis.
+///
+/// An overlay is drawn only when its range overlaps the price's. Without the
+/// test an `Rsi` running 0..100 would be plotted on a chart of a market trading
+/// near twenty thousand and drawn as a flat line at the bottom -- present,
+/// meaningless, and indistinguishable from a broken indicator. The core does not
+/// declare which readings are prices, so the ranges are what says it.
+///
+/// The same rule the browser applies, in the same place: `onPriceScale` in
+/// `web/src/render/chart.ts`.
+pub(crate) fn on_price_scale(series: &[f64], price: &[f64]) -> bool {
+    let (Some((series_low, series_high)), Some((price_low, price_high))) =
+        (series_range(&[series]), series_range(&[price]))
+    else {
+        return false;
+    };
+    series_low <= price_high && series_high >= price_low
+}
+
+/// The overlays a chart may draw over its tick series, longest last.
+///
+/// Only in the fallback, and only there: an indicator's series is sampled once
+/// per tick while a bar is one per bar, so the two do not share an x-axis and an
+/// average drawn on the candle axis would sit near, but not on, the bar it was
+/// computed from. Before the first bar closes there are no candles and the two
+/// series do share an axis, which is the one state where an overlay is honest.
+pub(crate) fn overlays(view: &ChartView) -> Vec<&[f64]> {
+    if view.series.len() < 2 {
+        return Vec::new();
+    }
+    view.indicators
+        .iter()
+        .map(|indicator| indicator.series.as_slice())
+        .filter(|series| series.len() >= 2)
+        .filter(|series| on_price_scale(series, &view.series))
+        .collect()
+}
+
+/// Plot one series across the full width of the canvas.
+fn draw_series(
+    ctx: &mut ratatui::widgets::canvas::Context<'_>,
+    series: &[f64],
+    points: f64,
+    colour: Color,
+) {
+    // Every series is stretched to the same width, so a shorter indicator series
+    // stays aligned with the end of the price rather than stopping short of it:
+    // they are two samplings of one run, and the reading a person compares is
+    // the one at the right-hand edge.
+    let step = if series.len() > 1 {
+        points / (series.len() - 1) as f64
+    } else {
+        0.0
+    };
+    for (index, pair) in series.windows(2).enumerate() {
+        if !pair[0].is_finite() || !pair[1].is_finite() {
+            continue;
+        }
+        ctx.draw(&CanvasLine {
+            x1: index as f64 * step,
+            y1: pair[0],
+            x2: (index + 1) as f64 * step,
+            y2: pair[1],
+            color: colour,
+        });
+    }
+}
+
 /// The one-line indicator readout under the plot.
 fn readout(view: &ChartView) -> String {
     view.indicators
@@ -235,11 +332,68 @@ pub(crate) fn render(frame: &mut Frame, area: Rect, view: &ChartView, focused: b
         // No bar has closed and none is forming, or the panel is too small for
         // a plot: the tick series is all there is to show.
         _ => {
-            let width = usize::from(plot_area.width);
-            frame.render_widget(
-                Paragraph::new(TextLine::from(sparkline(&view.series, width))),
-                plot_area,
-            );
+            let lines = overlays(view);
+            let mut all: Vec<&[f64]> = vec![&view.series];
+            all.extend(&lines);
+            match series_range(&all) {
+                // Room for a plot, and something to plot: the price and every
+                // overlay that shares its scale, on one canvas. This is the one
+                // state where an overlay is honest -- before the first bar
+                // closes the tick series is the x-axis, and the indicator series
+                // is sampled on it.
+                Some((low, high))
+                    if plot_area.height > 0
+                        && plot_area.width > SCALE_WIDTH
+                        && view.series.len() > 1 =>
+                {
+                    let [scale_area, canvas_area] = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([Constraint::Length(SCALE_WIDTH), Constraint::Min(0)])
+                        .areas(plot_area);
+                    let labels = scale_labels(low, high, usize::from(plot_area.height));
+                    frame.render_widget(
+                        Paragraph::new(
+                            labels
+                                .into_iter()
+                                .map(|label| TextLine::from(label).dim())
+                                .collect::<Vec<_>>(),
+                        ),
+                        scale_area,
+                    );
+                    let price: Vec<f64> = view.series.clone();
+                    let drawn: Vec<Vec<f64>> = lines.iter().map(|s| s.to_vec()).collect();
+                    let points = (price.len().max(2) - 1) as f64;
+                    frame.render_widget(
+                        Canvas::default()
+                            .marker(Marker::Braille)
+                            .x_bounds([0.0, points])
+                            .y_bounds([low, high])
+                            .paint(move |ctx| {
+                                for (index, series) in drawn.iter().enumerate() {
+                                    draw_series(
+                                        ctx,
+                                        series,
+                                        points,
+                                        OVERLAY_COLOURS[index % OVERLAY_COLOURS.len()],
+                                    );
+                                }
+                                // The price last, so it is never hidden under an
+                                // overlay that happens to run along it.
+                                draw_series(ctx, &price, points, Color::White);
+                            }),
+                        canvas_area,
+                    );
+                }
+                // Too small for a plot, or nothing finite to draw: one row of
+                // block glyphs still says which way the market has gone.
+                _ => {
+                    let width = usize::from(plot_area.width);
+                    frame.render_widget(
+                        Paragraph::new(TextLine::from(sparkline(&view.series, width))),
+                        plot_area,
+                    );
+                }
+            }
         }
     }
 
@@ -249,6 +403,7 @@ pub(crate) fn render(frame: &mut Frame, area: Rect, view: &ChartView, focused: b
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::widgets::harness;
 
     #[test]
     fn sparkline_maps_min_and_max_to_endpoints() {
@@ -397,7 +552,10 @@ mod tests {
             forming: None,
             indicators: Vec::new(),
         };
-        let buffer = crate::widgets::harness::draw(30, 6, |frame, area| {
+        // Narrow enough that there is no room for a plot, which is the state
+        // the sparkline is still for: a panel wider than the price scale draws
+        // the tick series on a canvas instead.
+        let buffer = crate::widgets::harness::draw(SCALE_WIDTH + 1, 6, |frame, area| {
             render(frame, area, &view, false);
         });
         let text: String = buffer
@@ -516,5 +674,111 @@ mod tests {
             super::reading(&macd),
             "Macd(12,26,9)[macd=1.50 signal=1.25 histogram=0.25]"
         );
+    }
+
+    fn with_series(price: Vec<f64>, indicators: Vec<(&str, Vec<f64>)>) -> ChartView {
+        ChartView {
+            symbol: "BTC/USDT".to_owned(),
+            last: *price.last().unwrap_or(&0.0),
+            series: price,
+            bars: Vec::new(),
+            forming: None,
+            indicators: indicators
+                .into_iter()
+                .map(|(name, series)| IndicatorValue {
+                    name: name.to_owned(),
+                    value: series.last().copied(),
+                    fields: Vec::new(),
+                    series,
+                })
+                .collect(),
+        }
+    }
+
+    /// An overlay is drawn only where it can be read against the price.
+    ///
+    /// An `Rsi` running 0..100 on a chart of a market near twenty thousand would
+    /// be a flat line at the bottom -- present, meaningless, and impossible to
+    /// tell from a broken indicator. The core does not say which readings are
+    /// prices, so the ranges do.
+    #[test]
+    fn only_a_series_sharing_the_price_scale_is_overlaid() {
+        let view = with_series(
+            vec![20_000.0, 20_010.0, 20_020.0],
+            vec![
+                ("Sma(2)", vec![20_005.0, 20_015.0]),
+                ("Rsi(14)", vec![55.0, 60.0, 65.0]),
+            ],
+        );
+        let drawn = super::overlays(&view);
+        assert_eq!(drawn.len(), 1, "the RSI was drawn on a price axis");
+        assert!((drawn[0][0] - 20_005.0).abs() < 1e-9);
+    }
+
+    /// A series too short to be a line is not one.
+    #[test]
+    fn a_series_of_fewer_than_two_points_is_not_overlaid() {
+        let view = with_series(
+            vec![100.0, 101.0, 102.0],
+            vec![("Sma(2)", vec![101.0]), ("Ema(2)", Vec::new())],
+        );
+        assert!(super::overlays(&view).is_empty());
+    }
+
+    /// Nothing is overlaid on a price series that is not a line either.
+    #[test]
+    fn nothing_is_overlaid_before_there_are_two_prices() {
+        let view = with_series(vec![100.0], vec![("Sma(2)", vec![100.0, 101.0])]);
+        assert!(super::overlays(&view).is_empty());
+    }
+
+    /// The range spans every series and ignores what is not a number.
+    #[test]
+    fn the_series_range_spans_them_all_and_skips_the_unusable() {
+        let price = [100.0, 105.0];
+        let overlay = [95.0, f64::NAN, 110.0];
+        let (low, high) = super::series_range(&[&price, &overlay]).expect("both hold numbers");
+        assert!((low - 95.0).abs() < 1e-9);
+        assert!((high - 110.0).abs() < 1e-9);
+
+        let empty: [f64; 0] = [];
+        let all_nan = [f64::NAN, f64::INFINITY];
+        assert!(super::series_range(&[&empty]).is_none());
+        assert!(
+            super::series_range(&[&all_nan]).is_none(),
+            "a range was found in nothing usable"
+        );
+    }
+
+    /// The fallback plots the price and its overlays rather than one flat row.
+    ///
+    /// Before the first bar closes the browser drew the indicator lines and the
+    /// terminal drew a single sparkline, from the same frame -- the same data
+    /// showing as two different products.
+    #[test]
+    fn the_pre_bar_fallback_draws_the_overlays_too() {
+        let view = with_series(
+            (0..20).map(|i| 100.0 + f64::from(i)).collect(),
+            vec![("Sma(2)", (0..20).map(|i| 99.0 + f64::from(i)).collect())],
+        );
+        let buffer = harness::draw(40, 10, |frame, area| render(frame, area, &view, false));
+        // Every cell, not the first of each row: the price scale is drawn to the
+        // left of the canvas, so the first coloured cell in a row is a label.
+        let colours: Vec<Color> = buffer.content().iter().map(|cell| cell.fg).collect();
+        assert!(
+            colours.contains(&OVERLAY_COLOURS[0]),
+            "no overlay was drawn"
+        );
+        assert!(colours.contains(&Color::White), "the price line is missing");
+    }
+
+    /// A panel too small for a plot still says which way the market went.
+    #[test]
+    fn a_panel_too_small_for_a_plot_falls_back_to_the_sparkline() {
+        let view = with_series(vec![100.0, 101.0, 102.0], Vec::new());
+        let buffer = harness::draw(SCALE_WIDTH + 2, 3, |frame, area| {
+            render(frame, area, &view, false);
+        });
+        assert!(!harness::text(&buffer).is_empty());
     }
 }
