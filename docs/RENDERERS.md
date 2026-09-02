@@ -51,6 +51,18 @@ file, and the time-machine had no control anywhere. In the TUI they are `i`,
 `k`, `t`, `l` and `,` / `.`; in the web renderer they are the second control
 bar. The keymap is data, shared by both renderers, so a rebinding moves both.
 
+It was then broken for a sixth, and for two more in one renderer only.
+`SetRecording` was documented in all nine binding READMEs and bound nowhere, so
+the recorder could only be armed by a config field read once at start-up — the
+one thing nobody can reach at the moment the market gives them a reason to. It
+is `r` in both renderers now, and `wkterm --record` for a run that is starting.
+`RemoveSource` and `ExportRecording` were answered by the TUI and dropped into
+the browser's catch-all, which is the worst shape available: the key is in the
+shared keymap, the config validates, and nothing happens. Both are controls in
+the browser now, and
+`docs_examples::every_bound_action_reaches_a_renderer` fails the build if a
+seventh ever joins them.
+
 `Feed` and `FeedDerivatives` are deliberately not in that list: they are how a
 *host* pushes its own feed in, so their caller is an embedder rather than a
 person at a keyboard. The web renderer uses `Feed` exactly that way, from its

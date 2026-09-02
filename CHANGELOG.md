@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The recorder can be started while the terminal is running. `SetRecording` was
+  documented in all nine binding READMEs and bound in neither renderer, so the
+  only way to record was a config field read once at start-up -- which is the
+  one thing nobody can reach at the moment the market gives them a reason to.
+  `r` now takes a capacity in both front-ends and an empty answer stops it, and
+  `wkterm --record <events>` arms a run that is starting. A capacity of zero is
+  refused rather than treated as off: it is a ring that drops everything it is
+  handed, and reporting it as recording would promise a file that comes back
+  empty.
+- `--backfill <bars>` alongside it, and both apply on top of `--config` rather
+  than instead of it: a stored layout is a layout, and how far back this run
+  reaches is a decision about this run.
+- The web renderer answers `RemoveSource` and `ExportRecording`. Both were bound
+  in the shared keymap, answered by the TUI, and dropped into the browser's
+  catch-all -- the worst shape available, because the key looks configured, the
+  config validates, and nothing happens. A source can be dropped from its
+  watchlist row or with the bound key, and `save` hands the recording to the
+  browser as the file `Replay` takes.
+- `docs_examples::every_bound_action_reaches_a_renderer` fails the build if a
+  bound action is answered by neither front-end. Three are deliberately
+  unanswered in the browser and are named in the test rather than inferred, so
+  adding a fourth is a decision someone writes down.
 - The watchlist shows what a watchlist is for. A row carried a source, a symbol
   and a last price, so neither renderer could show a spread, a turnover or a
   move -- and the numbers had been arriving all along: the state fold took

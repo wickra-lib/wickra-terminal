@@ -656,6 +656,56 @@ fn the_reach_table_sums_to_the_documented_total() {
 /// `PanelKind` union (the layout would place nothing), the `PanelView` union
 /// (`findPanel` would not type-check against it), and a section in the template
 /// (the placement exists and draws nothing).
+/// Every action the shared keymap can bind reaches one renderer or the other on
+/// purpose, and none of them is silently inert.
+///
+/// `layout.keybinds` sits in the config precisely so a rebinding moves both
+/// front-ends, which makes a bound action that no renderer answers the worst
+/// shape available: the key looks configured, the config validates, and nothing
+/// happens. `remove_source` and `save_recording` were exactly that in the
+/// browser -- bound in the default keymap, answered by the TUI, and dropped into
+/// `runAction`'s catch-all.
+///
+/// Three are deliberately unanswered in the browser and are named here rather
+/// than inferred, so adding a fourth is a decision someone writes down:
+/// `quit`, because a tab is not the terminal's to close, and the panel-focus and
+/// scroll pairs, because a web panel is a scrollable box the browser drives.
+#[test]
+fn every_bound_action_reaches_a_renderer() {
+    /// Answered by the TUI alone, each for a reason a browser cannot argue with.
+    const BROWSER_DECLINES: [&str; 5] = [
+        "quit",
+        "next_panel",
+        "prev_panel",
+        "scroll_up",
+        "scroll_down",
+    ];
+
+    let root = repo_root();
+    let input_rs = read(&root, "crates/ui-tui/src/input.rs");
+    let app_vue = read(&root, "web/src/App.vue");
+    let binds = wickra_terminal_core::config::Keybinds::default();
+    assert!(
+        binds.bindings.len() >= 19,
+        "the default keymap shrank to {} actions",
+        binds.bindings.len()
+    );
+
+    for action in binds.bindings.keys() {
+        assert!(
+            input_rs.contains(&format!("Some(\"{action}\")")),
+            "crates/ui-tui/src/input.rs: {action:?} is bound and the TUI keymap resolves it to nothing"
+        );
+        if BROWSER_DECLINES.contains(&action.as_str()) {
+            continue;
+        }
+        assert!(
+            app_vue.contains(&format!("case '{action}'")),
+            "web/src/App.vue: {action:?} is bound and runAction drops it into the catch-all"
+        );
+    }
+}
+
 #[test]
 fn every_panel_kind_reaches_the_web_renderer() {
     let root = repo_root();
