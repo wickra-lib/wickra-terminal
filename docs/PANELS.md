@@ -68,9 +68,25 @@ a `price`, a `quantity`, a `side` (`"buy"` or `"sell"`, the aggressor) and a
 last trade, not the highest ever traded: anchoring them is what keeps the ladder
 on the market after a move.
 
-**`watchlist`** — `rows`, one per tracked market, each a `source` id, a `symbol`
-and its `last` price. This is the only panel that does not render the focused
-market: it renders all of them.
+**`watchlist`** — `rows`, one per tracked market, each a `source` id, a `symbol`,
+its `last` price, the venue's `bid`, `ask` and rolling base-asset `volume`, and
+the percentage `change` from the first price the terminal folded for that market.
+This is the only panel that does not render the focused market: it renders all of
+them.
+
+The `bid`, `ask` and `volume` come off the venue's ticker stream and are `0.0`
+until the first ticker arrives, which is how a renderer tells "no quote yet" from
+a genuine zero: it shows a dash rather than a spread of nothing. The book carries
+a best bid too and it is not the same number — the book's is whatever the depth
+stream has delivered, and a venue that publishes a truncated book publishes an
+untruncated ticker.
+
+`change` is measured from the first price this terminal saw for the market, not
+from the venue's session open: a venue's day boundary is its own and the terminal
+is not told where it falls. When a subscription is backfilled the open is the
+oldest bar's, so the change covers the history the chart draws rather than
+restarting at whatever tick arrived first. It is computed in the core rather than
+in each renderer, so the terminal and the browser cannot derive it differently.
 
 Every number crosses the boundary as a JSON number. Internally prices and
 quantities are `Decimal`; the conversion happens here, at the edge, because a

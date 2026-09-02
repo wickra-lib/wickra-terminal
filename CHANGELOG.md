@@ -9,6 +9,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The browser's live bridge reconnects. It carried `onmessage` and nothing else
+  -- no `onerror`, no `onclose`, no retry -- so a dropped socket left the chart
+  frozen at the last print with no indication that anything had happened, where
+  the native source has had an escalating backoff since it was written. The
+  bridge now runs the same one, a quarter of a second doubling to half a minute,
+  and the header says `reconnecting…` while it does.
+- A malformed frame no longer throws out of the message handler. A feed is not a
+  contract; the frame is dropped and the rest of the stream survives.
+- The browser subscribes the venue's ticker, so the quote and the rolling volume
+  reach the core there too rather than only in the native terminal.
+- A browser subscription starts with the venue's history. It feeds a `Manual`
+  source, which has no `backfill`, so the chart opened empty on a market that
+  has traded for years while the native one opened with the venue's klines
+  behind it. The bridge fetches those klines and feeds them before the socket's
+  first message -- best effort, exactly as the native backfill is.
+- The browser feed says it is Binance-only. It always was: the native source
+  dispatches on the venue name across ten venues, and the hand-written bridge
+  speaks one dialect. The refusal message, the placeholder, `web/README.md` and
+  `docs/RENDERERS.md` all name the limit now, so it is met where a user reads
+  rather than discovered on the second venue they try.
+- The recorder can be started while the terminal is running. `SetRecording` was
+  documented in all nine binding READMEs and bound in neither renderer, so the
+  only way to record was a config field read once at start-up -- which is the
+  one thing nobody can reach at the moment the market gives them a reason to.
+  `r` now takes a capacity in both front-ends and an empty answer stops it, and
+  `wkterm --record <events>` arms a run that is starting. A capacity of zero is
+  refused rather than treated as off: it is a ring that drops everything it is
+  handed, and reporting it as recording would promise a file that comes back
+  empty.
+- `--backfill <bars>` alongside it, and both apply on top of `--config` rather
+  than instead of it: a stored layout is a layout, and how far back this run
+  reaches is a decision about this run.
+- The web renderer answers `RemoveSource` and `ExportRecording`. Both were bound
+  in the shared keymap, answered by the TUI, and dropped into the browser's
+  catch-all -- the worst shape available, because the key looks configured, the
+  config validates, and nothing happens. A source can be dropped from its
+  watchlist row or with the bound key, and `save` hands the recording to the
+  browser as the file `Replay` takes.
+- `docs_examples::every_bound_action_reaches_a_renderer` fails the build if a
+  bound action is answered by neither front-end. Three are deliberately
+  unanswered in the browser and are named in the test rather than inferred, so
+  adding a fourth is a decision someone writes down.
+- The watchlist shows what a watchlist is for. A row carried a source, a symbol
+  and a last price, so neither renderer could show a spread, a turnover or a
+  move -- and the numbers had been arriving all along: the state fold took
+  `last` off a `Ticker` and dropped the bid, the ask and the volume on the
+  floor. All four are kept now, `WatchRow` carries them plus a percentage
+  change, and both front-ends draw the columns: the change tinted by its sign,
+  the volume abbreviated on the same thresholds in the terminal and the browser,
+  and a dash rather than a spread of nothing where no ticker has arrived yet.
+
+  The change is measured from the first price the terminal folded for the
+  market, which is the window it has actually watched -- the oldest backfilled
+  bar's open when a subscription is seeded, and otherwise the first price to
+  arrive. Not the venue's session open: a venue's day boundary is its own and
+  the terminal is not told where it falls, so calling it a session change would
+  claim a boundary nothing here knows. It is computed in the core rather than in
+  each renderer, so the terminal and the browser cannot derive it differently.
+- A `ticker` scenario in the golden corpus. The corpus had never carried a
+  `Ticker` event, so the three fields above would have been recorded as zero in
+  every scenario and pinned there -- and a field that is zero everywhere is one
+  the nine language suites cannot tell apart from a field that was dropped,
+  which is exactly what the fold used to do with them.
 - A recorder-and-scrubber suite in every binding. Counted across the eight
   non-Rust surfaces, `SetRecording` and `ExportRecording` were driven by none of
   them, `ReplayPosition` only by the C example and `FeedDerivatives` by none --

@@ -49,6 +49,7 @@ character, which needs no parser and no regular expression.
 | Scenario | Pins |
 |----------|------|
 | `basic` | trades and a book snapshot through the default layout |
+| `ticker` | the venue's ticker interleaved with trades, so the bid, ask, rolling volume and signed change on a watchlist row are pinned at real values rather than at zero |
 | `book_deltas` | an L2 diff stream including level removals and new levels outside the previous range |
 | `footprint` | repeated prices on both sides, so the per-price volume accumulates rather than recording one entry per price |
 | `indicators` | a non-default indicator set (`Sma`, `Rsi`, `MacdIndicator`) driven far enough to produce real values, including the multi-output fields and the per-indicator series |
