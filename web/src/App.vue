@@ -17,6 +17,7 @@ import { placementsFor, readLayout } from './layout'
 import { binWidth, peakOf } from './profile'
 import { parseIndicator } from './indicator'
 import { actionFor, isTyping, readKeybinds, type Keybinds } from './keybinds'
+import { changeClass, compactVolume, spread } from './watchlist'
 import { drawChart } from './render/chart'
 import { openBinanceFeed } from './binance'
 
@@ -619,6 +620,9 @@ onBeforeUnmount(() => {
         <table>
           <tr v-for="(row, i) in watchlist?.rows ?? []" :key="i">
             <td>[{{ row.source }}]</td><td>{{ row.symbol }}</td><td>{{ row.last.toFixed(2) }}</td>
+            <td :class="changeClass(row.change)">{{ row.change.toFixed(2) }}%</td>
+            <td>{{ spread(row) }}</td>
+            <td>{{ compactVolume(row.volume) }}</td>
             <td><button class="x" @click="unsubscribe(row.source, row.symbol)">×</button></td>
           </tr>
         </table>

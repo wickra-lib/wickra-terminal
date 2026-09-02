@@ -161,12 +161,20 @@ td {
   word-break: break-all;
 }
 
-.marks .up {
+.marks .up,
+.watchlist .up {
   color: #34d399;
 }
 
-.marks .down {
+.marks .down,
+.watchlist .down {
   color: #f87171;
+}
+
+/* An unmoved market is not a neutral fact to shout about: the row reads at a
+   glance because only the movers carry colour. */
+.watchlist .flat {
+  color: #9ca3af;
 }
 
 .last-bar {

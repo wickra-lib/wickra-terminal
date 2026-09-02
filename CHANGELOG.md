@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The watchlist shows what a watchlist is for. A row carried a source, a symbol
+  and a last price, so neither renderer could show a spread, a turnover or a
+  move -- and the numbers had been arriving all along: the state fold took
+  `last` off a `Ticker` and dropped the bid, the ask and the volume on the
+  floor. All four are kept now, `WatchRow` carries them plus a percentage
+  change, and both front-ends draw the columns: the change tinted by its sign,
+  the volume abbreviated on the same thresholds in the terminal and the browser,
+  and a dash rather than a spread of nothing where no ticker has arrived yet.
+
+  The change is measured from the first price the terminal folded for the
+  market, which is the window it has actually watched -- the oldest backfilled
+  bar's open when a subscription is seeded, and otherwise the first price to
+  arrive. Not the venue's session open: a venue's day boundary is its own and
+  the terminal is not told where it falls, so calling it a session change would
+  claim a boundary nothing here knows. It is computed in the core rather than in
+  each renderer, so the terminal and the browser cannot derive it differently.
+- A `ticker` scenario in the golden corpus. The corpus had never carried a
+  `Ticker` event, so the three fields above would have been recorded as zero in
+  every scenario and pinned there -- and a field that is zero everywhere is one
+  the nine language suites cannot tell apart from a field that was dropped,
+  which is exactly what the fold used to do with them.
 - Repository scaffolding: Cargo workspace, supply-chain configuration
   (`deny.toml`, `osv-scanner.toml`), lint configuration, `repo-metadata.toml`,
   and dual `MIT OR Apache-2.0` licensing.
