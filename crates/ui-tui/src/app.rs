@@ -84,6 +84,8 @@ pub(crate) enum InputKind {
     SetTimeframe,
     /// Filter the registry catalogue.
     ListIndicators,
+    /// Arm the recorder with a capacity, or stop it with an empty answer.
+    SetRecording,
     /// Place a panel on the layout (`Book 70 0 30 35`).
     AddPanel,
     /// Move the focused panel to a new rectangle (`0 50 100 50`).
@@ -130,7 +132,7 @@ impl App {
             should_quit: false,
             frame: Frame { panels: Vec::new() },
             mode: Mode::Normal,
-            status: "s source · a symbol · d unsub · x drop source · i/k indicator · t timeframe · l catalogue · ,/. seek · w save · p/o/m panel · ↑/↓ scroll · ←/→ symbol · tab panel · q quit"
+            status: "s source · a symbol · d unsub · x drop source · i/k indicator · t timeframe · l catalogue · ,/. seek · r record · w save · p/o/m panel · ↑/↓ scroll · ←/→ symbol · tab panel · q quit"
                 .to_string(),
             focused_panel: 0,
             scroll: vec![0; panels],
@@ -168,6 +170,7 @@ impl App {
             Action::ScrollUp => self.scroll_by(-1),
             Action::ScrollDown => self.scroll_by(1),
             Action::SaveRecording => self.save_recording(),
+            Action::SetRecording => self.begin_input(InputKind::SetRecording),
             Action::AddPanel => self.begin_input(InputKind::AddPanel),
             Action::MovePanel => self.begin_input(InputKind::MovePanel),
             Action::RemovePanel => self.remove_focused_panel(),
@@ -218,6 +221,7 @@ impl App {
             InputKind::RemoveIndicator => self.remove_indicator(&buffer),
             InputKind::SetTimeframe => self.set_timeframe(&buffer),
             InputKind::ListIndicators => self.list_indicators(&buffer),
+            InputKind::SetRecording => self.set_recording(&buffer),
             InputKind::AddPanel => self.add_panel(&buffer),
             InputKind::MovePanel => self.move_focused_panel(&buffer),
         }
@@ -245,6 +249,7 @@ impl App {
                     InputKind::ListIndicators => {
                         "search the catalogue (a substring, blank for all)"
                     }
+                    InputKind::SetRecording => "recording (how many events to keep, blank to stop)",
                     InputKind::AddPanel => "panel (Book 70 0 30 35 | Tape 0 70 100 30 48)",
                     InputKind::MovePanel => "move the focused panel (x y w h, 0 50 100 50)",
                 };
@@ -494,6 +499,39 @@ impl App {
         self.status = format!("replay {target}/{length}");
     }
 
+    /// Arm or stop the recorder from the keyboard.
+    ///
+    /// `record` was a config field and nothing else, so a session could only be
+    /// recorded by editing a file and restarting -- which is the one thing a
+    /// person cannot do when the market has just done something worth keeping.
+    /// The core has carried `SetRecording` from the start and every binding
+    /// README documents it; neither renderer bound it.
+    ///
+    /// An empty answer stops the recorder, which is what `SetRecording` means by
+    /// a `null` capacity. Both directions clear what is already held, so a
+    /// recording is never part one size and part another.
+    fn set_recording(&mut self, text: &str) {
+        let text = text.trim();
+        if text.is_empty() {
+            self.terminal.set_recording(None);
+            self.status = "recording off".to_string();
+            return;
+        }
+        let Ok(capacity) = text.parse::<usize>() else {
+            self.status = format!("bad capacity {text:?} (a count, or empty to stop)");
+            return;
+        };
+        if capacity == 0 {
+            // Zero is not "off": it is a ring that drops everything it is given,
+            // and a status line reading "recording 0 events" would be a promise
+            // of a file that comes back empty.
+            self.status = "a capacity of 0 records nothing; leave it empty to stop".to_string();
+            return;
+        }
+        self.terminal.set_recording(Some(capacity));
+        self.status = format!("recording, keeping {capacity} events");
+    }
+
     /// Write the recorded events beside the terminal, ready to be replayed.
     ///
     /// The core records into a bounded ring and is deliberately
@@ -507,7 +545,7 @@ impl App {
     /// must not take it away.
     fn save_recording(&mut self) {
         if self.terminal.config().record.is_none() {
-            self.status = "recording is off; set `record` in the config to keep events".to_string();
+            self.status = "recording is off; press the set_recording key to start one".to_string();
             return;
         }
         let count = self.terminal.recording_len();
@@ -1280,6 +1318,72 @@ mod tests {
         let body = std::fs::read_to_string(&path).expect("read the recording back");
         let _ = std::fs::remove_file(&path);
         assert!(body.starts_with('['), "not a JSON array");
+    }
+
+    /// The recorder can be armed, re-armed and stopped from the keyboard.
+    ///
+    /// It was a config field read once at start-up, so recording a session
+    /// meant editing a file and restarting -- which nobody can do at the moment
+    /// the market gives them a reason to.
+    #[test]
+    fn the_recorder_can_be_armed_and_stopped_from_the_keyboard() {
+        let mut app = synth_app();
+        assert!(app.terminal.config().record.is_none());
+
+        app.on_action(Action::SetRecording);
+        assert!(app.is_input());
+        type_and_submit(&mut app, "64");
+        assert_eq!(app.terminal.config().record, Some(64));
+        assert!(app.status.contains("keeping 64"), "status: {}", app.status);
+
+        app.terminal
+            .subscribe(0, &Symbol::new("BTC", "USDT"))
+            .unwrap();
+        for _ in 0..4 {
+            app.update();
+        }
+        assert!(app.terminal.recording_len() > 0, "nothing was recorded");
+
+        // Re-arming clears what is held, so a recording is never part one size
+        // and part another.
+        app.on_action(Action::SetRecording);
+        type_and_submit(&mut app, "8");
+        assert_eq!(app.terminal.config().record, Some(8));
+        assert_eq!(app.terminal.recording_len(), 0);
+
+        app.on_action(Action::SetRecording);
+        type_and_submit(&mut app, "   ");
+        assert!(app.terminal.config().record.is_none());
+        assert_eq!(app.status, "recording off");
+    }
+
+    /// A capacity that is not a count, and one that is zero, are told apart.
+    ///
+    /// Zero is not "off": it is a ring that drops everything it is handed, so
+    /// reporting it as recording would promise a file that comes back empty.
+    #[test]
+    fn a_bad_recorder_capacity_is_reported_and_changes_nothing() {
+        let mut app = synth_app();
+        app.on_action(Action::SetRecording);
+        type_and_submit(&mut app, "lots");
+        let status = app.status.clone();
+        assert!(status.starts_with("bad capacity"), "status: {status}");
+        assert!(app.terminal.config().record.is_none());
+
+        app.on_action(Action::SetRecording);
+        type_and_submit(&mut app, "0");
+        let status = app.status.clone();
+        assert!(status.contains("records nothing"), "status: {status}");
+        assert!(app.terminal.config().record.is_none());
+    }
+
+    /// The save key points at the recorder key, not at a config file.
+    #[test]
+    fn saving_with_the_recorder_off_names_the_key_that_starts_it() {
+        let mut app = synth_app();
+        app.on_action(Action::SaveRecording);
+        let status = app.status.clone();
+        assert!(status.contains("set_recording"), "status: {status}");
     }
 
     /// The layout can be changed from the keyboard, and the renderer's own

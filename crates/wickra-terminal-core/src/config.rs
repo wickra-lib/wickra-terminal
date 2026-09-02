@@ -175,6 +175,7 @@ impl Default for Keybinds {
             ("scroll_up", "up"),
             ("scroll_down", "down"),
             ("save_recording", "w"),
+            ("set_recording", "r"),
             ("add_panel", "p"),
             ("remove_panel", "o"),
             ("move_panel", "m"),

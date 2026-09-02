@@ -110,7 +110,11 @@
         {
           "source": 1,
           "symbol": "BTC/USDT",
-          "last": 651.23
+          "last": 651.23,
+          "bid": 0.0,
+          "ask": 0.0,
+          "volume": 0.0,
+          "change": 0.009214183700118114
         }
       ]
     }

@@ -79,6 +79,11 @@ export interface WatchRow {
   source: number
   symbol: string
   last: number
+  bid: number
+  ask: number
+  volume: number
+  /** Percent move from the first price the core folded for this market. */
+  change: number
 }
 
 export interface WatchlistView {
@@ -172,4 +177,6 @@ export type PanelKind =
 export interface PanelSpec {
   kind: PanelKind
   rect: RectSpec
+  /** How many rows the panel carries, or absent for its default. */
+  depth?: number
 }

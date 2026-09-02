@@ -312,12 +312,20 @@
         {
           "source": 0,
           "symbol": "BTC/USDT",
-          "last": 20003.0
+          "last": 20003.0,
+          "bid": 0.0,
+          "ask": 0.0,
+          "volume": 0.0,
+          "change": 0.015
         },
         {
           "source": 0,
           "symbol": "ETH/USDT",
-          "last": 1507.0
+          "last": 1507.0,
+          "bid": 0.0,
+          "ask": 0.0,
+          "volume": 0.0,
+          "change": 0.46666666666666673
         }
       ]
     }

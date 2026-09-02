@@ -7,6 +7,18 @@
       "name": "basic"
     },
     {
+      "commands": "commands/ticker.txt",
+      "config": "configs/ticker.json",
+      "expected": "expected/ticker.min.json",
+      "name": "ticker"
+    },
+    {
+      "commands": "commands/panels.txt",
+      "config": "configs/panels.json",
+      "expected": "expected/panels.min.json",
+      "name": "panels"
+    },
+    {
       "commands": "commands/book_deltas.txt",
       "config": "configs/book_deltas.json",
       "expected": "expected/book_deltas.min.json",

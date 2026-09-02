@@ -122,6 +122,11 @@ cargo run -p wickra-terminal -- --source "replay:$(cat golden/replay/basic.json)
 # Anything beyond one source -- panels, indicators, timeframe -- comes from a
 # config file, which overrides `--source`:
 cargo run -p wickra-terminal -- --config my-terminal.toml
+
+# Record the session, and reach further back on the first subscription. Both
+# apply on top of `--config`: a stored layout is a layout, and these two are
+# decisions about this run.
+cargo run -p wickra-terminal -- --source live:binance:BTC/USDT --record 50000 --backfill 500
 ```
 
 The three `--source` shorthands are `synth:<seed>`,
@@ -131,6 +136,10 @@ book unless a market follows the symbol: `spot`, `usdm`, `coinm` or `margin`, so
 `live:binance:BTC/USDT:usdm` watches the USD-margined perpetual. See
 [docs/SOURCES.md](docs/SOURCES.md) for what each one does and
 [docs/Cookbook.md](docs/Cookbook.md) for worked config files.
+
+The recorder can also be started while the terminal is running — `r` in either
+renderer takes a capacity, and an empty answer stops it — so keeping a session
+does not mean having decided to before it began.
 
 ## Renderers
 

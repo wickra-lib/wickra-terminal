@@ -88,7 +88,11 @@
         {
           "source": 0,
           "symbol": "BTC/USDT",
-          "last": 20000.0
+          "last": 20000.0,
+          "bid": 0.0,
+          "ask": 0.0,
+          "volume": 0.0,
+          "change": 0.0
         }
       ]
     }

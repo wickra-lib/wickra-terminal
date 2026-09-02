@@ -3,17 +3,17 @@
     {
       "panel": "chart",
       "symbol": "BTC/USDT",
-      "last": 19999.0,
+      "last": 19900.0,
       "series": [
         20000.0,
-        20001.0,
-        19999.0
+        20100.0,
+        19900.0
       ],
       "forming": {
         "open": 20000.0,
-        "high": 20001.0,
-        "low": 19999.0,
-        "close": 19999.0,
+        "high": 20100.0,
+        "low": 19900.0,
+        "close": 19900.0,
         "volume": 1.2000000000000002,
         "timestamp": 0
       },
@@ -31,34 +31,16 @@
     {
       "panel": "book",
       "symbol": "BTC/USDT",
-      "bids": [
-        {
-          "price": 19999.0,
-          "quantity": 1.5
-        },
-        {
-          "price": 19998.0,
-          "quantity": 2.5
-        }
-      ],
-      "asks": [
-        {
-          "price": 20001.0,
-          "quantity": 1.2
-        },
-        {
-          "price": 20002.0,
-          "quantity": 3.0
-        }
-      ],
-      "spread": 2.0
+      "bids": [],
+      "asks": [],
+      "spread": null
     },
     {
       "panel": "footprint",
       "symbol": "BTC/USDT",
       "levels": [
         {
-          "price": 20001.0,
+          "price": 20100.0,
           "buy": 0.3,
           "sell": 0.0
         },
@@ -68,7 +50,7 @@
           "sell": 0.0
         },
         {
-          "price": 19999.0,
+          "price": 19900.0,
           "buy": 0.0,
           "sell": 0.4
         }
@@ -79,13 +61,13 @@
       "symbol": "BTC/USDT",
       "prints": [
         {
-          "price": 19999.0,
+          "price": 19900.0,
           "quantity": 0.4,
           "side": "sell",
           "timestamp": 3
         },
         {
-          "price": 20001.0,
+          "price": 20100.0,
           "quantity": 0.3,
           "side": "buy",
           "timestamp": 2
@@ -104,11 +86,11 @@
         {
           "source": 0,
           "symbol": "BTC/USDT",
-          "last": 19999.0,
-          "bid": 0.0,
-          "ask": 0.0,
-          "volume": 0.0,
-          "change": -0.005
+          "last": 19900.0,
+          "bid": 19899.0,
+          "ask": 19902.0,
+          "volume": 1250000.0,
+          "change": -0.5
         }
       ]
     }
