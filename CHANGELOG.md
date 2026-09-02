@@ -91,6 +91,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now runs its examples in the job that already has the binding built, which
   costs a second and is the only check that says they work. What is left in the
   parse gate is the WASM example, which is a page and needs a browser.
+- The browser writes a changed layout back to `localStorage`. `web/README.md`
+  said the layout is persisted, and the config was written once and never again
+  -- so a panel added while the terminal ran was gone on the next reload, which
+  made the panel controls something to use and then lose. The whole config is
+  rewritten rather than a layout stored beside it: two places holding a layout is
+  one more than can be kept in step. A config that does not parse is handed back
+  unchanged rather than replaced, so a display fault cannot become data loss.
 - A `host_feed` scenario in the golden corpus. `Feed` was driven by two binding
   suites and the runtime indicator commands by none of the corpus at all, so the
   frames they produce were never held to byte parity across languages -- a

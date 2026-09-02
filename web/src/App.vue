@@ -14,7 +14,7 @@ import type {
   TapeView,
   WatchlistView,
 } from './types'
-import { placementsFor, readLayout } from './layout'
+import { placementsFor, readLayout, withLayout } from './layout'
 import { binWidth, peakOf } from './profile'
 import { parseIndicator } from './indicator'
 import { actionFor, isTyping, readKeybinds, type Keybinds } from './keybinds'
@@ -311,7 +311,7 @@ function addPanel(): void {
     return
   }
   if (send({ type: 'AddPanel', spec })) {
-    layout.value = [...layout.value, spec]
+    setLayout([...layout.value, spec])
     panelShorthand.value = ''
     status.value = `added ${spec.kind}`
   }
@@ -329,7 +329,7 @@ function removePanel(kind: PanelKind): void {
     return
   }
   if (send({ type: 'RemovePanel', index })) {
-    layout.value = layout.value.filter((_, at) => at !== index)
+    setLayout(layout.value.filter((_, at) => at !== index))
     status.value = `removed ${kind}`
   }
 }
@@ -558,6 +558,20 @@ function findPanel<T extends PanelView['panel']>(
 // component.
 const layout = ref<PanelSpec[]>([])
 const placements = computed(() => placementsFor(layout.value))
+
+/** Hold the drawn layout and the stored config to the same set of panels.
+ *
+ * The config in `localStorage` is what the next reload starts from. Writing it
+ * back here is what makes the panel controls worth using: a layout arranged
+ * once survives, which is what `web/README.md` has always said happens.
+ */
+function setLayout(panels: PanelSpec[]): void {
+  layout.value = panels
+  const stored = localStorage.getItem(CONFIG_KEY)
+  if (stored !== null) {
+    localStorage.setItem(CONFIG_KEY, withLayout(stored, panels))
+  }
+}
 
 const chart = computed<ChartView | undefined>(() => findPanel('chart'))
 const book = computed<BookView | undefined>(() => findPanel('book'))

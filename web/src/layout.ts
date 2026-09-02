@@ -17,6 +17,33 @@ export function readLayout(configJson: string): PanelSpec[] {
 }
 
 /**
+ * The same config with a different set of panels.
+ *
+ * The stored config is what the next reload starts from, and it used to be
+ * written once and never again -- so a panel added while the terminal ran was
+ * gone on reload, against a README that said the layout is persisted. The whole
+ * config is rewritten rather than a layout stored beside it, because two places
+ * holding a layout is one more than can be kept in step.
+ *
+ * Returns the input unchanged if it does not parse: a config this cannot read is
+ * one the terminal did not start from either, and losing it here would turn a
+ * display fault into a data loss.
+ */
+export function withLayout(configJson: string, panels: PanelSpec[]): string {
+  let parsed: { layout?: { panels?: PanelSpec[] } }
+  try {
+    parsed = JSON.parse(configJson) as { layout?: { panels?: PanelSpec[] } }
+  } catch {
+    return configJson
+  }
+  if (parsed === null || typeof parsed !== 'object') {
+    return configJson
+  }
+  parsed.layout = { ...(parsed.layout ?? {}), panels }
+  return JSON.stringify(parsed)
+}
+
+/**
  * Absolute CSS placement per panel kind.
  *
  * A kind missing from the result is missing from the layout, and the renderer

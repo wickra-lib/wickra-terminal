@@ -44,7 +44,9 @@ npm run preview
 ## Notes
 
 - The default source is the deterministic `Synth` feed; the layout is persisted
-  in `localStorage`.
+  in `localStorage`, including panels added or removed while it runs. That last
+  part was the sentence's claim before it was its behaviour: the config was
+  written once and never again, so an arranged layout was gone on reload.
 - A live source runs over the browser's own WebSocket (the native exchange
   client cannot run in a sandbox); real order execution needs a backend and is
   gated separately.
