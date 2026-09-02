@@ -19,7 +19,7 @@ import { parseIndicator } from './indicator'
 import { actionFor, isTyping, readKeybinds, type Keybinds } from './keybinds'
 import { changeClass, compactVolume, spread } from './watchlist'
 import { drawChart } from './render/chart'
-import { openBinanceFeed } from './binance'
+import { backfill, openBinanceFeed, type FeedEvent, type FeedState } from './binance'
 
 const CONFIG_KEY = 'wickra-terminal-config'
 
@@ -89,6 +89,8 @@ let timer: number | undefined
 let nextSourceId = 0
 // Cleanup functions for open browser-side exchange WebSocket bridges.
 const feedBridges: Array<() => void> = []
+/** What the browser's live bridge is doing, so the header can say which. */
+const feedState = ref<FeedState>('closed')
 
 function parseSourceSpec(shorthand: string): Record<string, unknown> | null {
   const idx = shorthand.indexOf(':')
@@ -110,6 +112,11 @@ function parseSourceSpec(shorthand: string): Record<string, unknown> | null {
 // `live:binance:BASE/QUOTE` — the WASM core cannot open sockets, so the browser
 // opens the Binance stream itself and bridges it into a `Manual` source through
 // the `Feed` command. Returns true if it handled the shorthand.
+//
+// Binance only. The native source reaches ten venues through `wickra-exchange`,
+// and each speaks a stream dialect that would have to be written again here, so
+// the limit is said out loud rather than discovered on the second venue anyone
+// tries.
 function addLiveBridge(shorthand: string): boolean {
   if (!terminal || !shorthand.startsWith('live:')) {
     return false
@@ -119,24 +126,48 @@ function addLiveBridge(shorthand: string): boolean {
   const venue = j < 0 ? rest : rest.slice(0, j)
   const market = j < 0 ? '' : rest.slice(j + 1)
   if (venue !== 'binance' || !market) {
-    status.value = 'browser live supports only live:binance:BASE/QUOTE'
+    status.value =
+      'the browser feed is Binance spot only (live:binance:BASE/QUOTE); the native terminal reaches ten venues'
     return true
   }
   const id = nextSourceId
   nextSourceId += 1
   terminal.command(JSON.stringify({ type: 'AddSource', spec: 'Manual' }))
   terminal.command(JSON.stringify({ type: 'Subscribe', source: id, symbol: market }))
+
+  /** Hand one event to the core, ignoring anything that arrives after teardown. */
+  const push = (event: FeedEvent): void => {
+    try {
+      terminal?.command(JSON.stringify({ type: 'Feed', source: id, event }))
+    } catch {
+      /* terminal gone */
+    }
+  }
+
   try {
-    const close = openBinanceFeed(market, (event) => {
-      // Late messages can arrive after the terminal is torn down; ignore them.
-      try {
-        terminal?.command(JSON.stringify({ type: 'Feed', source: id, event }))
-      } catch {
-        /* terminal gone */
+    const handle = openBinanceFeed(market, push, (state) => {
+      feedState.value = state
+      if (state === 'reconnecting') {
+        // A dropped socket used to leave the chart frozen at the last print with
+        // nothing said. A frozen chart that says it is frozen is a different
+        // product from one that does not.
+        status.value = `live binance ${market}: reconnecting`
       }
     })
-    feedBridges.push(close)
+    feedBridges.push(handle.close)
     status.value = `live binance ${market} on source ${id}`
+
+    // History before the stream, the way a native subscription is seeded from
+    // the venue's klines. Best effort and asynchronous: a market with no
+    // history, or a REST call that fails, means a terminal that starts empty
+    // rather than one that refuses to open the market. Late live prints
+    // interleaving with the seed is harmless -- the fold is per event and the
+    // bar builder is driven by timestamps, not by arrival order.
+    void backfill(market).then((seed) => {
+      for (const event of seed) {
+        push(event)
+      }
+    })
   } catch (err) {
     status.value = `live failed: ${String(err)}`
   }
@@ -555,6 +586,10 @@ onBeforeUnmount(() => {
     <header class="bar">
       <strong>Wickra Terminal</strong>
       <span class="muted">web renderer</span>
+      <span
+        v-if="feedState !== 'closed'"
+        :class="feedState === 'open' ? 'muted' : 'reconnecting'"
+      >{{ feedState === 'open' ? 'live' : 'reconnecting…' }}</span>
       <label>seed <input type="number" v-model.number="seed" min="0" /></label>
       <label>symbol <input type="text" v-model="symbol" /></label>
       <button @click="restart">restart</button>
@@ -566,7 +601,7 @@ onBeforeUnmount(() => {
           ref="sourceField"
           type="text"
           v-model="sourceShorthand"
-          placeholder="synth:2 | live:binance:ETH/USDT | replay:[…]"
+          placeholder="synth:2 | live:binance:ETH/USDT (Binance only) | replay:[…]"
         />
       </label>
       <button @click="addSource">add</button>

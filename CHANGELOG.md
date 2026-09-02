@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The browser's live bridge reconnects. It carried `onmessage` and nothing else
+  -- no `onerror`, no `onclose`, no retry -- so a dropped socket left the chart
+  frozen at the last print with no indication that anything had happened, where
+  the native source has had an escalating backoff since it was written. The
+  bridge now runs the same one, a quarter of a second doubling to half a minute,
+  and the header says `reconnecting…` while it does.
+- A malformed frame no longer throws out of the message handler. A feed is not a
+  contract; the frame is dropped and the rest of the stream survives.
+- The browser subscribes the venue's ticker, so the quote and the rolling volume
+  reach the core there too rather than only in the native terminal.
+- A browser subscription starts with the venue's history. It feeds a `Manual`
+  source, which has no `backfill`, so the chart opened empty on a market that
+  has traded for years while the native one opened with the venue's klines
+  behind it. The bridge fetches those klines and feeds them before the socket's
+  first message -- best effort, exactly as the native backfill is.
+- The browser feed says it is Binance-only. It always was: the native source
+  dispatches on the venue name across ten venues, and the hand-written bridge
+  speaks one dialect. The refusal message, the placeholder, `web/README.md` and
+  `docs/RENDERERS.md` all name the limit now, so it is met where a user reads
+  rather than discovered on the second venue they try.
 - The recorder can be started while the terminal is running. `SetRecording` was
   documented in all nine binding READMEs and bound in neither renderer, so the
   only way to record was a config field read once at start-up -- which is the

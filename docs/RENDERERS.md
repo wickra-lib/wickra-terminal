@@ -68,6 +68,34 @@ seventh ever joins them.
 person at a keyboard. The web renderer uses `Feed` exactly that way, from its
 Binance bridge.
 
+## The browser's live feed is not the native one
+
+Both renderers can watch a live market and they do not reach the same markets.
+The native source connects through `wickra-exchange` and dispatches on the venue
+name, so it opens Binance, Bybit, OKX, Bitget, KuCoin, Gate, HTX, Kraken,
+Coinbase or Upbit, spot or derivatives. The browser cannot use that client at
+all — it is native code with a socket and an HTTP stack — so it opens the venue's
+public stream itself and feeds a `Manual` source through the `Feed` command, and
+that hand-written bridge speaks one dialect. `live:` with any other venue is
+refused with a message that says so, which is the whole of the difference: the
+limit is stated where a user meets it rather than discovered on the second venue
+they try.
+
+Two things the bridge lacked and the native source always had, both of which
+made the browser look like a different product rather than a second view:
+
+- **It did not reconnect.** The socket carried `onmessage` and nothing else — no
+  `onerror`, no `onclose`, no retry — so a dropped connection left the chart
+  frozen at the last print with nothing said. It now runs the native source's
+  backoff, a quarter of a second doubling to half a minute, and the header says
+  `reconnecting…` while it does.
+- **It had no history.** A `Manual` source has no `backfill`, so the browser
+  chart opened empty on a market that has traded for years while the native one
+  opened with the venue's klines behind it. The bridge fetches those klines and
+  feeds them before the socket's first message. Best effort, exactly as the
+  native backfill is: no history is a terminal that starts empty, never one that
+  refuses to open the market.
+
 ## One keymap, both renderers
 
 `layout.keybinds` is a map from action name to key name, and it sits in the
@@ -112,7 +140,7 @@ frames — see the [examples](../examples/).
 |-------|--------------|---------------|
 | Live charts + indicators | yes | yes (core → WASM) |
 | Recorded replay + seek | yes | yes |
-| Live market data | `wickra-exchange` | browser WebSocket into a `Manual` source |
+| Live market data | `wickra-exchange`, ten venues | browser WebSocket into a `Manual` source, **Binance spot only** |
 | Paper fills, P&L, real orders | not built | not built |
 
 Both renderers read. Neither opens an order, and there is nothing to gate: the
