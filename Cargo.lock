@@ -139,12 +139,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
-name = "base64"
-version = "0.23.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
-
-[[package]]
 name = "base64ct"
 version = "1.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1284,7 +1278,7 @@ version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96547c2556ec9d12fb1578c4eaf448b04993e7fb79cbaad930a656880a6bdfa0"
 dependencies = [
- "base64 0.22.1",
+ "base64",
  "bytes",
  "futures-channel",
  "futures-util",
@@ -2543,7 +2537,7 @@ version = "0.12.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
 dependencies = [
- "base64 0.22.1",
+ "base64",
  "bytes",
  "futures-channel",
  "futures-core",
@@ -3157,7 +3151,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4676b37242ccbd1aabf56edb093a4827dc49086c0ffd764a5705899e0f35f8f7"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
+ "base64",
  "bitflags 2.13.0",
  "fancy-regex",
  "filedescriptor",
@@ -3794,16 +3788,6 @@ dependencies = [
 
 [[package]]
 name = "wickra-core"
-version = "0.9.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7cf4e7af4f00596d9bd33c66a9aaf935687959dd14d063b8b7d7d749e102680e"
-dependencies = [
- "rayon",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "wickra-core"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3801b8e584405b19c5db178a8aae4587250a27daf26397ce3bde9e4c0badb115"
@@ -3815,7 +3799,7 @@ dependencies = [
 [[package]]
 name = "wickra-exchange"
 version = "0.1.0"
-source = "git+https://github.com/wickra-lib/wickra-exchange?rev=330df9127829e0caaab4d097d8ce6e659586aa71#330df9127829e0caaab4d097d8ce6e659586aa71"
+source = "git+https://github.com/wickra-lib/wickra-exchange?rev=73511aa99978bc34c5e65de885b9a1f653565155#73511aa99978bc34c5e65de885b9a1f653565155"
 dependencies = [
  "futures-util",
  "reqwest",
@@ -3827,9 +3811,9 @@ dependencies = [
 [[package]]
 name = "wickra-exchange-core"
 version = "0.1.0"
-source = "git+https://github.com/wickra-lib/wickra-exchange?rev=330df9127829e0caaab4d097d8ce6e659586aa71#330df9127829e0caaab4d097d8ce6e659586aa71"
+source = "git+https://github.com/wickra-lib/wickra-exchange?rev=73511aa99978bc34c5e65de885b9a1f653565155#73511aa99978bc34c5e65de885b9a1f653565155"
 dependencies = [
- "base64 0.23.1",
+ "base64",
  "hex",
  "hmac",
  "p256",
@@ -3838,7 +3822,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "thiserror 2.0.20",
- "wickra-core 0.9.9",
+ "wickra-core",
  "zeroize",
 ]
 
@@ -3880,7 +3864,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "toml",
- "wickra-core 1.0.4",
+ "wickra-core",
  "wickra-exchange",
  "wickra-exchange-core",
 ]
