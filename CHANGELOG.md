@@ -595,6 +595,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `wnaf` moved off a yanked release. It arrives through
+  `wickra-exchange-core -> p256 -> primeorder`, crates.io withdrew 0.14.0, and
+  `yanked = "deny"` turned that into a red supply-chain job without a line of
+  this repository changing -- which is the gate working: a yanked version is one
+  the publisher has asked people to stop using. 0.14.1 is the same API, so the
+  lockfile is the whole change.
 - The live source holds a `dyn MarketData`, not a `dyn Exchange`. `connect`
   hands back the whole exchange -- order placement and balances alongside the
   reads -- and the source kept it, so nothing but review stood between an edit
