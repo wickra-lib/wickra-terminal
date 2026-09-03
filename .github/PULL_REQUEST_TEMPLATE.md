@@ -1,4 +1,14 @@
-<!-- Keep it short. One logical change per PR. -->
+<!--
+Keep it short. One logical change per PR.
+
+Touching the core contract, several bindings at once, or the release pipeline?
+Use the long form instead — GitHub offers no picker, so append the query
+parameter yourself:
+
+    ?expand=1&template=detailed.md
+
+(.github/PULL_REQUEST_TEMPLATE/detailed.md)
+-->
 
 ## What
 

@@ -57,7 +57,13 @@ fn rows(profile: &ProfileRow, width: usize) -> Vec<Line<'static>> {
 }
 
 /// Render the profile panel.
-pub(crate) fn render(frame: &mut Frame, area: Rect, view: &ProfileView, focused: bool) {
+pub(crate) fn render(
+    frame: &mut Frame,
+    area: Rect,
+    view: &ProfileView,
+    focused: bool,
+    scroll: u16,
+) {
     // Two columns of chrome from the block, two from the row indent.
     let width = usize::from(area.width.saturating_sub(4)).max(1);
     let lines: Vec<Line> = view
@@ -66,10 +72,12 @@ pub(crate) fn render(frame: &mut Frame, area: Rect, view: &ProfileView, focused:
         .flat_map(|profile| rows(profile, width))
         .collect();
     frame.render_widget(
-        Paragraph::new(lines).block(super::panel_block(
-            format!("Profiles {}", view.symbol),
-            focused,
-        )),
+        Paragraph::new(lines)
+            .scroll((scroll, 0))
+            .block(super::panel_block(
+                format!("Profiles {}", view.symbol),
+                focused,
+            )),
         area,
     );
 }
@@ -92,7 +100,7 @@ mod tests {
     /// rather than on the widget tree that produced it.
     fn drawn(view: &ProfileView, width: u16, height: u16) -> String {
         harness::text(&harness::draw(width, height, |frame, area| {
-            render(frame, area, view, true);
+            render(frame, area, view, true, 0);
         }))
     }
 

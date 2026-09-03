@@ -1,14 +1,35 @@
-import type { ChartView } from '../types'
+import type { ChartView, OhlcBar } from '../types'
 
-// Canvas renderer for the chart panel's view-model. The core produces the series
-// and the indicator series; this only draws them — the same view-model the TUI
-// maps to a ratatui widget.
+// Canvas renderer for the chart panel's view-model. The core produces the bars;
+// this only draws them — the same view-model the TUI maps to a ratatui canvas.
+//
+// Candles rather than a line of last prices, because the view-model now carries
+// the bars and a line of last trades is not what a chart of a market is. The
+// tick series is still drawn when no bar has closed yet: at an hourly timeframe
+// that is the first hour of every session, and an empty panel for an hour is
+// worse than a rough line.
+//
+// Indicator overlays are drawn only in that fallback. An indicator's series is
+// sampled once per tick while the candles are one per bar, so on the candle axis
+// the two do not line up — an average would sit near, but not on, the bar it was
+// computed from, which reads as a real reading and is not one.
 
 /** Overlay colours, cycled per indicator. Deliberately not the price blue. */
 const OVERLAY_COLOURS = ['#f59e0b', '#a78bfa', '#34d399', '#f472b6', '#22d3ee']
 
-/** Vertical padding, so a line at the extreme is not clipped by the border. */
+/** Vertical padding, so a line or a wick at the extreme is not clipped. */
 const PAD = 6
+
+/** Width of the price scale gutter, in pixels. */
+const SCALE_WIDTH = 56
+
+/** How many price labels the scale carries. */
+const SCALE_ROWS = 5
+
+const UP = '#34d399'
+const DOWN = '#f87171'
+const GROUND = '#0b0e14'
+const MUTED = '#6b7280'
 
 interface Scale {
   min: number
@@ -36,6 +57,33 @@ function scaleOf(seriesList: number[][]): Scale {
 }
 
 /**
+ * The low and high across every bar drawn.
+ *
+ * A flat market has a zero range, which would divide the whole plot by nothing;
+ * it gets a hair of height so the row still draws.
+ */
+export function priceRange(bars: OhlcBar[]): Scale | null {
+  let low = Number.POSITIVE_INFINITY
+  let high = Number.NEGATIVE_INFINITY
+  for (const bar of bars) {
+    if (Number.isFinite(bar.low)) {
+      low = Math.min(low, bar.low)
+    }
+    if (Number.isFinite(bar.high)) {
+      high = Math.max(high, bar.high)
+    }
+  }
+  if (!Number.isFinite(low) || !Number.isFinite(high)) {
+    return null
+  }
+  if (high === low) {
+    const pad = Math.abs(high) * 0.0005 || 1
+    return { min: low - pad, range: 2 * pad }
+  }
+  return { min: low, range: high - low }
+}
+
+/**
  * Draw one series across the full width, right-aligned.
  *
  * Right-aligned because every series ends at the current tick but they do not
@@ -50,6 +98,7 @@ function strokeSeries(
   series: number[],
   total: number,
   scale: Scale,
+  left: number,
   width: number,
   height: number,
   colour: string,
@@ -63,7 +112,7 @@ function strokeSeries(
   ctx.beginPath()
   const offset = total - series.length
   series.forEach((value, index) => {
-    const x = ((index + offset) / (total - 1)) * width
+    const x = left + ((index + offset) / (total - 1)) * width
     const y = height - ((value - scale.min) / scale.range) * (height - 2 * PAD) - PAD
     if (index === 0) {
       ctx.moveTo(x, y)
@@ -74,6 +123,63 @@ function strokeSeries(
   ctx.stroke()
 }
 
+/** Draw the price scale down the left gutter. */
+function drawScale(
+  ctx: CanvasRenderingContext2D,
+  scale: Scale,
+  height: number,
+): void {
+  ctx.fillStyle = MUTED
+  ctx.font = '10px ui-monospace, monospace'
+  ctx.textAlign = 'right'
+  ctx.textBaseline = 'middle'
+  for (let row = 0; row < SCALE_ROWS; row += 1) {
+    const fraction = row / (SCALE_ROWS - 1)
+    const value = scale.min + scale.range * (1 - fraction)
+    // Clamped inside the plot so the top and bottom labels are not half cut off
+    // by the canvas edge.
+    const y = Math.min(height - PAD, Math.max(PAD, PAD + fraction * (height - 2 * PAD)))
+    ctx.fillText(value.toFixed(2), SCALE_WIDTH - 6, y)
+  }
+}
+
+/** Draw one candle: the wick from low to high, the body from open to close. */
+function drawCandle(
+  ctx: CanvasRenderingContext2D,
+  bar: OhlcBar,
+  index: number,
+  count: number,
+  scale: Scale,
+  left: number,
+  width: number,
+  height: number,
+): void {
+  const slot = width / count
+  const centre = left + slot * (index + 0.5)
+  // A gap between neighbours, and never wider than four pixels: a chart of six
+  // bars should not draw six blocks the width of the panel.
+  const body = Math.max(1, Math.min(slot * 0.64, 14))
+  const y = (value: number): number =>
+    height - ((value - scale.min) / scale.range) * (height - 2 * PAD) - PAD
+
+  const rising = bar.close >= bar.open
+  ctx.strokeStyle = rising ? UP : DOWN
+  ctx.fillStyle = rising ? UP : DOWN
+
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(centre, y(bar.high))
+  ctx.lineTo(centre, y(bar.low))
+  ctx.stroke()
+
+  // A doji — open equal to close — has a body of no height, and a rect of no
+  // height draws nothing at all. One pixel keeps the bar a trader most wants to
+  // see on the chart.
+  const top = y(Math.max(bar.open, bar.close))
+  const bottom = y(Math.min(bar.open, bar.close))
+  ctx.fillRect(centre - body / 2, top, body, Math.max(1, bottom - top))
+}
+
 export function drawChart(canvas: HTMLCanvasElement, view: ChartView): void {
   const ctx = canvas.getContext('2d')
   if (!ctx) {
@@ -82,18 +188,33 @@ export function drawChart(canvas: HTMLCanvasElement, view: ChartView): void {
   const width = canvas.width
   const height = canvas.height
 
-  ctx.fillStyle = '#0b0e14'
+  ctx.fillStyle = GROUND
   ctx.fillRect(0, 0, width, height)
 
+  // Closed bars plus the one still forming: a chart that stopped at the last
+  // close would show the market standing still for a whole bar.
+  const bars = [...(view.bars ?? [])]
+  if (view.forming) {
+    bars.push(view.forming)
+  }
+
+  const range = priceRange(bars)
+  if (range && bars.length > 0) {
+    const plotLeft = SCALE_WIDTH
+    const plotWidth = Math.max(1, width - SCALE_WIDTH)
+    drawScale(ctx, range, height)
+    bars.forEach((bar, index) => {
+      drawCandle(ctx, bar, index, bars.length, range, plotLeft, plotWidth, height)
+    })
+    return
+  }
+
+  // No bar has closed yet. The tick series is all there is, and the overlays
+  // share its axis, so this is the one place they can be drawn honestly.
   const price = view.series
   if (price.length < 2) {
     return
   }
-
-  // Only overlay indicators whose values live on the price scale. A bounded
-  // oscillator like RSI shares no range with the price, and forcing both onto
-  // one axis would flatten the price line into a horizontal streak. Those keep
-  // the numeric readout beside the chart instead.
   const overlays = (view.indicators ?? [])
     .map((indicator) => indicator.series ?? [])
     .filter((series) => series.length >= 2)
@@ -108,6 +229,7 @@ export function drawChart(canvas: HTMLCanvasElement, view: ChartView): void {
       series,
       total,
       scale,
+      0,
       width,
       height,
       OVERLAY_COLOURS[index % OVERLAY_COLOURS.length],
@@ -116,7 +238,7 @@ export function drawChart(canvas: HTMLCanvasElement, view: ChartView): void {
   })
 
   // The price last, so it is never hidden under an overlay.
-  strokeSeries(ctx, price, total, scale, width, height, '#3b82f6', 1.5)
+  strokeSeries(ctx, price, total, scale, 0, width, height, '#3b82f6', 1.5)
 }
 
 /**

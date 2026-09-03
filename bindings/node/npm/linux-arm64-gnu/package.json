@@ -4,7 +4,9 @@
   "description": "Native binding for wickra-terminal (Linux arm64 GNU). Installed automatically as an optional dependency of wickra-terminal on matching platforms.",
   "main": "wickra-terminal.linux-arm64-gnu.node",
   "files": [
-    "wickra-terminal.linux-arm64-gnu.node"
+    "wickra-terminal.linux-arm64-gnu.node",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
   ],
   "license": "MIT OR Apache-2.0",
   "engines": {

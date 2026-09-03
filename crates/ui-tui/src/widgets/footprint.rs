@@ -8,7 +8,13 @@ use ratatui::Frame;
 use wickra_terminal_core::view::FootprintView;
 
 /// Render the footprint panel.
-pub(crate) fn render(frame: &mut Frame, area: Rect, view: &FootprintView, focused: bool) {
+pub(crate) fn render(
+    frame: &mut Frame,
+    area: Rect,
+    view: &FootprintView,
+    focused: bool,
+    scroll: u16,
+) {
     let lines: Vec<Line> = view
         .levels
         .iter()
@@ -26,10 +32,12 @@ pub(crate) fn render(frame: &mut Frame, area: Rect, view: &FootprintView, focuse
         })
         .collect();
     frame.render_widget(
-        Paragraph::new(lines).block(super::panel_block(
-            format!("Footprint {}", view.symbol),
-            focused,
-        )),
+        Paragraph::new(lines)
+            .scroll((scroll, 0))
+            .block(super::panel_block(
+                format!("Footprint {}", view.symbol),
+                focused,
+            )),
         area,
     );
 }
@@ -53,7 +61,7 @@ mod tests {
             symbol: "BTC/USDT".to_owned(),
             levels: vec![level(100.0, 9.0, 1.0), level(99.0, 1.0, 9.0)],
         };
-        let buffer = harness::draw(40, 6, |frame, area| render(frame, area, &view, false));
+        let buffer = harness::draw(40, 6, |frame, area| render(frame, area, &view, false, 0));
         assert_eq!(harness::row_colour(&buffer, 1), Color::Green);
         assert_eq!(harness::row_colour(&buffer, 2), Color::Red);
     }
@@ -66,7 +74,7 @@ mod tests {
             symbol: "S".to_owned(),
             levels: vec![level(100.0, 4.0, 4.0)],
         };
-        let buffer = harness::draw(40, 4, |frame, area| render(frame, area, &view, false));
+        let buffer = harness::draw(40, 4, |frame, area| render(frame, area, &view, false, 0));
         assert_eq!(harness::row_colour(&buffer, 1), Color::Green);
     }
 
@@ -76,7 +84,7 @@ mod tests {
             symbol: "BTC/USDT".to_owned(),
             levels: vec![level(100.5, 2.25, 0.75)],
         };
-        let buffer = harness::draw(44, 4, |frame, area| render(frame, area, &view, true));
+        let buffer = harness::draw(44, 4, |frame, area| render(frame, area, &view, true, 0));
         let row = harness::row(&buffer, 1);
         assert!(row.contains("100.50"), "{row}");
         assert!(row.contains("2.250"), "{row}");

@@ -126,3 +126,83 @@ td {
   color: #6b7280;
   text-align: center;
 }
+
+/* The profile panel: one horizontal bar per bin, scaled to the widest bin in
+   its own distribution. Same decision as the TUI widget makes -- two profiles
+   on one panel measure different quantities, so a shared scale would flatten
+   whichever has the smaller units into nothing. */
+.dist,
+.stream {
+  margin-bottom: 10px;
+}
+
+.panel h3 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.bins {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.bin {
+  height: 4px;
+  min-width: 1px;
+  background: #22d3ee;
+}
+
+/* The alternative-bar panel: direction marks, wrapping, plus the last bar in
+   figures -- the marks say which way and nothing else. */
+.marks {
+  line-height: 1.1;
+  word-break: break-all;
+}
+
+.marks .up,
+.watchlist .up {
+  color: #34d399;
+}
+
+.marks .down,
+.watchlist .down {
+  color: #f87171;
+}
+
+/* An unmoved market is not a neutral fact to shout about: the row reads at a
+   glance because only the movers carry colour. */
+.watchlist .flat {
+  color: #9ca3af;
+}
+
+.last-bar {
+  margin: 4px 0 0;
+}
+
+/* The catalogue strip: a chip per matching indicator name, clicking one drops
+   it into the add field. Five hundred names only become useful once filtered. */
+.catalogue {
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chip {
+  font-size: 11px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+/* A bridge that has dropped its socket says so. A frozen chart that announces it
+   is frozen is a different product from one that does not. */
+.reconnecting {
+  color: #fbbf24;
+}
+
+/* The panel's own remove control, on its heading rather than in a menu: a
+   button that sits on the thing it acts on needs no label saying which. */
+.panel h2 .drop {
+  float: right;
+  margin-left: 6px;
+}

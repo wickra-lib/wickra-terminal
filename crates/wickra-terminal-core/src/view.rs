@@ -46,7 +46,30 @@ pub struct IndicatorValue {
     pub series: Vec<f64>,
 }
 
-/// The chart panel's view-model: a recent price series with indicator overlays.
+/// One OHLCV bar, as a chart draws it.
+///
+/// Separate from [`crate::registry::AltBar`], which the bars panel carries: an
+/// alternative bar has a direction and no time, because a Renko brick or a
+/// point-and-figure column advances on price movement. This one is a bar of the
+/// configured timeframe and is placed by its timestamp.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct OhlcBar {
+    /// Opening price of the bar.
+    pub open: f64,
+    /// Highest price traded in the bar.
+    pub high: f64,
+    /// Lowest price traded in the bar.
+    pub low: f64,
+    /// Closing price of the bar.
+    pub close: f64,
+    /// Volume traded in the bar.
+    pub volume: f64,
+    /// The bar's opening timestamp (ms since the Unix epoch).
+    pub timestamp: i64,
+}
+
+/// The chart panel's view-model: the bars, a tick-resolution price series, and
+/// the indicator overlays.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChartView {
     /// The market shown.
@@ -54,7 +77,27 @@ pub struct ChartView {
     /// The last traded price.
     pub last: f64,
     /// A bounded recent price series, oldest first.
+    ///
+    /// One point per trade rather than per bar, so it is the finer of the two
+    /// and does not wait for a bar to close. A renderer with a handful of
+    /// columns draws this; one with room for candles draws `bars`.
     pub series: Vec<f64>,
+    /// The closed bars of the configured timeframe, oldest first.
+    ///
+    /// Empty until the first bar closes, and omitted from the JSON entirely
+    /// when empty, so a consumer written against the earlier shape sees exactly
+    /// the object it saw before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bars: Vec<OhlcBar>,
+    /// The bar still accumulating, if a trade has opened one.
+    ///
+    /// Kept apart from `bars` rather than appended to it, because it is the one
+    /// bar that will still change: an indicator never sees it — a reading that
+    /// repainted as its bar filled would be a different number every print —
+    /// but a chart that omitted it would show the market frozen at the last
+    /// close.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forming: Option<OhlcBar>,
     /// The indicator overlays.
     pub indicators: Vec<IndicatorValue>,
 }
@@ -113,6 +156,20 @@ pub struct WatchRow {
     pub symbol: String,
     /// The last traded price.
     pub last: f64,
+    /// The venue's best bid, or 0.0 before the first ticker.
+    pub bid: f64,
+    /// The venue's best ask, or 0.0 before the first ticker.
+    pub ask: f64,
+    /// The venue's rolling base-asset volume, or 0.0 before the first ticker.
+    pub volume: f64,
+    /// Percentage change from the first price this terminal folded for the
+    /// market, or 0.0 before there is one.
+    ///
+    /// Computed here rather than left to each renderer: two front-ends deriving
+    /// the same number from the same two fields is two places for it to be
+    /// derived differently, and a watchlist that disagreed with itself between
+    /// the terminal and the browser is the bug that would follow.
+    pub change: f64,
 }
 
 /// The watchlist panel's view-model.
@@ -229,6 +286,15 @@ mod tests {
             symbol: "BTC/USDT".to_string(),
             last: 100.0,
             series: vec![99.0, 100.0],
+            bars: vec![OhlcBar {
+                open: 99.0,
+                high: 101.0,
+                low: 98.0,
+                close: 100.0,
+                volume: 3.0,
+                timestamp: 0,
+            }],
+            forming: None,
             indicators: vec![IndicatorValue {
                 name: "Sma(20)".to_string(),
                 value: None,

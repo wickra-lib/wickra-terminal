@@ -54,6 +54,64 @@
         20010.0,
         20005.0
       ],
+      "bars": [
+        {
+          "open": 20040.0,
+          "high": 20055.0,
+          "low": 20040.0,
+          "close": 20055.0,
+          "volume": 0.4,
+          "timestamp": 2000
+        },
+        {
+          "open": 20060.0,
+          "high": 20085.0,
+          "low": 20060.0,
+          "close": 20085.0,
+          "volume": 0.6,
+          "timestamp": 4000
+        },
+        {
+          "open": 20090.0,
+          "high": 20115.0,
+          "low": 20090.0,
+          "close": 20115.0,
+          "volume": 0.6,
+          "timestamp": 6000
+        },
+        {
+          "open": 20120.0,
+          "high": 20120.0,
+          "low": 20095.0,
+          "close": 20095.0,
+          "volume": 0.6,
+          "timestamp": 8000
+        },
+        {
+          "open": 20090.0,
+          "high": 20090.0,
+          "low": 20065.0,
+          "close": 20065.0,
+          "volume": 0.6,
+          "timestamp": 10000
+        },
+        {
+          "open": 20060.0,
+          "high": 20060.0,
+          "low": 20035.0,
+          "close": 20035.0,
+          "volume": 0.6,
+          "timestamp": 12000
+        }
+      ],
+      "forming": {
+        "open": 20030.0,
+        "high": 20030.0,
+        "low": 20005.0,
+        "close": 20005.0,
+        "volume": 0.6,
+        "timestamp": 14000
+      },
       "indicators": [
         {
           "name": "Atr(2)",
@@ -322,7 +380,11 @@
         {
           "source": 0,
           "symbol": "BTC/USDT",
-          "last": 20005.0
+          "last": 20005.0,
+          "bid": 0.0,
+          "ask": 0.0,
+          "volume": 0.0,
+          "change": 0.025
         }
       ]
     }

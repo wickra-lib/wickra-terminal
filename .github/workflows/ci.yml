@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
 
 permissions:
   contents: read
@@ -133,7 +134,7 @@ jobs:
   binding-surface:
     name: Binding surface parity
     runs-on: ubuntu-latest
-    timeout-minutes: 10 # a static check; if it is not done in ten minutes it is stuck
+    timeout-minutes: 10 # static checks; if they are not done in ten minutes they are stuck
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -145,19 +146,140 @@ jobs:
       - name: Compare every binding's surface with the C ABI
         run: python3 scripts/check_binding_surface.py
 
+      # The version lives in twenty-odd declarations across six package
+      # managers. A bump that misses one publishes, say, an npm package pinning
+      # a native binary that was never built -- which surfaces at install time,
+      # on a user's machine, after the tag is already irreversible.
+      - name: Every version declaration agrees
+        run: python3 scripts/check_version_sync.py
+
+      # Each bindings/*/README.md is the long description of a published
+      # package: PyPI, NuGet, pkg.go.dev and r-universe render them. A link that
+      # leaves the package resolves on GitHub and nowhere else, and nothing else
+      # in the build would say so, because the file it points at does exist.
+      - name: Binding READMEs link only to what travels with them
+        run: python3 scripts/check_readme_links.py
+
+      # Every manifest declares `MIT OR Apache-2.0`, but an SPDX expression is a
+      # reference to two documents, not the documents. Cargo decides what to
+      # package from git, so an untracked copy makes `cargo publish` refuse the
+      # dirty tree and an ignored one is dropped from the .crate entirely --
+      # committed copies are the only thing that works, and committed copies
+      # drift. The npm side is staged at publish time and checked here for the
+      # two halves it needs: the staging step, and `files` naming the texts.
+      - name: Every published package carries its licence texts
+        run: python3 scripts/check_license_copies.py
+
   supply-chain:
-    name: cargo-deny
+    name: Supply-chain (cargo-deny + osv-scanner)
     runs-on: ubuntu-latest
-    timeout-minutes: 15 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
+    timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
+      - uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: cargo-deny
       - run: cargo deny check
+
+      # osv-scanner.toml existed and nothing ran it. The file records advisories
+      # assessed as not affecting this project, with the reasoning next to each
+      # -- and that assessment was load-bearing for nobody, because no workflow
+      # ever consulted it.
+      #
+      # cargo-deny above covers the Rust graph only. This covers the other six
+      # ecosystems -- npm, PyPI, Maven, NuGet, Go modules, R -- which had no
+      # vulnerability scanning in CI at all.
+      #
+      # --no-resolve turns off transitive resolution of *manifests*. The default
+      # enricher resolves each pom.xml against Maven Central, and ours depends on
+      # org.wickra:wickra-terminal at the version in the tree -- which does not
+      # exist there until the release publishes it. Without the flag every
+      # version bump makes this job fail on a lookup for the artefact the bump
+      # exists to create. A check that goes red for a reason other than the one
+      # it checks teaches people to ignore it.
+      #
+      # Everything pinned in a lockfile -- Cargo.lock, package-lock.json, go.mod
+      # -- is still scanned in full and transitively, because a lockfile needs no
+      # resolution.
+      - name: osv-scanner
+        uses: google/osv-scanner-action/osv-scanner-action@6e4298ebc4db23e847df9b2e2de2939d6f066c67 # v2.5.1
+        with:
+          scan-args: |-
+            --recursive
+            --no-resolve
+            --config=osv-scanner.toml
+            ./
+
+  # The published API is a promise, and the two crates that carry it --
+  # wickra-terminal-core and wickra-terminal -- are what ten language bindings
+  # sit on top of. Nothing checked that a patch release leaves the surface
+  # alone.
+  #
+  # The baseline is the newest version already on crates.io, fetched by the tool
+  # itself. Neither crate is published yet (see ROADMAP: the release is blocked
+  # on wickra-exchange reaching crates.io), and cargo-semver-checks fails rather
+  # than passes when it cannot find a baseline -- so the probe below decides
+  # which of the two situations we are in and says so out loud. It is a no-op
+  # today and becomes a real gate the moment 0.1.0 publishes, without anyone
+  # having to remember to come back and enable it.
+  semver:
+    name: Public API (cargo-semver-checks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # backstop: it builds rustdoc JSON for each crate and its baseline
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: ./.github/actions/setup-rust
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
+        timeout-minutes: 6
+
+      # The sparse index answers 404 for a crate that has never been published,
+      # which is the only way to tell "no baseline yet" from "the registry is
+      # unreachable" -- and those two must not be treated alike.
+      - name: Is there a baseline on crates.io yet?
+        id: baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          published=yes
+          for crate in wickra-terminal-core wickra-terminal; do
+            url="https://index.crates.io/wi/ck/${crate}"
+            code=$(curl -s -o /dev/null -w '%{http_code}' --retry 5 --retry-all-errors "$url")
+            case "$code" in
+              200) ;;
+              404) published=no ;;
+              *) echo "::error::crates.io index returned $code for $crate"; exit 1 ;;
+            esac
+          done
+          echo "published=$published" >> "$GITHUB_OUTPUT"
+
+      - name: Not published yet, so there is nothing to compare against
+        if: steps.baseline.outputs.published == 'no'
+        run: |
+          echo "::notice::wickra-terminal-core and wickra-terminal are not on crates.io, so cargo-semver-checks has no baseline. This job becomes a real gate with the first release."
+
+      - name: Install cargo-semver-checks
+        if: steps.baseline.outputs.published == 'yes'
+        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
+        timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
+        with:
+          tool: cargo-semver-checks
+
+      # Named explicitly rather than --workspace: the bench crate and the four
+      # binding crates are `publish = false`, so they have no baseline to compare
+      # against and nothing to promise.
+      - name: Check the published crates
+        if: steps.baseline.outputs.published == 'yes'
+        run: |
+          cargo semver-checks check-release -p wickra-terminal-core -p wickra-terminal
 
   python:
     name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
@@ -208,6 +330,25 @@ jobs:
       # which is what Scorecard reads as an unpinned dependency.
       - run: pip install --no-index --find-links bindings/python/dist --force-reinstall --no-deps wickra-terminal
       - run: pytest bindings/python/tests -q
+
+      # Run them, not parse them. `examples-smoke` byte-compiles every example
+      # in five languages, and a script that compiles and dies on its first call
+      # passes that. This job already has the wheel installed, so running them
+      # costs a second and is the only check that says they work.
+      - name: Run the Python examples
+        # One row of the matrix, not all three. The examples exercise the
+        # binding's API, which is the same on every operating system; the part
+        # that is not -- loading the native library -- is already proven on all
+        # three by this job's own test step. Running them everywhere buys
+        # repetition rather than coverage.
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for example in examples/python/*.py; do
+            echo "== $example"
+            python "$example"
+          done
 
   # The Linux wheels are built in manylinux/musllinux containers at release time
   # and were never installed anywhere before being pushed to PyPI, which is
@@ -317,8 +458,47 @@ jobs:
       # the freshly built binary instead of a per-platform npm subpackage.
       - name: Build native module
         run: cd bindings/node && npx napi build --platform --release
+
+      # Both files are generated by napi and committed so consumers do not need
+      # the toolchain, and nothing compared the two. napi rewrites them only when
+      # somebody rebuilds, and a rebuild is not part of committing -- which is how
+      # the sibling repository once shipped a loader carrying the wrong version
+      # inside a tag, refusing its own native binary at install time. The build
+      # above has just regenerated them, so a diff here is drift. One OS is
+      # enough: the output is platform-independent.
+      - name: Check the committed loader is in sync with napi
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- bindings/node/index.js bindings/node/index.d.ts; then
+            echo "::error::bindings/node/index.js or index.d.ts is out of sync -- run npm run build in bindings/node and commit the result"
+            git --no-pager diff -- bindings/node/index.js bindings/node/index.d.ts
+            exit 1
+          fi
+
       - name: Run Node tests
         run: cd bindings/node && node --test
+
+      # Run them rather than parse them: `node --check` in `examples-smoke`
+      # passes for a script that dies on its first call, and this job already
+      # has the addon built.
+      - name: Run the Node examples
+        # One row of the matrix, not all three. The examples exercise the
+        # binding's API, which is the same on every operating system; the part
+        # that is not -- loading the native library -- is already proven on all
+        # three by this job's own test step. Running them everywhere buys
+        # repetition rather than coverage.
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd examples/node
+          npm install --no-audit --no-fund
+          for example in *.js; do
+            echo "== $example"
+            node "$example"
+          done
 
   wasm:
     name: WASM
@@ -336,7 +516,7 @@ jobs:
         timeout-minutes: 6
       - uses: ./.github/actions/warm-cargo
       - name: Install wasm-pack
-        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
+        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: wasm-pack
@@ -375,7 +555,7 @@ jobs:
         timeout-minutes: 6
       - uses: ./.github/actions/warm-cargo
       - name: Install wasm-pack
-        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
+        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: wasm-pack
@@ -421,7 +601,7 @@ jobs:
         timeout-minutes: 6
       - uses: ./.github/actions/warm-cargo
       - name: Install cbindgen
-        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
+        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: cbindgen
@@ -510,6 +690,30 @@ jobs:
           go vet ./...
           go test ./...
 
+      # `examples-smoke` parses them with gofmt, which a program that panics on
+      # its first line also survives. The staged library is already here.
+      - name: Run the Go examples
+        # One row of the matrix, not all three. The examples exercise the
+        # binding's API, which is the same on every operating system; the part
+        # that is not -- loading the native library -- is already proven on all
+        # three by this job's own test step. Running them everywhere buys
+        # repetition rather than coverage.
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$WICKRA_GO_LIBDIR:$PATH"
+          export LD_LIBRARY_PATH="$WICKRA_GO_LIBDIR:${LD_LIBRARY_PATH:-}"
+          export DYLD_LIBRARY_PATH="$WICKRA_GO_LIBDIR:${DYLD_LIBRARY_PATH:-}"
+          # One program with two scenarios, not two programs: Go allows one
+          # main per package, so the second is selected by argument. Running
+          # the files one at a time would compile neither.
+          cd examples/go
+          for scenario in "" "time-machine"; do
+            echo "== go run . $scenario"
+            go run . $scenario
+          done
+
   csharp:
     name: C# on ${{ matrix.os }}
     strategy:
@@ -544,6 +748,11 @@ jobs:
       - name: Build and run the C# example
         run: dotnet run --project examples/csharp -c Release
 
+      # Both scenarios, because the second one is where the interesting failure
+      # is: a rewind that lands on the wrong frame still prints a frame.
+      - name: Run the C# time-machine scenario
+        run: dotnet run --project examples/csharp -c Release -- time-machine
+
   java:
     name: Java on ${{ matrix.os }}
     strategy:
@@ -565,7 +774,7 @@ jobs:
       # native.lib.dir at target/debug, so build it in the debug profile here.
       - name: Build the C ABI library
         run: cargo build -p wickra-terminal-c
-      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           distribution: temurin
           java-version: "25"
@@ -574,6 +783,33 @@ jobs:
         run: java -version
       - name: Test the Java binding
         run: mvn -B -f bindings/java test
+
+      # `examples-smoke` compiles them, which is not running them: the binding
+      # loads its native library at first use, so a compiled example can still
+      # fail on its opening line. This job has the library built.
+      - name: Run the Java examples
+        # One row of the matrix, not all three. The examples exercise the
+        # binding's API, which is the same on every operating system; the part
+        # that is not -- loading the native library -- is already proven on all
+        # three by this job's own test step. Running them everywhere buys
+        # repetition rather than coverage.
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP:-/tmp}/java-examples"
+          mkdir -p "$out"
+          # Against the binding's compiled classes rather than its sources, so
+          # what runs is the jar this job just built and tested.
+          classes=bindings/java/target/classes
+          javac --release 22 -cp "$classes" -d "$out" examples/java/*.java
+          for example in examples/java/*.java; do
+            name=$(basename "$example" .java)
+            echo "== $name"
+            # `native.lib.dir` is the property the binding reads; the C ABI was
+            # built into target/debug two steps above.
+            java --enable-native-access=ALL-UNNAMED               -Dnative.lib.dir=target/debug               -cp "$classes:$out" "$name"
+          done
 
   r:
     name: R on ${{ matrix.os }}
@@ -607,7 +843,7 @@ jobs:
       # links -lwickra_terminal from WKTERM_LIB; build the library first.
       - name: Build the C ABI library
         run: cargo build -p wickra-terminal-c --release
-      - uses: r-lib/actions/setup-r@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2.12.1
+      - uses: r-lib/actions/setup-r@465b7d8e732ca3921382b1674c59bada9cbf3399 # v2.13.0
         with:
           r-version: "release"
           use-public-rspm: true
@@ -620,13 +856,33 @@ jobs:
           export WKTERM_INC="${WKTERM_INC//\\//}"
           export WKTERM_LIB="${WKTERM_LIB//\\//}"
           if command -v cygpath >/dev/null 2>&1; then
-            export PATH="$(cygpath -u "$WKTERM_LIB"):$PATH"
+            # Assigned first, then exported: `export x=$(...)` masks the
+            # command's exit status behind export's own, so a cygpath failure
+            # would go unnoticed and leave the loader path silently wrong.
+            wkterm_lib_unix=$(cygpath -u "$WKTERM_LIB")
+            export PATH="$wkterm_lib_unix:$PATH"
           else
             export LD_LIBRARY_PATH="$WKTERM_LIB:$LD_LIBRARY_PATH"
             export DYLD_LIBRARY_PATH="$WKTERM_LIB:$DYLD_LIBRARY_PATH"
           fi
           R CMD INSTALL bindings/r
           Rscript bindings/r/tests/run_tests.R
+
+          # Run them rather than parse them. `examples-smoke` calls parse(),
+          # which reads a file without evaluating a line of it; the package is
+          # installed here, so these actually execute.
+          #
+          # One row of the matrix, for the reason the other four jobs give: the
+          # examples exercise the binding's API, and loading the library is
+          # already proven on all three by the suite above. The guard is in the
+          # shell rather than an `if:` because the loader path this needs is set
+          # inside this step.
+          if [ "${RUNNER_OS:-Linux}" = "Linux" ]; then
+            for example in examples/r/*.R; do
+              echo "== $example"
+              Rscript "$example"
+            done
+          fi
 
   coverage:
     name: Coverage
@@ -649,7 +905,7 @@ jobs:
         timeout-minutes: 6
       - uses: ./.github/actions/warm-cargo
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
+        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: cargo-llvm-cov
@@ -732,7 +988,7 @@ jobs:
         with:
           working-directory: fuzz
       - name: Install cargo-fuzz
-        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
+        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: cargo-fuzz
@@ -766,6 +1022,15 @@ jobs:
         run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu config_parse -- -max_total_time=30
         working-directory: fuzz
 
+      # The registry is the largest thing here and was the least fuzzed: 7,400
+      # generated lines, one construction arm per indicator, and no target that
+      # reached them. Sixty seconds rather than thirty because one iteration
+      # picks a kind and then drives it, so the corpus has three surfaces and
+      # five hundred entries to work through rather than one parser.
+      - name: Fuzz registry_drive (60 s)
+        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu registry_drive -- -max_total_time=60
+        working-directory: fuzz
+
   # Early heads-up on link rot while reviewing a PR. Non-blocking on purpose:
   # external link failure is non-deterministic (third-party sites go down,
   # rate-limit or move), and a transient outage must never gate a merge. The
@@ -790,6 +1055,14 @@ jobs:
   # runs). It does NOT prove an example works -- the C example is built and run
   # by the c-abi job, the C# one by the csharp job, and the Rust one is a
   # workspace member, so `cargo build --workspace` compiles it.
+  # The parse gate, and only that. Every example in a language with a binding job
+  # is now RUN by that job, which already has the binding built -- a byte-compile
+  # passes for a script that dies on its first call, and five languages were
+  # checked that way and no further. What is left here is what no job can run:
+  # the WASM example is a page needing a browser, and a parse of its module
+  # script plus a check that it imports the loader wasm-pack writes is the most
+  # that can be said without one. The rest stays as a cheap second opinion that
+  # fails before the heavier jobs do.
   examples-smoke:
     name: Examples (syntax smoke)
     runs-on: ubuntu-latest
@@ -805,15 +1078,29 @@ jobs:
       - uses: ./.github/actions/setup-python
         with:
           python-version: "3.12"
-      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           distribution: temurin
           java-version: "25"
 
-      - uses: r-lib/actions/setup-r@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2.12.1
+      - uses: r-lib/actions/setup-r@465b7d8e732ca3921382b1674c59bada9cbf3399 # v2.13.0
         with:
           r-version: "release"
           use-public-rspm: true
+
+      # The WASM example is a page rather than a script, so what can be checked
+      # without a browser is that its module script parses and that the loader
+      # path it imports is the one wasm-pack writes.
+      - name: WASM example, module script parses
+        shell: bash
+        run: |
+          set -euo pipefail
+          page=examples/wasm/index.html
+          test -f "$page" || { echo "::error::$page is missing"; exit 1; }
+          grep -q 'bindings/wasm/pkg/wickra_terminal_wasm.js' "$page"             || { echo "::error::$page does not import the wasm-pack loader"; exit 1; }
+          sed -n '/<script type="module">/,/<\/script>/p' "$page"             | sed '1d;$d' > "${RUNNER_TEMP:-/tmp}/wasm-example.mjs"
+          node --check "${RUNNER_TEMP:-/tmp}/wasm-example.mjs"
+          echo "checked the WASM example's module script"
 
       - name: Node examples, syntax check
         shell: bash

@@ -75,7 +75,7 @@ the Rust surface must be rebuilt and committed with it.
 
 ## The command protocol
 
-Every binding drives the same thirteen commands, and the frame that comes back is
+Every binding drives the same nineteen commands, and the frame that comes back is
 the same JSON in all of them:
 
 ## What `npm install` pulls down
@@ -102,6 +102,9 @@ without reinstalling.
 | `AddIndicator` / `RemoveIndicator` | Track or drop an indicator on every market |
 | `SetTimeframe` | Set the bar size the candle-input indicators are fed at |
 | `ListIndicators` | The catalogue: every indicator, profile and bar type this build accepts, each with its default parameters |
+| `ReplayPosition` | Where a replayable source stands, for a time-machine scrubber. Answers `0/0` for a source that is not a recording |
+| `ExportRecording` / `SetRecording` | Save the recorded events in the shape `Replay` takes, and turn recording on or off |
+| `AddPanel` / `RemovePanel` / `MovePanel` | Place a panel on the layout, take one off, or move and resize one -- the layout is no longer fixed at start-up |
 
 `ListIndicators` is the one command that answers rather than renders, and each
 row carries `needs_reference`, which marks the pairwise indicators that compare

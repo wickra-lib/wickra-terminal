@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { placementsFor, readLayout } from '../layout'
+import { placementsFor, readLayout, withLayout } from '../layout'
 import type { PanelSpec } from '../types'
 
 describe('readLayout', () => {
@@ -84,5 +84,41 @@ describe('placementsFor', () => {
       width: '50%',
       height: '50%',
     })
+  })
+})
+
+describe('withLayout', () => {
+  it('replaces the panels and leaves the rest of the config alone', () => {
+    const config = JSON.stringify({
+      sources: [{ Synth: { seed: 1 } }],
+      indicators: [{ kind: 'Sma', params: [20] }],
+      layout: {
+        panels: [{ kind: 'Chart', rect: { x: 0, y: 0, w: 100, h: 100 } }],
+        keybinds: { bindings: { quit: 'q' } },
+      },
+    })
+    const panels = [
+      { kind: 'Book' as const, rect: { x: 0, y: 0, w: 50, h: 100 }, depth: 24 },
+    ]
+    const parsed = JSON.parse(withLayout(config, panels))
+    expect(parsed.layout.panels).toEqual(panels)
+    // The keymap sits in the same object and must survive the rewrite.
+    expect(parsed.layout.keybinds).toEqual({ bindings: { quit: 'q' } })
+    expect(parsed.indicators).toEqual([{ kind: 'Sma', params: [20] }])
+    expect(parsed.sources).toEqual([{ Synth: { seed: 1 } }])
+  })
+
+  it('adds a layout to a config that has none', () => {
+    const panels = [{ kind: 'Tape' as const, rect: { x: 0, y: 0, w: 100, h: 100 } }]
+    expect(JSON.parse(withLayout(JSON.stringify({ sources: [] }), panels)).layout.panels).toEqual(
+      panels,
+    )
+  })
+
+  it('hands back a config it cannot read, rather than losing it', () => {
+    // A config this cannot parse is one the terminal did not start from either.
+    // Replacing it with a fragment would turn a display fault into data loss.
+    expect(withLayout('not json', [])).toBe('not json')
+    expect(withLayout('null', [])).toBe('null')
   })
 })

@@ -143,8 +143,7 @@ how a surface handles a large response; do not read them as a ranking.
 cargo build -p wickra-terminal-c --release        # the C ABI, for six of the ten
 
 cargo run -p wickra-terminal-example --bin throughput --release
-cmake -S bindings/c/benchmarks   -B bindings/c/benchmarks/build   && cmake --build bindings/c/benchmarks/build   --config Release
-cmake -S bindings/cpp/benchmarks -B bindings/cpp/benchmarks/build && cmake --build bindings/cpp/benchmarks/build --config Release
+cmake -S bindings/c/benchmarks -B bindings/c/benchmarks/build && cmake --build bindings/c/benchmarks/build --config Release
 (cd bindings/python && python -m benchmarks.throughput)
 (cd bindings/node   && node benchmarks/throughput.js)
 node bindings/wasm/benchmarks/throughput.mjs

@@ -110,7 +110,7 @@ jobs:
           node benchmarks/throughput.js --ticks "$TICKS"
 
       - name: Install wasm-pack
-        uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
+        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: wasm-pack
@@ -135,7 +135,7 @@ jobs:
       - name: C#
         run: dotnet run --project bindings/csharp/benchmarks -c Release -- "$TICKS"
 
-      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           distribution: temurin
           java-version: "22"
@@ -144,11 +144,17 @@ jobs:
         # compiled against the binding's sources directly.
         run: |
           mkdir -p target/jbench
-          javac -d target/jbench $(find bindings/java/src/main/java -name '*.java') bindings/java/benchmarks/Throughput.java
+          # The source list goes through a file rather than an unquoted
+          # expansion: javac needs one argument per file, so quoting the
+          # substitution would pass a single argument holding all of them, and
+          # leaving it unquoted splits on any space in a path.
+          find bindings/java/src/main/java -name '*.java' > target/jbench/sources.txt
+          echo bindings/java/benchmarks/Throughput.java >> target/jbench/sources.txt
+          javac -d target/jbench "@target/jbench/sources.txt"
           java --enable-native-access=ALL-UNNAMED -cp target/jbench \
             -Dnative.lib.dir=target/release Throughput "$TICKS"
 
-      - uses: r-lib/actions/setup-r@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2.12.1
+      - uses: r-lib/actions/setup-r@465b7d8e732ca3921382b1674c59bada9cbf3399 # v2.13.0
         with:
           r-version: "release"
           use-public-rspm: true

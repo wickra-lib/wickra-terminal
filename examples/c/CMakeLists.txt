@@ -48,6 +48,34 @@ add_executable(golden_cpp golden.cpp)
 target_include_directories(golden_cpp PRIVATE "${WICKRA_TERMINAL_INCLUDE}")
 target_link_libraries(golden_cpp PRIVATE "${WICKRA_TERMINAL_LIB}")
 
+# The time-machine, as a runnable example rather than a test: rewind a recorded
+# feed and watch the state re-fold.
+add_executable(time_machine time_machine.c)
+target_include_directories(time_machine PRIVATE "${WICKRA_TERMINAL_INCLUDE}")
+target_link_libraries(time_machine PRIVATE "${WICKRA_TERMINAL_LIB}")
+
+# Streaming and a batch re-fold must reach the same frame -- the equivalence the
+# eight language suites each check for their own reach, checked here for the hub
+# they all route through.
+add_executable(streaming_test streaming_test.c)
+target_include_directories(streaming_test PRIVATE "${WICKRA_TERMINAL_INCLUDE}")
+target_link_libraries(streaming_test PRIVATE "${WICKRA_TERMINAL_LIB}")
+
+# The same equivalence through the C++ wrapper. What it adds is narrow and worth
+# proving on its own: that the ownership layer returns exactly the bytes the ABI
+# wrote, for two frames produced by different paths and compared against each
+# other rather than against a fixture.
+add_executable(streaming_test_cpp streaming_test.cpp)
+target_include_directories(streaming_test_cpp PRIVATE "${WICKRA_TERMINAL_INCLUDE}")
+target_link_libraries(streaming_test_cpp PRIVATE "${WICKRA_TERMINAL_LIB}")
+
+# The recorder and the scrubber: four commands the boundary carries, the READMEs
+# document and almost no binding drove. The round trip is the check -- what
+# `ExportRecording` answers with has to be what `Replay` takes.
+add_executable(recorder_test recorder_test.c)
+target_include_directories(recorder_test PRIVATE "${WICKRA_TERMINAL_INCLUDE}")
+target_link_libraries(recorder_test PRIVATE "${WICKRA_TERMINAL_LIB}")
+
 # The ownership rules the C++ header exists to enforce.
 add_executable(lifetime lifetime.cpp)
 target_include_directories(lifetime PRIVATE "${WICKRA_TERMINAL_INCLUDE}")
@@ -58,7 +86,8 @@ target_link_libraries(lifetime PRIVATE "${WICKRA_TERMINAL_LIB}")
 # ctest. Copy it next to each example after build. (Unix resolves the .so/.dylib
 # via the linker's embedded path, so this is Windows-only.)
 if(WIN32)
-    foreach(example synth terminal golden golden_cpp lifetime)
+    foreach(example synth terminal golden golden_cpp lifetime streaming_test
+                    streaming_test_cpp time_machine recorder_test)
         add_custom_command(TARGET ${example} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${WICKRA_TERMINAL_LIB_DIR}/wickra_terminal.dll"
@@ -75,5 +104,11 @@ add_test(NAME terminal COMMAND terminal)
 add_test(NAME golden COMMAND golden WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 add_test(NAME golden_cpp COMMAND golden_cpp WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 add_test(NAME lifetime COMMAND lifetime)
+add_test(NAME streaming_test COMMAND streaming_test)
+add_test(NAME streaming_test_cpp COMMAND streaming_test_cpp)
+add_test(NAME time_machine COMMAND time_machine)
+add_test(NAME recorder_test COMMAND recorder_test)
 # A missing runtime dependency must fail fast, never block the runner for hours.
-set_tests_properties(synth terminal golden golden_cpp lifetime PROPERTIES TIMEOUT 60)
+set_tests_properties(synth terminal golden golden_cpp lifetime streaming_test
+                     streaming_test_cpp time_machine recorder_test
+                     PROPERTIES TIMEOUT 60)

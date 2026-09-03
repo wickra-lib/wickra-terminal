@@ -28,6 +28,32 @@ pub(crate) enum Action {
     NextSymbol,
     /// Focus the previous watched symbol.
     PrevSymbol,
+    /// Prompt for an indicator to add to every market.
+    AddIndicator,
+    /// Prompt for the label of an indicator to stop tracking.
+    RemoveIndicator,
+    /// Prompt for the bar size the candle indicators are fed at.
+    SetTimeframe,
+    /// Prompt for a filter over the registry catalogue.
+    ListIndicators,
+    /// Rewind a replayable source (the time-machine).
+    SeekBack,
+    /// Advance a replayable source.
+    SeekForward,
+    /// Scroll the focused panel towards the top of what it carries.
+    ScrollUp,
+    /// Scroll the focused panel towards the bottom.
+    ScrollDown,
+    /// Write the recorded events to a file.
+    SaveRecording,
+    /// Prompt for the recorder's capacity, or for nothing to stop it.
+    SetRecording,
+    /// Prompt for a panel to place on the layout.
+    AddPanel,
+    /// Take the focused panel off the layout.
+    RemovePanel,
+    /// Prompt for a new rectangle for the focused panel.
+    MovePanel,
     /// No bound action for this key.
     None,
 }
@@ -70,6 +96,19 @@ pub(crate) fn map_key(key: KeyEvent, binds: &Keybinds) -> Action {
         Some("remove_source") => Action::RemoveSource,
         Some("next_symbol") => Action::NextSymbol,
         Some("prev_symbol") => Action::PrevSymbol,
+        Some("add_indicator") => Action::AddIndicator,
+        Some("remove_indicator") => Action::RemoveIndicator,
+        Some("set_timeframe") => Action::SetTimeframe,
+        Some("list_indicators") => Action::ListIndicators,
+        Some("seek_back") => Action::SeekBack,
+        Some("seek_forward") => Action::SeekForward,
+        Some("scroll_up") => Action::ScrollUp,
+        Some("scroll_down") => Action::ScrollDown,
+        Some("save_recording") => Action::SaveRecording,
+        Some("set_recording") => Action::SetRecording,
+        Some("add_panel") => Action::AddPanel,
+        Some("remove_panel") => Action::RemovePanel,
+        Some("move_panel") => Action::MovePanel,
         _ => Action::None,
     }
 }
@@ -92,6 +131,62 @@ mod tests {
         assert_eq!(map_key(key(KeyCode::Char('s')), &binds), Action::SourceMenu);
         assert_eq!(map_key(key(KeyCode::Right), &binds), Action::NextSymbol);
         assert_eq!(map_key(key(KeyCode::Left), &binds), Action::PrevSymbol);
+    }
+
+    #[test]
+    fn every_default_binding_resolves_to_an_action() {
+        // Every arm of the keymap, driven from the default `Keybinds` rather
+        // than a list written here: a binding added to the config and forgotten
+        // in this match resolves to `Action::None`, which is a key that looks
+        // bound and does nothing -- exactly what panel focus was for months.
+        let binds = Keybinds::default();
+        for (action, bound) in &binds.bindings {
+            let code = match bound.as_str() {
+                "tab" => KeyCode::Tab,
+                "backtab" => KeyCode::BackTab,
+                "left" => KeyCode::Left,
+                "right" => KeyCode::Right,
+                "up" => KeyCode::Up,
+                "down" => KeyCode::Down,
+                "enter" => KeyCode::Enter,
+                "esc" => KeyCode::Esc,
+                other => KeyCode::Char(
+                    other
+                        .chars()
+                        .next()
+                        .unwrap_or_else(|| panic!("{action} is bound to an empty key")),
+                ),
+            };
+            assert_ne!(
+                map_key(key(code), &binds),
+                Action::None,
+                "{action} is bound to {bound:?} and the keymap does not resolve it"
+            );
+        }
+    }
+
+    #[test]
+    fn the_actions_added_for_the_registry_and_the_recording_resolve() {
+        // Named individually as well, because the sweep above would still pass
+        // if two of them resolved to each other's action.
+        let binds = Keybinds::default();
+        for (code, expected) in [
+            (KeyCode::Char('i'), Action::AddIndicator),
+            (KeyCode::Char('k'), Action::RemoveIndicator),
+            (KeyCode::Char('t'), Action::SetTimeframe),
+            (KeyCode::Char('l'), Action::ListIndicators),
+            (KeyCode::Char(','), Action::SeekBack),
+            (KeyCode::Char('.'), Action::SeekForward),
+            (KeyCode::Up, Action::ScrollUp),
+            (KeyCode::Down, Action::ScrollDown),
+            (KeyCode::Char('w'), Action::SaveRecording),
+            (KeyCode::Char('r'), Action::SetRecording),
+            (KeyCode::Char('p'), Action::AddPanel),
+            (KeyCode::Char('o'), Action::RemovePanel),
+            (KeyCode::Char('m'), Action::MovePanel),
+        ] {
+            assert_eq!(map_key(key(code), &binds), expected, "for {code:?}");
+        }
     }
 
     #[test]

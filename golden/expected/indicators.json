@@ -46,6 +46,14 @@
         20006.0,
         20003.0
       ],
+      "forming": {
+        "open": 20000.0,
+        "high": 20060.0,
+        "low": 20000.0,
+        "close": 20003.0,
+        "volume": 4.000000000000002,
+        "timestamp": 0
+      },
       "indicators": [
         {
           "name": "Sma(5)",
@@ -379,7 +387,11 @@
         {
           "source": 0,
           "symbol": "BTC/USDT",
-          "last": 20003.0
+          "last": 20003.0,
+          "bid": 0.0,
+          "ask": 0.0,
+          "volume": 0.0,
+          "change": 0.015
         }
       ]
     }

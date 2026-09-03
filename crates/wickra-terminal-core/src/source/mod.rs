@@ -92,6 +92,23 @@ pub trait DataSource {
         0
     }
 
+    /// Historical bars for a market, oldest first, for seeding a fresh
+    /// subscription.
+    ///
+    /// Empty by default, and empty for every source that has no history to
+    /// offer: a synthetic feed begins when it begins, and a replay already holds
+    /// its whole past. A live venue is the one that does, and without this the
+    /// terminal built every bar from ticks it saw itself -- so `Atr(14)` on an
+    /// hourly timeframe needed fourteen hours of runtime before its first value,
+    /// and the chart opened empty on a market that has traded for years.
+    ///
+    /// `interval` is the timeframe in the venue's compact notation, which is
+    /// also how [`Timeframe`](crate::Timeframe) labels itself.
+    fn backfill(&mut self, sym: &Symbol, interval: &str, limit: usize) -> Vec<wickra_core::Candle> {
+        let _ = (sym, interval, limit);
+        Vec::new()
+    }
+
     /// Push an externally sourced event into a host-fed source, to be folded on
     /// the next tick. A manual source takes events for its subscribed markets;
     /// sources that own their feed (live, replay, synthetic) refuse them.
@@ -142,11 +159,15 @@ pub fn event_symbol(event: &Event) -> Option<Symbol> {
 /// load.
 pub fn build_source(id: SourceId, spec: &SourceSpec) -> Result<Box<dyn DataSource>> {
     match spec {
+        // The spec's symbol is not read here: `Terminal::add_source` subscribes
+        // it once the source is open, and connecting is to a venue rather than
+        // to a market.
         SourceSpec::Live {
             venue,
-            symbol,
+            symbol: _,
             testnet,
-        } => build_live(id, venue, symbol, *testnet),
+            market,
+        } => build_live(id, venue, *testnet, *market),
         SourceSpec::Replay { dataset } => Ok(Box::new(ReplaySource::from_dataset(id, dataset)?)),
         SourceSpec::Synth { seed } => Ok(Box::new(SynthSource::new(id, *seed))),
         SourceSpec::Manual => Ok(Box::new(ManualSource::new(id))),
@@ -158,10 +179,10 @@ pub fn build_source(id: SourceId, spec: &SourceSpec) -> Result<Box<dyn DataSourc
 fn build_live(
     id: SourceId,
     venue: &str,
-    symbol: &str,
     testnet: bool,
+    market: crate::config::Market,
 ) -> Result<Box<dyn DataSource>> {
-    Ok(Box::new(LiveSource::connect(id, venue, symbol, testnet)?))
+    Ok(Box::new(LiveSource::connect(id, venue, testnet, market)?))
 }
 
 /// Without the `live` feature (e.g. wasm), a Live spec is an error: the browser
@@ -170,8 +191,8 @@ fn build_live(
 fn build_live(
     _id: SourceId,
     _venue: &str,
-    _symbol: &str,
     _testnet: bool,
+    _market: crate::config::Market,
 ) -> Result<Box<dyn DataSource>> {
     Err(crate::error::Error::Source(
         "live sources require the `live` feature (native builds only)".to_string(),

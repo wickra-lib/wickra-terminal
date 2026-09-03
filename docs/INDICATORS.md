@@ -160,6 +160,13 @@ know which field that is. A single-output indicator omits `fields` from the JSON
 entirely, so a consumer written against the simple shape sees exactly the object
 it saw before.
 
+Both reference renderers were that one-line consumer for longer than they should
+have been: they read `value` and drew `Macd(12,26,9)=1.42`, dropping the signal
+line and the histogram. They read `fields` now and write
+`Macd(12,26,9)[macd=1.42 signal=1.25 histogram=0.17]`. The convenience of a
+single `value` is worth keeping for a consumer that genuinely wants one number;
+it should not be what a *chart* shows.
+
 ## What is not registered, and why
 
 1 of the 504 indicators in `wickra-core` is not reachable from the terminal.

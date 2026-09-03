@@ -44,10 +44,25 @@ npm run preview
 ## Notes
 
 - The default source is the deterministic `Synth` feed; the layout is persisted
-  in `localStorage`.
+  in `localStorage`, including panels added or removed while it runs. That last
+  part was the sentence's claim before it was its behaviour: the config was
+  written once and never again, so an arranged layout was gone on reload.
 - A live source runs over the browser's own WebSocket (the native exchange
   client cannot run in a sandbox); real order execution needs a backend and is
   gated separately.
+- **The browser feed is Binance spot, and only that.** The native terminal
+  reaches ten venues through `wickra-exchange`, and every one of them speaks a
+  stream dialect that would have to be written again here in TypeScript. Said
+  out loud rather than discovered on the second venue anyone tries:
+  `live:<anything else>` is refused with a message that names the limit.
+- The bridge reconnects on its own, on the native source's schedule — a quarter
+  of a second doubling to half a minute — and the header says `reconnecting…`
+  while it does. It carried `onmessage` and nothing else until then, so a
+  dropped socket left the chart frozen at the last print with no indication.
+- A fresh subscription is seeded from the venue's REST klines before the socket
+  delivers anything, the way a native subscription is seeded. Best effort: a
+  market with no history, or a call that fails, means a terminal that starts
+  empty rather than one that refuses to open the market.
 - `package.json` carries one `overrides` entry, forcing `uuid` to `^11.1.1`.
   `vite-plugin-top-level-await` depends on exactly `uuid@10.0.0` and has no
   release that does otherwise, so the advisory against uuid 10 (GHSA-w5hq-g745-h8pq)

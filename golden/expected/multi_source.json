@@ -12,6 +12,14 @@
         590.88,
         590.94
       ],
+      "forming": {
+        "open": 590.97,
+        "high": 590.97,
+        "low": 590.88,
+        "close": 590.94,
+        "volume": 1.21,
+        "timestamp": 0
+      },
       "indicators": [
         {
           "name": "Sma(20)",
@@ -109,12 +117,20 @@
         {
           "source": 0,
           "symbol": "BTC/USDT",
-          "last": 20000.0
+          "last": 20000.0,
+          "bid": 0.0,
+          "ask": 0.0,
+          "volume": 0.0,
+          "change": 0.0
         },
         {
           "source": 1,
           "symbol": "BTC/USDT",
-          "last": 590.94
+          "last": 590.94,
+          "bid": 0.0,
+          "ask": 0.0,
+          "volume": 0.0,
+          "change": -0.005076399817244989
         }
       ]
     }

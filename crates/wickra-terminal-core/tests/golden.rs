@@ -36,7 +36,9 @@
 use std::fs;
 
 use rust_decimal::Decimal;
-use wickra_exchange_core::{BookDelta, BookLevel, Event, OrderBookSnapshot, OrderSide, TradePrint};
+use wickra_exchange_core::{
+    BookDelta, BookLevel, Event, OrderBookSnapshot, OrderSide, Ticker, TradePrint,
+};
 use wickra_terminal_core::config::{Keybinds, PanelSpec, RectSpec};
 use wickra_terminal_core::panels::PanelKind;
 use wickra_terminal_core::{Config, IndicatorSpec, SourceSpec, Symbol, Terminal, Timeframe};
@@ -79,6 +81,47 @@ fn canonical_feed() -> Vec<Event> {
         }),
         trade(20_002, 20, true, 4),
         trade(20_000, 10, false, 5),
+    ]
+}
+
+/// Trades with the venue's own ticker interleaved.
+///
+/// The corpus never carried a `Ticker`, so three of the four numbers a
+/// watchlist row shows -- the bid, the ask and the rolling volume -- were
+/// recorded as zero in every scenario, and the fourth, the change, was zero
+/// with them because nothing had moved off its open. A field pinned at zero
+/// everywhere is a field the nine language suites cannot tell apart from one
+/// that was dropped, which is exactly what the fold used to do with them.
+///
+/// The prices move both ways off the open, so the change is signed rather than
+/// merely non-zero, and the ticker's bid and ask are inside the trades' range
+/// so a renderer cannot pass by treating the spread as the trade range.
+fn ticker_feed() -> Vec<Event> {
+    vec![
+        trade(20_000, 50, true, 1),
+        Event::Ticker(Ticker {
+            symbol: sym(),
+            last: Decimal::from(20_010),
+            bid: Decimal::from(20_009),
+            ask: Decimal::from(20_011),
+            volume: Decimal::from(1_234_567),
+        }),
+        trade(20_100, 30, true, 2),
+        Event::Ticker(Ticker {
+            symbol: sym(),
+            last: Decimal::from(20_100),
+            bid: Decimal::from(20_099),
+            ask: Decimal::from(20_101),
+            volume: Decimal::from(1_240_000),
+        }),
+        trade(19_900, 40, false, 3),
+        Event::Ticker(Ticker {
+            symbol: sym(),
+            last: Decimal::from(19_900),
+            bid: Decimal::from(19_899),
+            ask: Decimal::from(19_902),
+            volume: Decimal::from(1_250_000),
+        }),
     ]
 }
 
@@ -203,6 +246,25 @@ fn subscribe(source: u32) -> String {
     format!(r#"{{"type":"Subscribe","source":{source},"symbol":"{SYMBOL}"}}"#)
 }
 
+/// One `Feed` and one `Tick` per price: the host pushes, then the terminal
+/// drains. Written as a helper because a scenario that fed four prices by hand
+/// would be eight near-identical lines of JSON.
+fn feed_trades(prices: &[i64]) -> Vec<String> {
+    prices
+        .iter()
+        .enumerate()
+        .flat_map(|(index, price)| {
+            let timestamp = index + 1;
+            [
+                format!(
+                    r#"{{"type":"Feed","source":0,"event":{{"type":"trade","symbol":{{"base":"BTC","quote":"USDT"}},"price":"{price}","quantity":"0.5","aggressor":"Buy","timestamp":{timestamp}}}}}"#
+                ),
+                r#"{"type":"Tick"}"#.to_string(),
+            ]
+        })
+        .collect()
+}
+
 fn replay_config(feed: &[Event]) -> Config {
     let mut config = Config::default_layout();
     config.sources = vec![SourceSpec::Replay {
@@ -214,6 +276,31 @@ fn replay_config(feed: &[Event]) -> Config {
 fn scenarios() -> Vec<Scenario> {
     let basic = canonical_feed();
     let deltas = book_delta_feed();
+    let tickers = ticker_feed();
+
+    // A host-fed source, so `Feed` is exercised by every language suite rather
+    // than by the two that happen to have a test for it -- and the runtime
+    // indicator commands with it, whose effect is visible in the frame and so
+    // can be held to byte parity here. The three that answer with something
+    // other than a frame (`ListIndicators`, `ExportRecording`, `ReplayPosition`)
+    // cannot be: the corpus records the last answer and reads it back as a
+    // `Frame`. Their suites are per-binding instead.
+    let mut fed = Config::default_layout();
+    fed.sources = vec![SourceSpec::Manual];
+    fed.indicators = vec![IndicatorSpec::new("Sma", vec![3.0])];
+    fed.layout.panels = vec![PanelSpec::new(
+        PanelKind::Chart,
+        RectSpec::new(0, 0, 100, 100),
+    )];
+
+    // One panel to start with, so the layout the scenario ends on is entirely
+    // the work of the three commands rather than of the default layout.
+    let panels_feed = canonical_feed();
+    let mut with_one_panel = replay_config(&panels_feed);
+    with_one_panel.layout.panels = vec![PanelSpec::new(
+        PanelKind::Chart,
+        RectSpec::new(0, 0, 100, 50),
+    )];
     let footprint = footprint_feed();
     let indicators = indicator_feed();
 
@@ -258,15 +345,10 @@ fn scenarios() -> Vec<Scenario> {
     let profile_feed = multi_second_feed();
     let mut with_profile = replay_config(&profile_feed);
     with_profile.profiles = vec![IndicatorSpec::new("VolumeProfile", vec![4.0, 8.0])];
-    with_profile.layout.panels = vec![PanelSpec {
-        kind: PanelKind::Profile,
-        rect: RectSpec {
-            x: 0,
-            y: 0,
-            w: 100,
-            h: 100,
-        },
-    }];
+    with_profile.layout.panels = vec![PanelSpec::new(
+        PanelKind::Profile,
+        RectSpec::new(0, 0, 100, 100),
+    )];
     with_profile.timeframe = Timeframe::parse("1s").unwrap();
 
     let bar_feed = multi_second_feed();
@@ -274,15 +356,10 @@ fn scenarios() -> Vec<Scenario> {
     // A three-unit brick on a feed that walks in threes, so bricks complete
     // within the scenario rather than after it.
     with_bars.bars = vec![IndicatorSpec::new("RenkoBars", vec![3.0])];
-    with_bars.layout.panels = vec![PanelSpec {
-        kind: PanelKind::Bars,
-        rect: RectSpec {
-            x: 0,
-            y: 0,
-            w: 100,
-            h: 100,
-        },
-    }];
+    with_bars.layout.panels = vec![PanelSpec::new(
+        PanelKind::Bars,
+        RectSpec::new(0, 0, 100, 100),
+    )];
     with_bars.timeframe = Timeframe::parse("1s").unwrap();
 
     let derivatives_feed = indicator_feed();
@@ -305,6 +382,57 @@ fn scenarios() -> Vec<Scenario> {
             commands: [vec![subscribe(0)], tick(basic.len())].concat(),
             replay_path: Some("replay/basic.json"),
             feed: Some(basic),
+        },
+        Scenario {
+            name: "ticker",
+            config: replay_config(&tickers),
+            commands: [vec![subscribe(0)], tick(tickers.len())].concat(),
+            replay_path: Some("replay/ticker.json"),
+            feed: Some(tickers),
+        },
+        Scenario {
+            name: "host_feed",
+            config: fed,
+            commands: [
+                vec![subscribe(0)],
+                feed_trades(&[100, 101, 102, 103]),
+                vec![
+                    r#"{"type":"AddIndicator","spec":{"kind":"Ema","params":[3.0]}}"#.to_string(),
+                ],
+                feed_trades(&[104, 105]),
+                vec![r#"{"type":"RemoveIndicator","label":"Sma(3)"}"#.to_string()],
+                feed_trades(&[106]),
+            ]
+            .concat(),
+            replay_path: None,
+            feed: None,
+        },
+        Scenario {
+            name: "panels",
+            config: with_one_panel,
+            commands: [
+                vec![subscribe(0)],
+                tick(2),
+                // Added, moved and taken off again, each followed by a tick so
+                // the recorded frame is one a renderer would have drawn.
+                vec![
+                    r#"{"type":"AddPanel","spec":{"kind":"Tape","rect":{"x":0,"y":50,"w":100,"h":50},"depth":3}}"#
+                        .to_string(),
+                ],
+                tick(2),
+                vec![
+                    r#"{"type":"MovePanel","index":1,"rect":{"x":50,"y":0,"w":50,"h":100}}"#
+                        .to_string(),
+                    r#"{"type":"AddPanel","spec":{"kind":"Book","rect":{"x":0,"y":0,"w":50,"h":50}}}"#
+                        .to_string(),
+                ],
+                tick(2),
+                vec![r#"{"type":"RemovePanel","index":0}"#.to_string()],
+                tick(2),
+            ]
+            .concat(),
+            replay_path: Some("replay/panels.json"),
+            feed: Some(panels_feed),
         },
         Scenario {
             name: "book_deltas",

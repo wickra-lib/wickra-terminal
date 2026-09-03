@@ -47,8 +47,8 @@ wickra-core = "1"
 # `wickra-exchange-core` carries the market types (Symbol/Event/…) with no
 # networking, so it compiles on wasm32; the `wickra-exchange` facade adds the
 # native connectivity (tokio/reqwest) used only by the `live` feature.
-wickra-exchange-core = { git = "https://github.com/wickra-lib/wickra-exchange", rev = "330df9127829e0caaab4d097d8ce6e659586aa71", version = "0.1" }
-wickra-exchange = { git = "https://github.com/wickra-lib/wickra-exchange", rev = "330df9127829e0caaab4d097d8ce6e659586aa71", version = "0.1" }
+wickra-exchange-core = { git = "https://github.com/wickra-lib/wickra-exchange", rev = "73511aa99978bc34c5e65de885b9a1f653565155", version = "0.1" }
+wickra-exchange = { git = "https://github.com/wickra-lib/wickra-exchange", rev = "73511aa99978bc34c5e65de885b9a1f653565155", version = "0.1" }
 wickra-terminal-core = { version = "0.1.0", path = "crates/wickra-terminal-core" }
 # Serialization — the data-driven boundary (config/command/view-models as JSON).
 serde = { version = "1", features = ["derive"] }

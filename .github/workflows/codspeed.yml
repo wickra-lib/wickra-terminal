@@ -1,0 +1,74 @@
+name: CodSpeed
+
+# Performance regressions were the one class of defect nothing here reported.
+# bench.yml runs on a schedule and prints numbers a person has to read, so a
+# regression is found weeks after it lands, by someone who happened to look.
+# This measures every pull request and says so in a comment.
+#
+# It counts instructions under instrumentation rather than timing wall clock.
+# That is what makes a shared runner usable: the number does not move because a
+# neighbour VM got busy. It is also why these figures are not the ones in
+# BENCHMARKS.md -- those are throughput, this is relative change. Both are true,
+# they answer different questions.
+#
+# The benches that run here are the core's: the event fold, a full tick, the
+# view-model build and the command round-trip. The per-binding throughput
+# harnesses stay in bench.yml, because what they measure is the cost of a
+# language boundary, and instrumenting nine runtimes on every pull request costs
+# the most and answers the least about a change to the core.
+on:
+  push:
+    branches: [main]
+    paths: ['crates/**', 'Cargo.toml', 'Cargo.lock', '.github/workflows/codspeed.yml']
+  pull_request:
+    branches: [main]
+    paths: ['crates/**', 'Cargo.toml', 'Cargo.lock', '.github/workflows/codspeed.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmarks:
+    name: Instruction counts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # backstop: instrumentation is far slower per iteration than a plain run
+    permissions:
+      contents: read
+      # OpenID Connect against CodSpeed, which is what their action recommends
+      # over an upload token. A public repository needs no token at all.
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: ./.github/actions/setup-rust
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
+        timeout-minutes: 6
+
+      - name: Install cargo-codspeed
+        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
+        timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
+        with:
+          tool: cargo-codspeed
+
+      # The benches only report if `criterion` in wickra-terminal-bench resolves
+      # to codspeed-criterion-compat; with the plain crate they run and measure
+      # nothing. The alias lives in that crate's Cargo.toml with the same note.
+      - name: Build the benchmarks
+        run: cargo codspeed build -p wickra-terminal-bench
+
+      - name: Run them under instrumentation
+        uses: CodSpeedHQ/action@373d6868929f444bc08d901fd0eb0ad52a8875ea # v5.2.1
+        with:
+          # Required since action v4, and it used to be inferred. `simulation`
+          # counts instructions under instrumentation; `walltime` measures real
+          # time and needs CodSpeed's dedicated macro runners, which a standard
+          # GitHub runner is not -- there the timing would be as noisy as any
+          # other shared VM, which is the noise this job exists to avoid.
+          mode: simulation
+          run: cargo codspeed run -p wickra-terminal-bench

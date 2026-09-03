@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Wickra Terminal in the browser</title>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1d1d1d; }
+    h1 { margin-bottom: .25rem; }
+    .meta { color: #666; margin-top: 0; }
+    .row { display: flex; gap: .5rem; align-items: center; margin: 1rem 0; flex-wrap: wrap; }
+    button { padding: .5rem 1rem; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem; }
+    .card { border: 1px solid #ddd; padding: .75rem; border-radius: .5rem; background: #fafafa; }
+    .card h3 { margin: 0 0 .25rem 0; font-size: .95rem; }
+    .card span { font-variant-numeric: tabular-nums; font-weight: 600; }
+    pre { background: #0b0e14; color: #d7dde8; padding: .75rem; border-radius: .5rem; overflow-x: auto; font-size: .8rem; }
+  </style>
+</head>
+<body>
+  <h1>Wickra Terminal in the browser</h1>
+  <p class="meta">
+    The whole core compiled to WebAssembly: it folds the feed, keeps the state
+    and produces the frames, entirely client-side. Nothing here is a mock — this
+    is the same core the native TUI runs, driven through the same three calls.
+  </p>
+
+  <p class="meta">
+    The full Web renderer lives in <code>web/</code>. This page is the smaller
+    thing: the shortest program that drives the core from a browser, so a reader
+    can see the shape of it without a build tool.
+  </p>
+
+  <div class="row">
+    <button id="play">Play the recording</button>
+    <button id="rewind">Rewind to trade 2</button>
+    <span class="meta" id="position">—</span>
+  </div>
+
+  <div class="grid">
+    <div class="card"><h3>Last</h3><span id="last">—</span></div>
+    <div class="card"><h3>Bars closed</h3><span id="bars">—</span></div>
+    <div class="card"><h3>Version</h3><span id="version">—</span></div>
+  </div>
+
+  <h2>The frame the core produced</h2>
+  <pre id="frame">Press “Play the recording”.</pre>
+
+  <script type="module">
+    // Built with:
+    //   wasm-pack build bindings/wasm --target web --out-dir pkg
+    // then served over HTTP — a module script cannot be loaded from file://.
+    import init, { Terminal, version } from "../../bindings/wasm/pkg/wickra_terminal_wasm.js";
+
+    const TRADES = 6;
+
+    // A recorded feed, so the page shows the time-machine rather than a
+    // synthetic walk: rewinding is the thing a browser cannot fake.
+    const feed = JSON.stringify(
+      Array.from({ length: TRADES }, (_, i) => ({
+        type: "trade",
+        symbol: { base: "BTC", quote: "USDT" },
+        price: String(100 + i),
+        quantity: "1",
+        aggressor: "Buy",
+        timestamp: i + 1,
+      })),
+    );
+
+    const config = JSON.stringify({
+      sources: [{ Replay: { dataset: feed } }],
+      layout: { panels: [{ kind: "Chart", rect: { x: 0, y: 0, w: 100, h: 100 } }] },
+    });
+
+    let terminal = null;
+
+    const chartOf = (raw) => JSON.parse(raw).panels.find((p) => p.panel === "chart");
+
+    function show(raw) {
+      const chart = chartOf(raw);
+      document.getElementById("last").textContent = chart.last.toFixed(2);
+      document.getElementById("bars").textContent = (chart.bars ?? []).length;
+      document.getElementById("frame").textContent = JSON.stringify(JSON.parse(raw), null, 2);
+      const where = JSON.parse(
+        terminal.command(JSON.stringify({ type: "ReplayPosition", source: 0 })),
+      );
+      document.getElementById("position").textContent = `${where.cursor} / ${where.length}`;
+    }
+
+    function fresh() {
+      terminal?.free?.();
+      terminal = new Terminal(config);
+      terminal.command(JSON.stringify({ type: "Subscribe", source: 0, symbol: "BTC/USDT" }));
+    }
+
+    document.getElementById("play").addEventListener("click", () => {
+      fresh();
+      let raw = "";
+      for (let i = 0; i < TRADES; i++) {
+        raw = terminal.command(JSON.stringify({ type: "Tick" }));
+      }
+      show(raw);
+    });
+
+    // Seek throws the folded state away and rebuilds it from the recording, so
+    // a rewind lands on exactly the frame the forward pass had at that point --
+    // deterministic rather than approximate, and with no engine behind it.
+    document.getElementById("rewind").addEventListener("click", () => {
+      if (!terminal) {
+        fresh();
+      }
+      show(terminal.command(JSON.stringify({ type: "Seek", source: 0, index: 2 })));
+    });
+
+    await init();
+    document.getElementById("version").textContent = version();
+  </script>
+</body>
+</html>

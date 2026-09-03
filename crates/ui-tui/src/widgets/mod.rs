@@ -33,16 +33,31 @@ pub(crate) fn panel_block(title: String, focused: bool) -> Block<'static> {
     }
 }
 
-/// Render one panel's view-model into `area`.
-pub(crate) fn render_panel(frame: &mut Frame, area: Rect, panel: &PanelView, focused: bool) {
+/// Render one panel's view-model into `area`, scrolled by `scroll` rows.
+///
+/// The scroll offset is a renderer concern and stays one: the core sends what a
+/// panel carries, and each front-end decides how much of that it can show. A
+/// browser scrolls a div for free; a terminal has to be told, which is why this
+/// is the only place the number appears.
+///
+/// The chart ignores it. It is a plot rather than a list of rows, and scrolling
+/// a plot would mean panning its axes -- a different gesture with a different
+/// meaning, not this one.
+pub(crate) fn render_panel(
+    frame: &mut Frame,
+    area: Rect,
+    panel: &PanelView,
+    focused: bool,
+    scroll: u16,
+) {
     match panel {
         PanelView::Chart(view) => chart::render(frame, area, view, focused),
-        PanelView::Book(view) => book::render(frame, area, view, focused),
-        PanelView::Tape(view) => tape::render(frame, area, view, focused),
-        PanelView::Watchlist(view) => watchlist::render(frame, area, view, focused),
-        PanelView::Footprint(view) => footprint::render(frame, area, view, focused),
-        PanelView::Profile(view) => profile::render(frame, area, view, focused),
-        PanelView::Bars(view) => bars::render(frame, area, view, focused),
+        PanelView::Book(view) => book::render(frame, area, view, focused, scroll),
+        PanelView::Tape(view) => tape::render(frame, area, view, focused, scroll),
+        PanelView::Watchlist(view) => watchlist::render(frame, area, view, focused, scroll),
+        PanelView::Footprint(view) => footprint::render(frame, area, view, focused, scroll),
+        PanelView::Profile(view) => profile::render(frame, area, view, focused, scroll),
+        PanelView::Bars(view) => bars::render(frame, area, view, focused, scroll),
     }
 }
 
@@ -131,6 +146,7 @@ mod tests {
                 w: 100,
                 h: 10,
             },
+            depth: None,
         })
         .collect();
         let mut terminal = Terminal::new(&config).unwrap();
@@ -154,7 +170,7 @@ mod tests {
         assert_eq!(frame.panels.len(), 7);
 
         for panel in &frame.panels {
-            let buffer = harness::draw(100, 10, |f, area| render_panel(f, area, panel, true));
+            let buffer = harness::draw(100, 10, |f, area| render_panel(f, area, panel, true, 0));
             assert!(
                 harness::text(&buffer).trim().chars().any(|c| c != ' '),
                 "a panel rendered blank: {panel:?}"

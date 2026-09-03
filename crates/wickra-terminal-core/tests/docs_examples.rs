@@ -36,9 +36,12 @@ const DOCS: [&str; 8] = [
 /// blocks finds nothing in them. What they do carry uniformly is the command
 /// table, which P11.13 had to correct by hand across all eight, and which is
 /// checked below.
-const BINDING_READMES: [&str; 9] = [
+///
+/// Eight for nine languages: C and C++ share `bindings/c/README.md`, because the
+/// C++ surface is a header inside the C binding rather than a binding of its
+/// own -- the same shape the indicator library uses.
+const BINDING_READMES: [&str; 8] = [
     "bindings/c/README.md",
-    "bindings/cpp/README.md",
     "bindings/csharp/README.md",
     "bindings/go/README.md",
     "bindings/java/README.md",
@@ -46,6 +49,37 @@ const BINDING_READMES: [&str; 9] = [
     "bindings/python/README.md",
     "bindings/r/README.md",
     "bindings/wasm/README.md",
+];
+
+/// The English word for a count, for the prose that states one.
+///
+/// A table rather than a `match`: every arm of a match over this range but the
+/// live one would be a branch no test reaches, and the coverage gate reads an
+/// unreached branch as untested code rather than as a spelling table. Indexing
+/// panics on a count past the end, which is the right answer -- a boundary that
+/// grew past twenty needs a sentence written for it, not a silent numeral.
+const NUMBER_WORDS: [&str; 21] = [
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
+    "twenty",
 ];
 
 /// The repository root, found by walking up from this crate.
@@ -318,24 +352,387 @@ fn the_citation_abstract_states_the_real_indicator_count() {
     );
 }
 
-/// The citation must not date a release that has not happened.
+/// The first released section of the changelog, as `(version, date)`.
 ///
-/// `version` and `date-released` are what the citation widget and Zenodo present
-/// as the thing being cited. This file carried `0.1.0` and a date against zero
-/// tags and zero releases. Both keys are optional in CFF, and the wickra library
-/// omits them even though it has released thirty times, so omitting them here is
-/// the convention as well as the truth.
+/// `## [Unreleased]` carries no date and is skipped by the same pattern that
+/// finds a release: a released heading is `## [x.y.z] - YYYY-MM-DD`.
+fn released_in_changelog(root: &std::path::Path) -> Option<(String, String)> {
+    read(root, "CHANGELOG.md").lines().find_map(|line| {
+        let rest = line.strip_prefix("## [")?;
+        let (version, rest) = rest.split_once("] - ")?;
+        let date = rest.trim();
+        (date.len() == 10 && date.starts_with("20"))
+            .then(|| (version.to_string(), date.to_string()))
+    })
+}
+
+/// `version` and `date-released` say exactly one thing, and it has to be true.
+///
+/// They are what GitHub's citation box and Zenodo present as the thing being
+/// cited, so carrying them against zero releases dates something that never
+/// happened — which is why this file omitted both. The other side is just as
+/// real: once a release exists, a citation without them cites nothing in
+/// particular, and both keys are release touchpoints nobody would remember on
+/// their own.
+///
+/// So the rule is the pairing rather than either half of it. While the changelog
+/// shows no released section both keys must be absent; the moment one is cut,
+/// both must be present and agree with it. Cutting a release therefore fails
+/// here until the citation is brought along, rather than shipping a stale one.
 #[test]
-fn the_citation_claims_no_release() {
+fn the_citation_matches_the_release_state() {
     let root = repo_root();
     let text = read(&root, "CITATION.cff");
     // Line-anchored: `cff-version:` is the schema version and belongs here.
-    for key in ["version:", "date-released:"] {
+    let value_of = |key: &str| -> Option<String> {
+        text.lines()
+            .find(|line| line.starts_with(key))?
+            .split_once(':')
+            .map(|(_, v)| v.trim().trim_matches('"').to_string())
+    };
+
+    match released_in_changelog(&root) {
+        None => {
+            for key in ["version:", "date-released:"] {
+                assert!(
+                    value_of(key).is_none(),
+                    "CITATION.cff carries {key}, which cites a release that does not exist"
+                );
+            }
+        }
+        Some((version, date)) => {
+            assert_eq!(
+                value_of("version:").as_deref(),
+                Some(version.as_str()),
+                "CHANGELOG released {version}; CITATION.cff does not cite it"
+            );
+            assert_eq!(
+                value_of("date-released:").as_deref(),
+                Some(date.as_str()),
+                "CHANGELOG dates the release {date}; CITATION.cff does not"
+            );
+        }
+    }
+}
+
+/// The README's performance table and `BENCHMARKS.md` state the same numbers.
+///
+/// Both are published claims about how fast this is, measured once and written
+/// twice. A re-measurement that updated one and not the other would leave the
+/// repository asserting two speeds for the same path -- and the README is the
+/// one a reader meets first, so it is the one that would be believed.
+///
+/// The pairs are matched by their measurement rather than by their wording: the
+/// two tables describe the same benchmark in different words on purpose, one for
+/// a reader choosing the project and one for a reader running the suite.
+#[test]
+fn the_readme_and_the_benchmark_page_agree_on_the_numbers() {
+    let root = repo_root();
+    let readme = read(&root, "README.md");
+    let bench = read(&root, "BENCHMARKS.md");
+
+    // Row by row from the benchmark page, which is the one measured against.
+    let rows: Vec<(String, String)> = bench
+        .lines()
+        .filter(|line| line.starts_with("| `"))
+        .filter_map(|line| {
+            let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+            // | name | what | median | throughput |
+            (cells.len() >= 6).then(|| (cells[3].to_owned(), cells[4].to_owned()))
+        })
+        .filter(|(median, _)| median.ends_with("ns") || median.ends_with("\u{b5}s"))
+        .collect();
+    assert!(
+        rows.len() >= 5,
+        "found only {rows:?} measured rows in BENCHMARKS.md"
+    );
+
+    let mut checked = 0;
+    for (median, throughput) in rows {
+        // The last row is the no-boundary comparison, which the README does not
+        // carry: it exists to make two numbers on that page comparable, not to
+        // describe the product.
+        if !readme.contains(&median) {
+            continue;
+        }
         assert!(
-            !text.lines().any(|line| line.starts_with(key)),
-            "CITATION.cff carries {key}, which cites a release that does not exist"
+            readme.contains(&format!("| {median} | {throughput} |")),
+            "the README pairs {median} with a throughput BENCHMARKS.md does not: {throughput}"
+        );
+        checked += 1;
+    }
+    assert!(
+        checked >= 5,
+        "only {checked} of the benchmark rows reached the README"
+    );
+}
+
+/// The documented bounds are the constants the code actually uses.
+///
+/// Those numbers are a contract a reader plans a layout around -- how much a
+/// panel carries by default, and how much is behind it to scroll to. They are
+/// written once in the source and again in the table, and this repository has
+/// already watched the indicator count, the binding command tables and the fuzz
+/// target list drift the same way.
+///
+/// The constants are `pub(crate)`, so they are read out of the source rather
+/// than imported: making them public to be testable would be the test dictating
+/// the API, which is the reasoning `every_binding_readme_documents_every_command`
+/// gives for reading the `Command` enum the same way.
+#[test]
+fn the_documented_bounds_are_the_real_ones() {
+    /// The value of a `const NAME: usize = N;` in the given source.
+    fn constant(source: &str, name: &str) -> usize {
+        let needle = format!("const {name}: usize = ");
+        let at = source
+            .find(&needle)
+            .unwrap_or_else(|| panic!("{name} is gone or was renamed"));
+        source[at + needle.len()..]
+            .split(';')
+            .next()
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or_else(|| panic!("{name} is no longer a plain number"))
+    }
+
+    let root = repo_root();
+    let panels = read(&root, "crates/wickra-terminal-core/src/panels/mod.rs");
+    let state = read(&root, "crates/wickra-terminal-core/src/state.rs");
+    let doc = read(&root, "docs/PANELS.md");
+
+    let depth = constant(&panels, "DEFAULT_DEPTH");
+    let points = constant(&panels, "CHART_POINTS");
+    let bars_kept = constant(&state, "OHLC_HISTORY");
+    let prices_kept = constant(&state, "PRICE_HISTORY");
+    let levels_kept = constant(&state, "MAX_FOOTPRINT_LEVELS");
+    let alt_kept = constant(&state, "ALT_BARS_KEPT");
+    // `TAPE_ROWS` is written in terms of `DEFAULT_DEPTH`, which is the point:
+    // the tape carries twice what a ladder does because it is a stream rather
+    // than a snapshot.
+    assert!(
+        panels.contains("const TAPE_ROWS: usize = DEFAULT_DEPTH * 2;"),
+        "TAPE_ROWS is no longer twice the default depth"
+    );
+    let tape_rows = depth * 2;
+
+    // `docs/STREAMING.md` restates the same ceilings in prose, which is a second
+    // copy of every number above and drifts the same way.
+    let streaming = read(&root, "docs/STREAMING.md");
+    let pending = constant(
+        &read(&root, "crates/wickra-terminal-core/src/source/manual.rs"),
+        "MAX_PENDING_EVENTS",
+    );
+    let series = constant(&state, "INDICATOR_SERIES");
+    let tape_kept = constant(&state, "TAPE_PRINTS_KEPT");
+    for claim in [
+        format!("the tape ring at {tape_kept} prints"),
+        format!("the price history at {prices_kept}"),
+        format!("each indicator's series at {series}"),
+        format!("the footprint at {levels_kept:} price levels").replace("1024", "1,024"),
+        format!("pending queue at {pending} events").replace("4096", "4,096"),
+    ] {
+        assert!(
+            streaming.contains(&claim),
+            "docs/STREAMING.md does not say {claim:?}"
         );
     }
+
+    for claim in [
+        format!("| `chart` | {points} bars, {points} price points"),
+        format!("{bars_kept} bars kept, {prices_kept} price points"),
+        format!("| `book` | {depth} levels a side"),
+        format!("| `tape` | {tape_rows} prints | {tape_kept} kept"),
+        format!("| `footprint` | {depth} levels | {levels_kept} levels kept"),
+        format!("| `bars` | {depth} bars a stream | {alt_kept} kept"),
+    ] {
+        assert!(
+            doc.contains(&claim),
+            "docs/PANELS.md does not say {claim:?}"
+        );
+    }
+}
+
+/// Every fuzz target is named in the threat model, and every name is a target.
+///
+/// The threat model lists what is fuzzed as one of the guarantees the code is
+/// held to, and nothing checked the list against the directory. It had drifted
+/// both ways: it named four of the five targets and mapped two of the four to
+/// the wrong one. The target it omitted, `registry_drive`, is the one that found
+/// a real fault -- an indicator period of 10^20 that aborted the process.
+///
+/// A promise about what is tested is worth exactly what checks it.
+#[test]
+fn every_fuzz_target_is_named_in_the_threat_model() {
+    let root = repo_root();
+    let model = read(&root, "THREAT_MODEL.md");
+    let manifest = read(&root, "fuzz/Cargo.toml");
+
+    let dir = root.join("fuzz/fuzz_targets");
+    let mut targets: Vec<String> = std::fs::read_dir(&dir)
+        .expect("fuzz/fuzz_targets is readable")
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            (path.extension()? == "rs").then(|| path.file_stem()?.to_str().map(str::to_owned))?
+        })
+        .collect();
+    targets.sort();
+    assert!(
+        targets.len() >= 5,
+        "found only {targets:?} in fuzz/fuzz_targets"
+    );
+
+    for target in &targets {
+        assert!(
+            model.contains(&format!("`{target}`")),
+            "THREAT_MODEL.md does not name the {target} fuzz target"
+        );
+        // A target the manifest does not build is a file cargo-fuzz never runs,
+        // which the threat model would then be crediting for nothing.
+        assert!(
+            manifest.contains(&format!("fuzz_targets/{target}.rs")),
+            "fuzz/Cargo.toml does not build the {target} target"
+        );
+    }
+
+    // And nothing named there that does not exist: a list that outlives its
+    // targets claims coverage the repository has stopped having.
+    for line in model
+        .lines()
+        .filter(|line| line.trim_start().starts_with('|'))
+    {
+        let Some(name) = line.split('`').nth(1) else {
+            continue;
+        };
+        if name.ends_with("_parse")
+            || name.ends_with("_event")
+            || name.ends_with("_fold")
+            || name.ends_with("_model")
+            || name.ends_with("_drive")
+        {
+            assert!(
+                targets.iter().any(|target| target == name),
+                "THREAT_MODEL.md names a {name} fuzz target that does not exist"
+            );
+        }
+    }
+}
+
+/// Every command the READMEs promise is driven by at least one binding suite.
+///
+/// `every_binding_readme_documents_every_command` below checks the promise is
+/// complete. Nothing checked it was kept, and that is exactly how four commands
+/// came to be documented in nine READMEs and executed by no binding at all:
+/// `SetRecording` and `ExportRecording` by none, `ReplayPosition` only by the C
+/// example, `FeedDerivatives` by none. The recorder had never run outside Rust
+/// while nine pages described how to use it.
+///
+/// One suite, not all of them. Holding every command to every language would
+/// fail for reasons that are not defects -- the two suites that carry no JSON
+/// dependency read answers by matching on the wire form, and some commands are
+/// only sensible against a source kind another suite happens to use. What must
+/// never be true again is a command that nine pages document and nothing
+/// anywhere runs.
+#[test]
+fn every_documented_command_is_driven_by_a_binding_suite() {
+    /// Where a binding proves its reach.
+    ///
+    /// `examples/c` is the C hub's suite: it is run by ctest in the `c-abi`
+    /// job, which is why it counts. `golden/commands` counts for a different
+    /// reason -- the scenarios there are driven by all nine suites through the
+    /// manifest, so a command in a scenario file is executed in nine languages
+    /// even though it appears in no suite's source. Leaving it out reported
+    /// `AddSource`, `RemoveSource`, `SetFocus`, `Unsubscribe` and
+    /// `SetTimeframe` as undriven, which is the opposite of true: they are the
+    /// best-covered commands there are.
+    const SUITE_DIRS: [&str; 9] = [
+        "bindings/python/tests",
+        "bindings/node/__tests__",
+        "bindings/wasm/tests",
+        "bindings/go",
+        "bindings/csharp/WickraTerminal.Tests",
+        "bindings/java/src/test/java/org/wickra/terminal",
+        "bindings/r/tests",
+        "examples/c",
+        "golden/commands",
+    ];
+
+    let root = repo_root();
+    let commands = command_variants(&root);
+    // A floor, not the count. `every_binding_readme_documents_every_command`
+    // pins the exact number, and a second copy of it here is a second place to
+    // forget -- which is what happened the first time a command was added after
+    // this test was written. All this needs is the assurance that the parse
+    // found an enum at all.
+    assert!(
+        commands.len() >= 16,
+        "the command enum parsed as {commands:?}, which is not the enum"
+    );
+
+    // Read once: eight directories against sixteen names is a hundred and
+    // twenty-eight scans of the same files otherwise.
+    let mut haystack = String::new();
+    for dir in SUITE_DIRS {
+        let path = root.join(dir);
+        let entries =
+            std::fs::read_dir(&path).unwrap_or_else(|err| panic!("{dir} is not readable: {err}"));
+        for entry in entries.flatten() {
+            if entry.path().is_file() {
+                if let Ok(text) = std::fs::read_to_string(entry.path()) {
+                    haystack.push_str(&text);
+                }
+            }
+        }
+    }
+    assert!(
+        haystack.len() > 10_000,
+        "the suites read as {} bytes, which is not the suites",
+        haystack.len()
+    );
+
+    let undriven: Vec<&str> = commands
+        .iter()
+        .copied()
+        .filter(|name| !haystack.contains(&format!("\"{name}\"")))
+        .collect();
+    assert!(
+        undriven.is_empty(),
+        "documented in every binding README and driven by no binding suite: {undriven:?}"
+    );
+}
+
+/// The `Command` variants, read out of the source.
+///
+/// `Command` is private -- it is an implementation detail of the JSON boundary,
+/// and making it public to be testable would be the test dictating the API.
+fn command_variants(root: &std::path::Path) -> Vec<&'static str> {
+    let source = read(root, "crates/wickra-terminal-core/src/terminal.rs");
+    let start = source
+        .find("enum Command {")
+        .expect("the Command enum moved or was renamed");
+    let body = &source[start..];
+    let body = &body[..body
+        .find(
+            "
+}",
+        )
+        .expect("an unterminated enum")];
+
+    // One variant per line at four spaces of indent, which is how the enum is
+    // written; deeper indents are a variant's fields.
+    body.lines()
+        .skip(1)
+        .filter_map(|line| {
+            let rest = line.strip_prefix("    ")?;
+            if rest.starts_with(' ') || !rest.starts_with(char::is_uppercase) {
+                return None;
+            }
+            let name = rest
+                .split(|c: char| !c.is_alphanumeric() && c != '_')
+                .next()
+                .unwrap_or_default();
+            (!name.is_empty()).then(|| Box::leak(name.to_owned().into_boxed_str()) as &'static str)
+        })
+        .collect()
 }
 
 /// The command table in every binding README lists exactly the commands that
@@ -385,8 +782,8 @@ fn every_binding_readme_documents_every_command() {
         .collect();
     assert_eq!(
         variants.len(),
-        13,
-        "expected thirteen commands, found {variants:?}"
+        19,
+        "expected nineteen commands, found {variants:?}"
     );
 
     for rel in BINDING_READMES {
@@ -412,6 +809,20 @@ fn every_binding_readme_documents_every_command() {
                 "{rel} does not document the {variant} command"
             );
         }
+
+        // The sentence above the table, and not only the table. The prose said
+        // "thirteen" -- the number of table ROWS -- while the table below it
+        // carried all nineteen commands, because a row groups the commands that
+        // belong together (`Subscribe` / `Unsubscribe`, and three panel
+        // commands on one line). Every check above passed the whole time, in
+        // nine READMEs at once, and a reader takes the count from the sentence
+        // rather than by counting rows. `golden/README.md` said nineteen
+        // throughout, so the repository contradicted itself in public.
+        let spelled = NUMBER_WORDS[variants.len()];
+        assert!(
+            text.contains(&format!("the same {spelled} commands")),
+            "{rel} does not say it drives {spelled} commands"
+        );
 
         // And nothing the core does not have: a table row for a command that was
         // renamed or removed reads as an API that exists.
@@ -593,5 +1004,126 @@ fn the_reach_table_sums_to_the_documented_total() {
         for claim in cited {
             assert_eq!(claim, total.to_string(), "{rel} claims a reach of {claim}");
         }
+    }
+}
+
+/// Every panel the core can emit is one the web renderer knows how to draw.
+///
+/// The core is where the list lives, so this is where the guard belongs. Two
+/// panels — `Profile` and `Bars` — were added to `PanelKind`, given view-models,
+/// given TUI widgets, and never taught to the web renderer. The core emitted
+/// them in every frame; `findPanel` never asked for them; they vanished without
+/// an error anywhere. ARCHITECTURE.md says adding a panel here makes it appear
+/// in every renderer at once, and for those two it was not true.
+///
+/// Nothing else could have caught it. The golden corpus compares frames, which
+/// were correct. The web suite tests the mappings it has. A panel a renderer has
+/// simply never heard of has no test to fail.
+///
+/// Checked in three places, because each is a separate way to drop a panel: the
+/// `PanelKind` union (the layout would place nothing), the `PanelView` union
+/// (`findPanel` would not type-check against it), and a section in the template
+/// (the placement exists and draws nothing).
+/// Every action the shared keymap can bind reaches one renderer or the other on
+/// purpose, and none of them is silently inert.
+///
+/// `layout.keybinds` sits in the config precisely so a rebinding moves both
+/// front-ends, which makes a bound action that no renderer answers the worst
+/// shape available: the key looks configured, the config validates, and nothing
+/// happens. `remove_source` and `save_recording` were exactly that in the
+/// browser -- bound in the default keymap, answered by the TUI, and dropped into
+/// `runAction`'s catch-all.
+///
+/// Three are deliberately unanswered in the browser and are named here rather
+/// than inferred, so adding a fourth is a decision someone writes down:
+/// `quit`, because a tab is not the terminal's to close, and the panel-focus and
+/// scroll pairs, because a web panel is a scrollable box the browser drives.
+#[test]
+fn every_bound_action_reaches_a_renderer() {
+    /// Answered by the TUI alone, each for a reason a browser cannot argue with.
+    ///
+    /// `quit`, because a tab is not the terminal's to close. The scroll pair,
+    /// because a web panel is a scrollable box the browser already drives. The
+    /// panel-focus pair, because focus is a renderer's own idea and the browser
+    /// does not have one -- and `remove_panel` and `move_panel` go with it for
+    /// exactly that reason: with no focused panel there is nothing for them to
+    /// act on, and a key that removed an arbitrary panel would be worse than a
+    /// key that does nothing. The browser removes with the `x` on the panel
+    /// itself, which names its target by sitting on it.
+    const BROWSER_DECLINES: [&str; 7] = [
+        "quit",
+        "next_panel",
+        "prev_panel",
+        "scroll_up",
+        "scroll_down",
+        "remove_panel",
+        "move_panel",
+    ];
+
+    let root = repo_root();
+    let input_rs = read(&root, "crates/ui-tui/src/input.rs");
+    let app_vue = read(&root, "web/src/App.vue");
+    let binds = wickra_terminal_core::config::Keybinds::default();
+    assert!(
+        binds.bindings.len() >= 19,
+        "the default keymap shrank to {} actions",
+        binds.bindings.len()
+    );
+
+    for action in binds.bindings.keys() {
+        assert!(
+            input_rs.contains(&format!("Some(\"{action}\")")),
+            "crates/ui-tui/src/input.rs: {action:?} is bound and the TUI keymap resolves it to nothing"
+        );
+        if BROWSER_DECLINES.contains(&action.as_str()) {
+            continue;
+        }
+        assert!(
+            app_vue.contains(&format!("case '{action}'")),
+            "web/src/App.vue: {action:?} is bound and runAction drops it into the catch-all"
+        );
+    }
+}
+
+#[test]
+fn every_panel_kind_reaches_the_web_renderer() {
+    let root = repo_root();
+    let panels_rs = read(&root, "crates/wickra-terminal-core/src/panels/mod.rs");
+    let types_ts = read(&root, "web/src/types.ts");
+    let app_vue = read(&root, "web/src/App.vue");
+
+    // The variants of `enum PanelKind`, read from the enum itself rather than
+    // restated here — a list this test carried its own copy of would go stale
+    // in exactly the way the bug did.
+    let body = panels_rs
+        .split_once("pub enum PanelKind {")
+        .and_then(|(_, rest)| rest.split_once("\n}"))
+        .map(|(body, _)| body)
+        .expect("panels/mod.rs declares enum PanelKind");
+    let kinds: Vec<&str> = body
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| line.strip_suffix(','))
+        .filter(|name| {
+            name.chars().next().is_some_and(char::is_uppercase)
+                && name.chars().all(char::is_alphanumeric)
+        })
+        .collect();
+    assert!(kinds.len() >= 7, "found only {kinds:?} in PanelKind");
+
+    for kind in kinds {
+        let tag = kind.to_lowercase();
+        assert!(
+            types_ts.contains(&format!("'{kind}'")),
+            "web/src/types.ts: PanelKind has no {kind}, so the layout places nothing for it"
+        );
+        assert!(
+            types_ts.contains(&format!("panel: '{tag}'")),
+            "web/src/types.ts: PanelView has no {tag} variant, so the frame's is discarded"
+        );
+        assert!(
+            app_vue.contains(&format!("placements.{kind}")),
+            "web/src/App.vue: no section for {kind}, so it is placed and never drawn"
+        );
     }
 }

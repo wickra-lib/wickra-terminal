@@ -12,7 +12,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::candle::Timeframe;
-use crate::config::{Config, IndicatorSpec, SourceSpec};
+use crate::config::{Config, IndicatorSpec, PanelSpec, RectSpec, SourceSpec};
 use crate::error::{Error, Result};
 use crate::panels::{build_panel, Panel};
 use crate::registry;
@@ -86,6 +86,32 @@ enum Command {
     /// Answer with the registry catalogue instead of a frame: every indicator
     /// name this build accepts, with the parameters wickra itself uses.
     ListIndicators,
+    /// Answer with the recorded events instead of a frame, in exactly the shape
+    /// `Replay` takes — so a session can be saved and played back.
+    ///
+    /// The core is filesystem-free, because it has to be to run in a browser, so
+    /// it records into a bounded ring and hands the events over; writing them
+    /// anywhere is the host's job.
+    ExportRecording,
+    /// Turn recording on with a capacity, or off.
+    ///
+    /// Clears what is already held either way: a capacity change that kept the
+    /// old events would leave a recording that is part one size and part
+    /// another.
+    SetRecording {
+        /// How many recent events to keep, or `null` to stop recording.
+        capacity: Option<usize>,
+    },
+    /// Answer with a replayable source's position instead of a frame, so a
+    /// renderer can draw a time-machine scrubber.
+    ///
+    /// Its own command rather than a field on the frame: the position belongs to
+    /// a source, not to a panel, and putting it in every frame would put it in
+    /// front of every consumer that has no replay at all.
+    ReplayPosition {
+        /// The source id.
+        source: SourceId,
+    },
     /// Push an externally sourced market event into a host-fed (`Manual`) source,
     /// to be folded on the next tick. The event carries its own market.
     Feed {
@@ -110,6 +136,45 @@ enum Command {
         /// The channels that arrived.
         update: DerivativesUpdate,
     },
+    /// Place a new panel on the layout, appended after the ones already there.
+    ///
+    /// The layout was read once when the terminal was built and never again, so
+    /// a terminal opened with the wrong panels had to be restarted with a
+    /// different config -- which is not something a person does while watching a
+    /// market move.
+    AddPanel {
+        /// The panel to build, and where to put it.
+        spec: PanelSpec,
+    },
+    /// Take the panel at `index` off the layout.
+    RemovePanel {
+        /// Its position in the layout, counting from zero.
+        index: usize,
+    },
+    /// Move or resize the panel at `index`.
+    ///
+    /// The rectangle only. A panel's depth is what it was built with, so
+    /// changing that means building a different panel -- a remove and an add,
+    /// which says plainly that the old one's state goes with it.
+    MovePanel {
+        /// Its position in the layout, counting from zero.
+        index: usize,
+        /// Where it should sit now.
+        rect: RectSpec,
+    },
+}
+
+/// A replayable source's position: what `ReplayPosition` answers with.
+///
+/// A source that cannot be replayed answers `0/0` rather than an error. That is
+/// the honest reading -- a live feed has no recorded length -- and it lets a
+/// renderer ask about whatever is focused without first knowing what it is.
+#[derive(Debug, Serialize)]
+pub struct ReplayPosition {
+    /// How many recorded events have been folded.
+    pub cursor: usize,
+    /// How many events the recording holds. Zero when it is not a recording.
+    pub length: usize,
 }
 
 /// The registry catalogue: what `ListIndicators` answers with.
@@ -264,13 +329,14 @@ impl Terminal {
         // profile that is not one should say so here, not on the first bar.
         ProfileSet::from_specs(&config.profiles)?;
         BarSet::from_specs(&config.bars)?;
-        let state = AppState {
+        let mut state = AppState {
             indicators: config.indicators.clone(),
             profiles: config.profiles.clone(),
             bars: config.bars.clone(),
             timeframe: config.timeframe,
             ..AppState::default()
         };
+        state.set_recording(config.record);
         let mut terminal = Self {
             state,
             config: config.clone(),
@@ -434,11 +500,41 @@ impl Terminal {
         if !self.state.symbols.contains_key(&key) {
             let fresh = self.state.fresh_market();
             self.state.symbols.insert(key.clone(), fresh);
+            // Fetched after the market exists and before anything else looks at
+            // it, so the first frame already carries a history. A source with
+            // none to offer returns an empty list and this costs a call.
+            //
+            // Only on a market the terminal did not already hold: re-subscribing
+            // one that is already open must not replay its history into state
+            // that has moved on since.
+            let bars = self.backfill(id, sym);
+            if !bars.is_empty() {
+                if let Some(state) = self.state.symbols.get_mut(&key) {
+                    state.seed_bars(&bars);
+                }
+            }
         }
         if self.state.focus.is_none() {
             self.state.focus = Some(key);
         }
         Ok(())
+    }
+
+    /// The historical bars a source offers for a market, or an empty list.
+    ///
+    /// Split out so the borrow of the source ends before the state is written:
+    /// both live on `self`, and seeding while the source is borrowed would not
+    /// compile.
+    fn backfill(&mut self, id: SourceId, sym: &Symbol) -> Vec<wickra_core::Candle> {
+        if self.config.backfill == 0 {
+            return Vec::new();
+        }
+        let interval = self.config.timeframe.label();
+        let limit = self.config.backfill;
+        self.state
+            .source_mut(id)
+            .map(|source| source.backfill(sym, &interval, limit))
+            .unwrap_or_default()
     }
 
     /// Unsubscribe a market, dropping its state and repairing focus.
@@ -457,6 +553,140 @@ impl Terminal {
     /// Focus a market.
     pub fn set_focus(&mut self, id: SourceId, sym: &Symbol) {
         self.state.focus = Some((id, sym.clone()));
+    }
+
+    /// Place a new panel on the layout, and answer with its index.
+    ///
+    /// The layout was read once in [`new`](Self::new) and never again, so a
+    /// terminal opened with the wrong panels had to be restarted with a
+    /// different config -- which is not something a person does while watching a
+    /// market move.
+    ///
+    /// Appended rather than inserted at a position: the index is how every other
+    /// panel command names its target, and inserting would renumber the ones a
+    /// caller is already holding.
+    pub fn add_panel(&mut self, spec: &PanelSpec) -> usize {
+        self.panels.push(build_panel(spec));
+        self.config.layout.panels.push(spec.clone());
+        self.panels.len() - 1
+    }
+
+    /// Take the panel at `index` off the layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Command`] if there is no panel at `index`.
+    pub fn remove_panel(&mut self, index: usize) -> Result<()> {
+        if index >= self.panels.len() {
+            return Err(Error::Command(format!(
+                "no panel at {index}: the layout has {}",
+                self.panels.len()
+            )));
+        }
+        self.panels.remove(index);
+        self.config.layout.panels.remove(index);
+        Ok(())
+    }
+
+    /// Move or resize the panel at `index`.
+    ///
+    /// The rectangle only. A panel's depth is what it was built with, so
+    /// changing that means building a different panel -- a remove and an add,
+    /// which says plainly that the old one's state goes with it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Command`] if there is no panel at `index`.
+    pub fn move_panel(&mut self, index: usize, rect: RectSpec) -> Result<()> {
+        let count = self.panels.len();
+        let spec = self.config.layout.panels.get_mut(index).ok_or_else(|| {
+            Error::Command(format!("no panel at {index}: the layout has {count}"))
+        })?;
+        spec.rect = rect;
+        Ok(())
+    }
+
+    /// Track one more indicator on every market, now and on markets opened
+    /// later. It starts cold and warms up from the next tick.
+    ///
+    /// The typed twin of the `AddIndicator` command, and what that command calls
+    /// -- so the config stays in step either way. Without it a Rust embedder had
+    /// to assemble JSON to reach its own registry, which is why neither renderer
+    /// ever did.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Config`] if the spec names no registered kind, if its
+    /// parameters are refused, or if a pairwise kind carries no reference.
+    pub fn add_indicator(&mut self, spec: &IndicatorSpec) -> Result<()> {
+        self.state.add_indicator(spec)?;
+        self.config.indicators.push(spec.clone());
+        Ok(())
+    }
+
+    /// Stop tracking the indicator with this label (`Sma(20)`, `Rsi(14)`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Command`] if no tracked indicator carries that label.
+    pub fn remove_indicator(&mut self, label: &str) -> Result<()> {
+        if !self.state.remove_indicator(label) {
+            return Err(Error::Command(format!("no such indicator: {label}")));
+        }
+        self.config.indicators.retain(|s| s.label() != label);
+        Ok(())
+    }
+
+    /// Change the bar size the candle-input indicators are fed at.
+    ///
+    /// Restarts the bar-derived state: each market opens a new bar, the kept
+    /// bars are dropped and the indicator set is rebuilt. The price history,
+    /// tape, book and footprint are untouched, since none comes from bars.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Config`] if an indicator cannot be rebuilt.
+    pub fn set_timeframe(&mut self, timeframe: Timeframe) -> Result<()> {
+        self.state.set_timeframe(timeframe)?;
+        self.config.timeframe = timeframe;
+        Ok(())
+    }
+
+    /// The recorded events, oldest first, in the shape `Replay` takes.
+    ///
+    /// Empty unless recording is on. The typed twin of `ExportRecording`.
+    #[must_use]
+    pub fn recording(&self) -> Vec<Event> {
+        self.state.recording()
+    }
+
+    /// How many events the recording holds. Cheaper than counting
+    /// [`recording`](Self::recording), which clones the whole ring.
+    #[must_use]
+    pub fn recording_len(&self) -> usize {
+        self.state.recorded.len()
+    }
+
+    /// Turn recording on with a capacity, or off.
+    ///
+    /// Clears what is already held either way, so a capacity change never leaves
+    /// a recording that is part one size and part another.
+    pub fn set_recording(&mut self, capacity: Option<usize>) {
+        self.state.set_recording(capacity);
+        self.config.record = capacity;
+    }
+
+    /// A replayable source's position and recorded length, for a time-machine
+    /// scrubber. `None` for a source that cannot be replayed.
+    ///
+    /// The trait has carried `cursor` and `event_count` from the start and
+    /// nothing read them, so neither renderer could show where in a recording it
+    /// was -- or offer to move.
+    #[must_use]
+    pub fn replay_position(&self, id: SourceId) -> Option<(usize, usize)> {
+        let source = self.state.sources.iter().find(|s| s.id() == id)?;
+        let length = source.event_count();
+        (length > 0).then(|| (source.cursor(), length))
     }
 
     /// Pump every source and build the next frame.
@@ -522,25 +752,40 @@ impl Terminal {
             } => {
                 self.feed_derivatives(source, &symbol, &update)?;
             }
+            Command::AddPanel { spec } => {
+                self.add_panel(&spec);
+            }
+            Command::RemovePanel { index } => {
+                self.remove_panel(index)?;
+            }
+            Command::MovePanel { index, rect } => {
+                self.move_panel(index, rect)?;
+            }
             Command::AddIndicator { spec } => {
-                self.state.add_indicator(&spec)?;
-                self.config.indicators.push(spec);
+                self.add_indicator(&spec)?;
             }
             Command::RemoveIndicator { label } => {
-                if !self.state.remove_indicator(&label) {
-                    return Err(Error::Command(format!("no such indicator: {label}")));
-                }
-                self.config.indicators.retain(|s| s.label() != label);
+                self.remove_indicator(&label)?;
             }
             Command::SetTimeframe { timeframe } => {
-                self.state.set_timeframe(timeframe)?;
-                self.config.timeframe = timeframe;
+                self.set_timeframe(timeframe)?;
             }
             // The one command that answers rather than renders: every other
             // command changes state and gets the new frame back, so returning a
             // frame here would mean the catalogue had nowhere to go.
             Command::ListIndicators => {
                 return Ok(serde_json::to_string(&Catalogue::current())?);
+            }
+            Command::ExportRecording => {
+                return Ok(serde_json::to_string(&self.state.recording())?);
+            }
+            Command::SetRecording { capacity } => {
+                self.state.set_recording(capacity);
+                self.config.record = capacity;
+            }
+            Command::ReplayPosition { source } => {
+                let (cursor, length) = self.replay_position(source).unwrap_or((0, 0));
+                return Ok(serde_json::to_string(&ReplayPosition { cursor, length })?);
             }
         }
         Ok(serde_json::to_string(&self.frame())?)
@@ -682,6 +927,275 @@ mod tests {
         term.unsubscribe(0, &btc);
         // Focus falls back to the remaining subscription.
         assert_eq!(term.state().focus, Some((0, eth)));
+    }
+
+    /// A source that offers history and nothing else, so the seeding can be
+    /// tested without a venue.
+    ///
+    /// `LiveSource` is the only source that has a backfill and the only one that
+    /// needs a socket to produce it, which would otherwise leave the seeding
+    /// path untested — and the seeding, not the HTTP call, is what has the
+    /// interesting failure modes.
+    #[derive(Debug)]
+    struct HistorySource {
+        id: SourceId,
+        bars: Vec<wickra_core::Candle>,
+        asked: usize,
+    }
+
+    impl crate::source::DataSource for HistorySource {
+        fn id(&self) -> SourceId {
+            self.id
+        }
+        fn kind(&self) -> crate::source::SourceKind {
+            crate::source::SourceKind::Synth
+        }
+        fn subscribe(&mut self, _sym: &Symbol) -> Result<()> {
+            Ok(())
+        }
+        fn unsubscribe(&mut self, _sym: &Symbol) {}
+        fn poll(&mut self) -> Vec<(Symbol, Event)> {
+            Vec::new()
+        }
+        fn backfill(
+            &mut self,
+            _sym: &Symbol,
+            _interval: &str,
+            limit: usize,
+        ) -> Vec<wickra_core::Candle> {
+            self.asked = limit;
+            self.bars.clone()
+        }
+    }
+
+    fn rising_bars(n: usize) -> Vec<wickra_core::Candle> {
+        (0..n)
+            .map(|i| {
+                let open = 100.0 + i as f64;
+                let ts = i64::try_from(i).expect("a small test index");
+                wickra_core::Candle::new(open, open + 2.0, open - 1.0, open + 1.0, 5.0, ts)
+                    .expect("a rising bar is valid")
+            })
+            .collect()
+    }
+
+    /// A terminal with one history-bearing source already open.
+    fn seeded(bars: Vec<wickra_core::Candle>, backfill: usize) -> Terminal {
+        let mut config = Config::default_layout();
+        config.indicators = vec![IndicatorSpec::new("Atr", vec![5.0])];
+        config.backfill = backfill;
+        let mut terminal = Terminal::new(&config).expect("the default config builds");
+        terminal.state.sources.push(Box::new(HistorySource {
+            id: 0,
+            bars,
+            asked: 0,
+        }));
+        terminal
+    }
+
+    /// The chart panel's view-model out of the current frame.
+    ///
+    /// `find_map` rather than `find` plus a refutable `let`: the `let` needed an
+    /// `else` arm that the `find` had already made unreachable, so three copies
+    /// of an `unreachable!()` sat in the tests waiting to be read as a real
+    /// branch. Here the arm that skips a panel is the one every other panel in
+    /// the default layout takes.
+    fn chart_of(terminal: &Terminal) -> crate::view::ChartView {
+        terminal
+            .frame()
+            .panels
+            .into_iter()
+            .find_map(|panel| match panel {
+                PanelView::Chart(chart) => Some(chart),
+                _ => None,
+            })
+            .expect("the default layout has a chart")
+    }
+
+    /// A source that backfills is still an ordinary source.
+    ///
+    /// `poll`, `kind` and `unsubscribe` are the rest of the trait, and a history
+    /// source that answered `backfill` correctly and nothing else would seed a
+    /// chart once and then sit there: the tick path would take whatever `poll`
+    /// gave it, and a market dropped from it would keep being folded.
+    #[test]
+    fn a_backfilling_source_still_polls_and_unsubscribes() {
+        let mut terminal = seeded(rising_bars(4), 200);
+        let sym = Symbol::new("BTC", "USDT");
+        terminal.subscribe(0, &sym).expect("the source accepts");
+
+        // `tick` polls the source; it has no live events, so the frame is the
+        // seeded history and nothing more.
+        let frame = terminal.tick();
+        assert!(frame
+            .panels
+            .iter()
+            .any(|p| matches!(p, PanelView::Chart(_))));
+        // `kind` says it is not a recording, so the scrubber has nothing to show.
+        assert_eq!(terminal.replay_position(0), None);
+
+        terminal.unsubscribe(0, &sym);
+        assert!(
+            terminal.state().watchlist.is_empty(),
+            "the market was not dropped"
+        );
+    }
+
+    #[test]
+    fn a_fresh_subscription_is_seeded_from_history() {
+        // Without this every bar came from ticks the terminal saw itself, so
+        // Atr(5) at an hourly timeframe was silent for five hours and the chart
+        // opened empty on a market that has traded for years.
+        let mut terminal = seeded(rising_bars(30), 200);
+        terminal.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
+
+        let chart = chart_of(&terminal);
+        assert_eq!(chart.bars.len(), 30, "the history did not reach the chart");
+        assert!(chart.last > 0.0, "the last price was not seeded");
+        assert!(
+            chart.indicators.iter().any(|i| i.value.is_some()),
+            "no indicator warmed up on the history"
+        );
+    }
+
+    #[test]
+    fn backfill_zero_fetches_nothing() {
+        let mut terminal = seeded(rising_bars(30), 0);
+        terminal.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
+        let chart = chart_of(&terminal);
+        assert!(chart.bars.is_empty(), "history was fetched with backfill 0");
+    }
+
+    #[test]
+    fn re_subscribing_does_not_replay_the_history() {
+        // State that has moved on since must not have its past folded into it a
+        // second time.
+        let mut terminal = seeded(rising_bars(30), 200);
+        let sym = Symbol::new("BTC", "USDT");
+        terminal.subscribe(0, &sym).unwrap();
+        terminal.subscribe(0, &sym).unwrap();
+        let chart = chart_of(&terminal);
+        assert_eq!(chart.bars.len(), 30, "the history was seeded twice");
+    }
+
+    /// A replay config over a short recorded feed.
+    fn recording_config(record: Option<usize>) -> Config {
+        let feed = (0..6)
+            .map(|i| {
+                format!(
+                    r#"{{"type":"trade","symbol":{{"base":"BTC","quote":"USDT"}},"price":"{}","quantity":"1","aggressor":"Buy","timestamp":{}}}"#,
+                    100 + i,
+                    i + 1
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut config = Config::default_layout();
+        config.sources = vec![SourceSpec::Replay {
+            dataset: format!("[{feed}]"),
+        }];
+        config.record = record;
+        config
+    }
+
+    #[test]
+    fn nothing_is_recorded_unless_recording_is_on() {
+        // Off by default, and it has to be: a terminal left running overnight
+        // must not fill memory with a feed nobody asked it to keep.
+        let mut terminal = Terminal::new(&recording_config(None)).unwrap();
+        terminal.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
+        for _ in 0..6 {
+            terminal.tick();
+        }
+        assert_eq!(terminal.recording_len(), 0);
+    }
+
+    #[test]
+    fn a_recording_comes_back_in_the_shape_replay_takes() {
+        // The whole point: the terminal could rewind a recording and had no way
+        // to make one, because Replay takes the feed as JSON rather than a path.
+        // So what comes out has to go straight back in.
+        let mut terminal = Terminal::new(&recording_config(Some(64))).unwrap();
+        terminal.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
+        for _ in 0..6 {
+            terminal.tick();
+        }
+        assert_eq!(terminal.recording_len(), 6);
+
+        // The typed twin answers the same recording the command serialises. A
+        // host embedding the core in Rust reaches for this one, and nothing read
+        // it -- so the two could have drifted apart unnoticed.
+        let typed = terminal.recording();
+        assert_eq!(typed.len(), terminal.recording_len());
+
+        let exported = terminal
+            .command_json(r#"{"type":"ExportRecording"}"#)
+            .unwrap();
+        assert_eq!(
+            serde_json::to_string(&typed).expect("the events serialise"),
+            exported,
+            "the typed recording and the exported one are not the same events"
+        );
+        let mut replayed = Config::default_layout();
+        replayed.sources = vec![SourceSpec::Replay { dataset: exported }];
+        let mut second = Terminal::new(&replayed).unwrap();
+        second.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
+        for _ in 0..6 {
+            second.tick();
+        }
+        assert!(
+            second
+                .state()
+                .get(&(0, Symbol::new("BTC", "USDT")))
+                .is_some(),
+            "the exported recording did not replay"
+        );
+    }
+
+    #[test]
+    fn a_seek_does_not_double_the_recording() {
+        // The trap this design exists around: `fold` is also how a seek re-folds
+        // a recording, so recording there would append the replayed events back
+        // onto the recording and every rewind would double it.
+        let mut terminal = Terminal::new(&recording_config(Some(64))).unwrap();
+        terminal.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
+        for _ in 0..6 {
+            terminal.tick();
+        }
+        let before = terminal.recording_len();
+        terminal.seek(0, 2).unwrap();
+        assert_eq!(
+            terminal.recording_len(),
+            before,
+            "a seek grew the recording"
+        );
+    }
+
+    #[test]
+    fn the_recording_is_bounded_and_keeps_the_newest() {
+        let mut terminal = Terminal::new(&recording_config(Some(2))).unwrap();
+        terminal.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
+        for _ in 0..6 {
+            terminal.tick();
+        }
+        assert_eq!(terminal.recording_len(), 2);
+    }
+
+    #[test]
+    fn turning_recording_on_or_off_clears_what_is_held() {
+        // A capacity change that kept the old events would leave a recording
+        // that is part one size and part another.
+        let mut terminal = Terminal::new(&recording_config(Some(64))).unwrap();
+        terminal.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
+        for _ in 0..6 {
+            terminal.tick();
+        }
+        assert_eq!(terminal.recording_len(), 6);
+        terminal.set_recording(Some(10));
+        assert_eq!(terminal.recording_len(), 0);
+        assert_eq!(terminal.config().record, Some(10));
+        terminal.set_recording(None);
+        assert_eq!(terminal.config().record, None);
     }
 
     #[test]
@@ -1318,6 +1832,7 @@ mod tests {
                     w: 100,
                     h: 50,
                 },
+                depth: None,
             },
             PanelSpec {
                 kind: PanelKind::Bars,
@@ -1327,6 +1842,7 @@ mod tests {
                     w: 100,
                     h: 50,
                 },
+                depth: None,
             },
         ];
         cfg.profiles = registry::PROFILES
@@ -1378,6 +1894,7 @@ mod tests {
                 w: 100,
                 h: 100,
             },
+            depth: None,
         }];
         // One-second bars, so a tick closes a bar. The synth source advances
         // its clock a second per poll, and VolumeProfile needs twenty closed
@@ -1443,6 +1960,7 @@ mod tests {
                 w: 100,
                 h: 100,
             },
+            depth: None,
         }];
         // One-second bars, as the profile test does and for the same reason:
         // a Renko brick needs the price to move a whole box, and at the
@@ -1491,5 +2009,153 @@ mod tests {
             err.to_string().contains("Sma"),
             "the error should name it: {err}"
         );
+    }
+
+    /// The layout can be changed while the terminal runs.
+    ///
+    /// It was read once in `new` and never again, so a terminal opened with the
+    /// wrong panels had to be restarted with a different config -- which is not
+    /// something a person does while watching a market move.
+    #[test]
+    fn a_panel_can_be_added_removed_and_moved_at_run_time() {
+        let mut config = synth_config();
+        config.layout.panels = vec![PanelSpec::new(
+            PanelKind::Chart,
+            RectSpec::new(0, 0, 100, 50),
+        )];
+        let mut terminal = Terminal::new(&config).expect("the config builds");
+        terminal
+            .subscribe(0, &Symbol::new("BTC", "USDT"))
+            .expect("the synth source accepts");
+        assert_eq!(terminal.frame().panels.len(), 1);
+
+        let at = terminal.add_panel(&PanelSpec::new(
+            PanelKind::Book,
+            RectSpec::new(0, 50, 100, 50),
+        ));
+        assert_eq!(at, 1, "a panel is appended, not inserted");
+        let panels = terminal.frame().panels;
+        assert_eq!(panels.len(), 2);
+        assert!(matches!(panels[1], PanelView::Book(_)), "{:?}", panels[1]);
+
+        // The config moves with it, because the config is what a renderer reads
+        // to place the panels a frame carries.
+        assert_eq!(terminal.config().layout.panels.len(), 2);
+
+        terminal
+            .move_panel(1, RectSpec::new(50, 0, 50, 100))
+            .expect("panel 1 exists");
+        assert_eq!(
+            terminal.config().layout.panels[1].rect,
+            RectSpec::new(50, 0, 50, 100)
+        );
+
+        terminal.remove_panel(0).expect("panel 0 exists");
+        let panels = terminal.frame().panels;
+        assert_eq!(panels.len(), 1);
+        assert!(
+            matches!(panels[0], PanelView::Book(_)),
+            "the wrong panel went"
+        );
+        assert_eq!(terminal.config().layout.panels.len(), 1);
+    }
+
+    /// An index past the end is refused, and says how many panels there are.
+    ///
+    /// A renderer holds indices between frames, and a layout that shrank under
+    /// it must get an error rather than silently act on the wrong panel.
+    #[test]
+    fn a_panel_command_past_the_end_is_refused() {
+        let mut config = synth_config();
+        config.layout.panels = vec![PanelSpec::new(
+            PanelKind::Chart,
+            RectSpec::new(0, 0, 100, 100),
+        )];
+        let mut terminal = Terminal::new(&config).expect("the config builds");
+
+        let err = terminal.remove_panel(1).expect_err("there is no panel 1");
+        assert!(err.to_string().contains("no panel at 1"), "{err}");
+        assert!(err.to_string().contains("has 1"), "{err}");
+
+        let err = terminal
+            .move_panel(9, RectSpec::new(0, 0, 10, 10))
+            .expect_err("there is no panel 9");
+        assert!(err.to_string().contains("no panel at 9"), "{err}");
+
+        // And the layout is untouched by either refusal.
+        assert_eq!(terminal.config().layout.panels.len(), 1);
+    }
+
+    /// The three panel commands reach the same code over the JSON boundary.
+    #[test]
+    fn the_panel_commands_cross_the_boundary() {
+        let mut config = synth_config();
+        config.layout.panels = vec![PanelSpec::new(
+            PanelKind::Chart,
+            RectSpec::new(0, 0, 100, 100),
+        )];
+        let mut terminal = Terminal::new(&config).expect("the config builds");
+        terminal
+            .subscribe(0, &Symbol::new("BTC", "USDT"))
+            .expect("the synth source accepts");
+
+        let frame = terminal
+            .command_json(
+                r#"{"type":"AddPanel","spec":{"kind":"Tape","rect":{"x":0,"y":0,"w":50,"h":50}}}"#,
+            )
+            .expect("AddPanel is accepted");
+        assert!(frame.contains(r#""panel":"tape""#), "{frame}");
+
+        terminal
+            .command_json(r#"{"type":"MovePanel","index":1,"rect":{"x":50,"y":0,"w":50,"h":100}}"#)
+            .expect("MovePanel is accepted");
+        assert_eq!(
+            terminal.config().layout.panels[1].rect,
+            RectSpec::new(50, 0, 50, 100)
+        );
+
+        let frame = terminal
+            .command_json(r#"{"type":"RemovePanel","index":1}"#)
+            .expect("RemovePanel is accepted");
+        assert!(!frame.contains(r#""panel":"tape""#), "{frame}");
+
+        let err = terminal
+            .command_json(r#"{"type":"RemovePanel","index":7}"#)
+            .expect_err("there is no panel 7");
+        assert!(err.to_string().contains("no panel at 7"), "{err}");
+    }
+
+    /// A panel added with a depth carries it, the way a configured one does.
+    #[test]
+    fn an_added_panel_honours_the_depth_it_was_given() {
+        let (sym, mut config) = replay_config();
+        config.layout.panels = vec![PanelSpec::new(
+            PanelKind::Chart,
+            RectSpec::new(0, 0, 100, 100),
+        )];
+        let mut terminal = Terminal::new(&config).expect("the config builds");
+        terminal.subscribe(0, &sym).expect("the replay accepts");
+        for _ in 0..3 {
+            terminal.tick();
+        }
+
+        let mut deep = PanelSpec::new(PanelKind::Tape, RectSpec::new(0, 0, 100, 100));
+        deep.depth = Some(1);
+        terminal.add_panel(&deep);
+
+        // `find_map` over the frame rather than an indexed destructure: the
+        // `else` arm of a `let` on a known index is a line no run can reach,
+        // while the arm that skips a panel of another kind is taken by the
+        // chart sitting in front of it.
+        let prints = terminal
+            .frame()
+            .panels
+            .into_iter()
+            .find_map(|panel| match panel {
+                PanelView::Tape(tape) => Some(tape.prints.len()),
+                _ => None,
+            })
+            .expect("the added panel is a tape");
+        assert_eq!(prints, 1, "the depth was ignored");
     }
 }

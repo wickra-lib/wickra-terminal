@@ -10,7 +10,7 @@ because each renderer is only a mapping from `PanelView` to its own widget.
 
 | Kind | View-model | Shows |
 |------|------------|-------|
-| `Chart` | `ChartView` | a recent price series and the configured indicator overlays for the focused market |
+| `Chart` | `ChartView` | the bars of the configured timeframe, a tick-resolution price series, and the indicator readings for the focused market |
 | `Book` | `BookView` | the top of the L2 order book (bids and asks) and the spread |
 | `Tape` | `TapeView` | the most recent trade prints, coloured by aggressor side |
 | `Footprint` | `FootprintView` | per-price buy and sell volume (a volume profile) |
@@ -25,11 +25,51 @@ plain, language-neutral JSON document.
 This is the surface a binding consumer actually reads, so it is worth stating
 rather than leaving to be discovered from a sample frame.
 
-**`chart`** — `symbol`, `last`, `series` (up to 120 recent prices, oldest first),
-and `indicators`. Each indicator carries its `name` (the label from its spec,
+**`chart`** — `symbol`, `last`, `bars`, `forming`, `series` and `indicators`.
+
+`bars` is up to 120 closed bars of the configured timeframe, oldest first, each
+an `open`, `high`, `low`, `close`, `volume` and the bar's opening `timestamp`.
+It is omitted from the JSON until the first bar closes, which at an hourly
+timeframe is the first hour of a session.
+
+`forming` is the bar still accumulating, in the same shape. It is kept apart
+from `bars` rather than appended, because it is the one bar that will still
+change: an indicator never sees it — a reading that repainted as its bar filled
+would be a different number on every print — but a chart that omitted it would
+show the market frozen at the last close for a whole bar.
+
+`series` is up to 120 recent prices, oldest first, one point per trade. It is
+the finer of the two and does not wait for a bar to close, which is what makes
+it the right thing to draw before any bar has.
+
+Each entry in `indicators` carries its `name` (the label from its spec,
 `Sma(20)`), its primary `value` (`null` while warming up), an optional `fields`
 list for the multi-output ones, and an optional `series` of its own. See
 [INDICATORS.md](INDICATORS.md).
+
+`value` is the *first* field of a multi-output indicator, so that a consumer
+wanting one line does not have to know which field that is -- and both reference
+renderers read only it for a while, which drew `Macd(12,26,9)=1.42` and dropped
+the signal line and the histogram. They read `fields` now and write
+`Macd(12,26,9)[macd=1.42 signal=1.25 histogram=0.17]`, the same shape in both,
+because one indicator read in two places should not look like two.
+
+> Both reference renderers draw the candles and report the indicators as
+> numbers, rather than drawing indicator lines over the candles. An indicator's
+> `series` is sampled once per tick and the bars are one per bar, so the two do
+> not share an x-axis; an average drawn on the candle axis would sit near, but
+> not on, the bar it was computed from. Overlays are drawn only in the
+> before-the-first-bar fallback, where the price series and the indicator series
+> do share an axis -- in **both** renderers, which was true of the browser alone
+> for a while: the terminal drew a single row of block glyphs from the same
+> frame the browser drew lines from.
+>
+> An overlay is drawn only where its range overlaps the price's. Without that
+> test an `Rsi` running 0..100 would be plotted on a chart of a market near
+> twenty thousand and drawn as a flat line at the bottom -- present, meaningless,
+> and impossible to tell from a broken indicator. The core does not declare which
+> readings are prices, so the ranges are what says it, and both renderers apply
+> the same rule.
 
 **`book`** — `symbol`, `bids` and `asks` (up to 12 levels each, best first, every
 level a `price` and a `quantity`), and `spread` (`null` until both sides have a
@@ -44,13 +84,57 @@ a `price`, a `quantity`, a `side` (`"buy"` or `"sell"`, the aggressor) and a
 last trade, not the highest ever traded: anchoring them is what keeps the ladder
 on the market after a move.
 
-**`watchlist`** — `rows`, one per tracked market, each a `source` id, a `symbol`
-and its `last` price. This is the only panel that does not render the focused
-market: it renders all of them.
+**`watchlist`** — `rows`, one per tracked market, each a `source` id, a `symbol`,
+its `last` price, the venue's `bid`, `ask` and rolling base-asset `volume`, and
+the percentage `change` from the first price the terminal folded for that market.
+This is the only panel that does not render the focused market: it renders all of
+them.
+
+The `bid`, `ask` and `volume` come off the venue's ticker stream and are `0.0`
+until the first ticker arrives, which is how a renderer tells "no quote yet" from
+a genuine zero: it shows a dash rather than a spread of nothing. The book carries
+a best bid too and it is not the same number — the book's is whatever the depth
+stream has delivered, and a venue that publishes a truncated book publishes an
+untruncated ticker.
+
+`change` is measured from the first price this terminal saw for the market, not
+from the venue's session open: a venue's day boundary is its own and the terminal
+is not told where it falls. When a subscription is backfilled the open is the
+oldest bar's, so the change covers the history the chart draws rather than
+restarting at whatever tick arrived first. It is computed in the core rather than
+in each renderer, so the terminal and the browser cannot derive it differently.
 
 Every number crosses the boundary as a JSON number. Internally prices and
 quantities are `Decimal`; the conversion happens here, at the edge, because a
 view-model is drawn rather than compared.
+
+## Changing the layout while it runs
+
+`Config.layout.panels` was read once when the terminal was built and never
+again, so a terminal opened with the wrong panels had to be restarted with a
+different config -- which is not something a person does while watching a market
+move. Three commands change it:
+
+```json
+{"type":"AddPanel","spec":{"kind":"Book","rect":{"x":50,"y":0,"w":50,"h":100},"depth":24}}
+{"type":"MovePanel","index":1,"rect":{"x":0,"y":50,"w":100,"h":50}}
+{"type":"RemovePanel","index":1}
+```
+
+A panel is named by its index in the layout, counting from zero, and `AddPanel`
+appends rather than inserting: the index is how the other two name their target,
+and inserting would renumber the ones a caller is already holding. An index past
+the end is refused with the count, so a renderer that kept an index across a
+frame in which the layout shrank gets an error rather than acting on the wrong
+panel.
+
+`MovePanel` changes the rectangle and nothing else. A panel's depth is what it
+was built with, so changing that means building a different panel -- a remove
+and an add, which says plainly that the old one's state goes with it.
+
+The config moves with the layout, because the config is what a renderer reads to
+place the panels a frame carries. A host that persists its config after a
+session gets the layout the session ended on.
 
 ## Focus
 
@@ -81,18 +165,40 @@ that spans an odd fraction, a layout with gaps.
 A layout that omits a panel kind simply does not render it. Omitting the whole
 `layout` gives the standard five.
 
-## Bounds
+## Bounds, and how deep a panel carries
 
 Every panel reads from a bounded structure, so a session that runs for a week
 renders exactly as fast as one that just started:
 
-| Panel | Bound | Where |
-|-------|-------|-------|
-| `chart` | 120 price points, 120 points per indicator | `SymbolState::history`, `IndicatorSet` |
-| `book` | 12 levels a side | `DEFAULT_DEPTH` |
-| `tape` | 24 rendered of 256 kept | `TapeRing` |
-| `footprint` | 12 levels | `DEFAULT_DEPTH` |
-| `watchlist` | one row per subscribed market | the watchlist itself |
+| Panel | Default depth | Ceiling |
+|-------|--------------|---------|
+| `chart` | 120 bars, 120 price points, 120 points per indicator | 256 bars kept, 512 price points |
+| `book` | 12 levels a side | the book itself |
+| `tape` | 24 prints | 256 kept |
+| `footprint` | 12 levels | 1024 levels kept |
+| `bars` | 12 bars a stream | 256 kept |
+| `watchlist` | one row per subscribed market | — |
+| `profile` | one row per bin | — |
+
+A panel spec may set its own depth:
+
+```json
+{ "kind": "Book", "rect": { "x": 70, "y": 0, "w": 30, "h": 35 }, "depth": 40 }
+```
+
+One number rather than a name per panel, because every panel that has a bound
+has exactly one: book levels a side, tape prints, footprint levels, chart points
+and bars, alternative bars per stream. The watchlist and the profile panel have
+none and ignore it. Zero is refused rather than honoured — a panel carrying
+nothing renders blank with no error, which reads as a broken feed rather than as
+a configuration — and the value is clamped to 512, above which the state's own
+rings are the real ceiling anyway.
+
+It is the **carried** depth, not the drawn one. A renderer draws what fits and
+scrolls through the rest, so asking for more here is what makes scrolling
+possible at all: with twelve book levels there is nothing underneath them to
+scroll to. In the TUI that is `↑` / `↓` on the focused panel; in the browser the
+panel is a scrollable box and the browser does it.
 
 ## Adding a panel
 

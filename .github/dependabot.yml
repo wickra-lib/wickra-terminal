@@ -22,6 +22,31 @@ updates:
         patterns: ["*"]
         exclude-patterns: ["napi", "napi-derive", "napi-build"]
 
+  # The fuzz targets are their own cargo workspace -- fuzz/Cargo.toml carries an
+  # empty [workspace] table so cargo-fuzz can build them on nightly with
+  # sanitizer flags -- so the cargo entry above does not reach fuzz/Cargo.lock.
+  # It pins libfuzzer-sys and serde_json, which received no updates at all while
+  # nothing watched them.
+  #
+  # No `ignore` list here even though a second cargo entry does not inherit the
+  # root one: the root entry has none. If it ever grows one, this entry needs the
+  # same lines, because the first thing an unguarded side entry proposes is
+  # exactly what the root entry blocks.
+  - package-ecosystem: cargo
+    directory: "/fuzz"
+    schedule:
+      interval: monthly
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 10
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "deps(cargo-fuzz)"
+    groups:
+      cargo-fuzz:
+        patterns: ["*"]
+
   # Node binding npm dependencies.
   - package-ecosystem: npm
     directory: "/bindings/node"

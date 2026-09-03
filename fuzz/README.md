@@ -17,10 +17,12 @@ not tracked: `cargo-fuzz init` ignores it, and the smoke job resolves fresh.
 | `feed_event` | arbitrary bytes as the public `Event`, and as a `Vec<Event>` feed | no panic; malformed input is a clean `Err` |
 | `state_fold` | a parsed feed folded into a fresh `AppState` | no sequence of events panics, however adversarial — huge volumes, crossed books, negative sizes |
 | `view_model` | arbitrary command JSON against a synth terminal | every command, known or malformed, returns a typed result without panicking, and the frame it produces serialises |
+| `registry_drive` | a registered indicator, profile or bar type built by index with arbitrary parameters, then driven across all nine input families | `build` refuses bad parameters rather than panicking, and no registered kind panics on a structurally valid tick |
 
-Between them they cover the three ways untrusted bytes enter: the config a user
-writes, the feed a source produces, and the command string a binding passes
-through the C ABI.
+Between them they cover the four ways input a maintainer did not choose reaches
+the core: the config a user writes, the feed a source produces, the command
+string a binding passes through the C ABI, and the parameters a user names an
+indicator with.
 
 ## Running them
 

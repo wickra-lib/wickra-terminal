@@ -34,19 +34,92 @@ requests.
 11. **Indicators** — tick-to-OHLCV aggregation and a generated registry of <!--indicator-count-->497<!--/indicator-count-->
     `wickra-core` indicators, configurable and changeable at run time from every
     binding. ✅
+12. **The renderers catch up with the core** — candles with a price scale in both
+    front-ends, all seven panels in both, panel depth in the config and
+    panel-local scrolling, one keymap read by both, a recorder feeding the
+    time-machine, and a live subscription that starts with the venue's history. ✅
+
+    This entry also claimed *every command the boundary carries bound to a key or
+    a control*, and that was not true when it was written. `SetRecording` was
+    bound in neither front-end, so the recorder could only be armed by a config
+    field read once at start-up; `RemoveSource` and `ExportRecording` were
+    answered by the terminal and dropped into the browser's catch-all. The
+    sentence is not repaired by deleting it — the claim is worth making, so it is
+    made where a build can check it instead:
+    `docs_examples::every_bound_action_reaches_a_renderer` fails if a bound
+    action is answered by neither renderer, and requires the browser's
+    deliberate refusals to be written down rather than read out of its silence.
+
+    The same entry said *a live subscription that starts with the venue's
+    history* while that was true of the native source alone. The browser fed a
+    `Manual` source, which has no backfill, and it did not reconnect, subscribe a
+    ticker or guard its parse either. It does all four now, and
+    `docs/RENDERERS.md` records what is still genuinely different between the two
+    — the browser bridge speaks one venue's dialect where the native source
+    reaches ten.
+
+13. **Panels at run time** — `AddPanel`, `RemovePanel` and `MovePanel`, bound in
+    both renderers and held to byte parity across the nine language suites by a
+    corpus scenario. The layout used to be read once when the terminal was built
+    and never again, so a terminal opened with the wrong panels had to be
+    restarted with a different config. ✅
+
+14. **The bindings drive what the READMEs promise** — the recorder, the
+    time-machine cursor and the host feeds are exercised by every binding suite,
+    not just by Rust, and every example is run rather than parsed. Four commands
+    had been documented in nine READMEs and executed nowhere but Rust; five
+    languages had their examples byte-compiled, which a script that dies on its
+    first call also survives.
+    `docs_examples::every_documented_command_is_driven_by_a_binding_suite` keeps
+    the first of those closed. ✅
 
 ## Next
 
 Nothing here is scheduled. These are the openings the current shape leaves, in
 roughly the order they would pay off.
 
-- **The remaining indicator families.** 1 of the 504 in `wickra-core` are not
-  reachable, and the reason is now the same for nearly all of them:
-  [`docs/INDICATORS.md`](docs/INDICATORS.md) lists them. Derivatives-tick (17),
-  cross-section (15) and trade-quote (3) need feeds this repository has no source
-  for, so they are blocked on a data source rather than on wiring. The remaining eight
-  are output shapes the registry's fixed named-field model does not carry -- the
-  profile and level outputs, whose bin lists change length bar to bar.
+- **The one indicator that is not reachable.** Exactly one of the indicators in
+  `wickra-core` has no registry entry, and it is `Footprint`:
+  [`docs/INDICATORS.md`](docs/INDICATORS.md) says why. It answers with a list of
+  price levels, each with its own bid and ask volume, which the registry's fixed
+  named-field model does not carry -- and the terminal already renders a
+  footprint from its own per-price state, so registering it would be a second
+  implementation of a view that exists.
+
+  The profiles and the alternative bars are *not* in that count. They have
+  surfaces of their own, alongside the registry rather than inside it, because a
+  histogram and a bar are not a reading; `ListIndicators` lists all three.
+
+  This paragraph used to say something else, and it was two claims that could
+  not both be true: "1 of the 504 are not reachable", and then a list of
+  seventeen derivatives-tick, fifteen cross-section, three trade-quote and eight
+  profile outputs. The number had been corrected and the sentence under it had
+  not.
+- **The browser reaches one venue.** The native source dispatches on the venue
+  name and opens any of ten through `wickra-exchange`; the browser cannot use
+  that client at all -- it is native code with a socket and an HTTP stack -- so
+  it opens the venue's public stream itself and feeds a `Manual` source. That
+  bridge is hand-written and speaks Binance spot. Adding a venue means writing
+  its stream dialect again in TypeScript, which is real work rather than a
+  missing switch. The limit is stated in `docs/RENDERERS.md`, in
+  `web/README.md`, in the app's own placeholder and in the message that refuses
+  any other venue, so it is met where a user reads rather than found on the
+  second venue they try.
+
+- **Two copies of the indicator library in one binary.** `wickra-exchange` pins
+  `wickra-core 0.9` and this crate builds against 1.x, so the lockfile carries
+  both and cargo compiles both. Nothing is wrong at run time -- the version gap
+  is crossed explicitly, by `into_core` in the live source and its test -- but it
+  is a larger binary and a second set of the same types. It closes when
+  `wickra-exchange` follows to 1.x; the work is there, not here.
+
+- **A live feed for funding and open interest.** The `DerivativesTick` family is
+  registered and drivable, and no source in this repository can drive it: the
+  exchange layer defines `DerivativesFeed` and `DerivativesTickBuilder`, no
+  venue implements them, and the `Exchange` trait exposes no way to subscribe to
+  one. So the family is reachable only through the `FeedDerivatives` command,
+  from a host with its own source -- which is why that command exists. The work
+  is in `wickra-exchange`, not here.
 - **First release.** Blocked, and not on a decision — on a dependency. The chain,
   in full, because it has one link and no way round it:
 
@@ -73,16 +146,12 @@ roughly the order they would pay off.
   shipping a tree that is not the one that was tested, which trades a visible
   blocker for an invisible one.
 
-  Two things have to be in place before that tag is worth pushing, and neither is
-  today. The workflow itself audits clean — every action pinned to a full SHA,
-  every job with a timeout, `contents: read` at the top with write granted only
-  to the two jobs that attach release assets, and no checkout leaving credentials
-  on disk. What is missing is credentials and an environment: `release.yml`
-  references eight repository secrets (`CARGO_REGISTRY_TOKEN`, `PYPI_API_TOKEN`,
-  `NPM_TOKEN`, `GO_MIRROR_TOKEN`, `CENTRAL_USERNAME`, `CENTRAL_PASSWORD`,
-  `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE`) and a `release` environment, and the
-  repository has none of them. Every publish job would fail on authentication
-  even if the dependency chain above were resolved.
+  The workflow itself audits clean — every action pinned to a full SHA, every job
+  with a timeout, `contents: read` at the top with write granted only to the two
+  jobs that attach release assets, and no checkout leaving credentials on disk.
+  The credentials it needs now live at organisation level rather than in this
+  repository, so a publish would authenticate; the dependency above is what is
+  left.
 
   So the pipeline has never run, and a dispatch would not tell us much: it would
   stop at its first job. It is verified structurally instead, which is what
@@ -96,8 +165,6 @@ roughly the order they would pay off.
   `release.yml`, so the claim becomes true at exactly the moment the rest do. They
   are added together, in the `.github` profile repository where the badge assets
   live, when the release actually happens.
-- **Panel-local keys.** Panel focus moves and is drawn; nothing acts on it yet —
-  scrolling the tape or the book would be the first use.
 
 ## Not planned
 

@@ -15,7 +15,7 @@ use wickra_core::{self as wc, Indicator};
 use wickra_exchange_core::{BookDelta, BookLevel, Event, OrderBookSnapshot, OrderSide, TradePrint};
 
 use crate::candle::{CandleBuilder, Timeframe};
-use crate::config::IndicatorSpec;
+use crate::config::{IndicatorSpec, MAX_RECORDING};
 use crate::error::{Error, Result};
 use crate::registry::{self, TickIndicator, TickInput};
 use crate::source::{DataSource, SourceId, Symbol};
@@ -556,9 +556,16 @@ impl TapeRing {
     }
 }
 
+/// How many prints a market's tape keeps.
+///
+/// Named for the same reason the price history is: `docs/PANELS.md` and
+/// `docs/STREAMING.md` both state it as a ceiling, and a bound stated twice in
+/// prose and written once as a literal is one nobody can raise with confidence.
+const TAPE_PRINTS_KEPT: usize = 256;
+
 impl Default for TapeRing {
     fn default() -> Self {
-        Self::new(256)
+        Self::new(TAPE_PRINTS_KEPT)
     }
 }
 
@@ -816,6 +823,22 @@ impl ProfileSet {
 /// with the session rather than with the screen.
 const ALT_BARS_KEPT: usize = 256;
 
+/// How many closed bars a market keeps for the chart.
+///
+/// Bounded for the same reason everything else here is: a terminal left running
+/// overnight must not grow without limit. 256 one-minute bars is four hours,
+/// which is more than any renderer draws at once and enough for the widest
+/// window a chart panel asks for.
+const OHLC_HISTORY: usize = 256;
+
+/// How many recent prices a market keeps for the chart's tick series.
+///
+/// Named rather than written three times: the bound appeared as a bare `512` at
+/// each of the two places that enforce it and once more at the allocation, so
+/// raising it meant finding all three -- and `docs/PANELS.md` states it as a
+/// ceiling a reader is entitled to trust.
+const PRICE_HISTORY: usize = 512;
+
 /// One named alternative bar stream and the bars it has completed.
 struct BarEntry {
     label: String,
@@ -1042,10 +1065,40 @@ pub struct SymbolState {
     pub bars: BarSet,
     /// The last traded price seen.
     pub last: Decimal,
+    /// The venue's best bid, from the ticker stream.
+    ///
+    /// Zero until a ticker arrives. The book carries a best bid too, and it is
+    /// not the same number: the book's is whatever the depth stream has
+    /// delivered so far, and a venue that publishes a truncated book publishes a
+    /// ticker that is not truncated.
+    pub bid: Decimal,
+    /// The venue's best ask, from the ticker stream. Zero until one arrives.
+    pub ask: Decimal,
+    /// The venue's rolling base-asset volume, from the ticker stream.
+    ///
+    /// The venue's own window, not a total of the prints this terminal has seen
+    /// -- a terminal opened five minutes ago has seen five minutes of them.
+    pub volume: Decimal,
+    /// The first price this market was ever folded at, and what a change is
+    /// measured from.
+    ///
+    /// Not the venue's session open: a venue's day boundary is its own, and the
+    /// terminal is not told where it falls. This is the open of the window the
+    /// terminal has actually watched -- the first backfilled bar's open when a
+    /// subscription is seeded, and otherwise the first price to arrive. Naming
+    /// it a session open would claim a boundary nothing here knows.
+    pub open: Decimal,
     /// A bounded recent price history for the chart series.
     pub history: VecDeque<Decimal>,
     /// Aggregates the trade stream into the bars the candle indicators read.
     pub candles: CandleBuilder,
+    /// The closed bars the chart draws, oldest first.
+    ///
+    /// Kept because the builder does not: it holds the bar in progress and
+    /// hands each closed one to the indicators, which read it and keep only
+    /// their own state. Without this ring a renderer could draw the last price
+    /// and nothing else -- which is what every renderer here did.
+    ohlc: VecDeque<wc::Candle>,
     /// What this market contributes to a market-wide cross-section.
     breadth: BreadthState,
     /// The derivatives microstructure of this market, folded from host updates.
@@ -1073,8 +1126,13 @@ impl SymbolState {
             profiles: ProfileSet::from_specs(profiles)?,
             bars: BarSet::from_specs(bars)?,
             last: Decimal::ZERO,
-            history: VecDeque::with_capacity(512),
+            bid: Decimal::ZERO,
+            ask: Decimal::ZERO,
+            volume: Decimal::ZERO,
+            open: Decimal::ZERO,
+            history: VecDeque::with_capacity(PRICE_HISTORY),
             candles: CandleBuilder::new(timeframe),
+            ohlc: VecDeque::with_capacity(OHLC_HISTORY),
             breadth: BreadthState::new(),
             derivatives: DerivativesState::default(),
         })
@@ -1089,6 +1147,81 @@ impl SymbolState {
 }
 
 impl SymbolState {
+    /// Seed this market from historical bars, oldest first.
+    ///
+    /// What a fresh subscription to a live venue starts with, and what the
+    /// terminal had no way to use: every bar was built from ticks it saw itself,
+    /// so a bar indicator was silent for its whole warmup in wall-clock time --
+    /// fourteen hours for `Atr(14)` at an hourly timeframe -- and the chart
+    /// opened empty on a market that has traded for years.
+    ///
+    /// The bars drive the same tick the live fold drives, with the close as the
+    /// price: that is all a bar carries, and it is what every charting platform
+    /// warms an indicator on. Only the bar-derived state is seeded. The book,
+    /// the tape and the footprint are not: a bar records that trading happened,
+    /// not the prints it was made of, and inventing those would put numbers on
+    /// screen that no venue ever published.
+    /// Remember the first price this market was folded at.
+    ///
+    /// Idempotent after the first non-zero price, so a change is measured from
+    /// where the terminal started watching and does not walk forward with the
+    /// market. A zero is refused rather than recorded: it is what an
+    /// unparseable price folds to, and an open of zero would report every
+    /// later price as an infinite gain.
+    pub(crate) fn open_at(&mut self, price: Decimal) {
+        if self.open.is_zero() && !price.is_zero() {
+            self.open = price;
+        }
+    }
+
+    pub(crate) fn seed_bars(&mut self, bars: &[wc::Candle]) {
+        // History comes before anything live, so the open is the oldest bar's,
+        // not the first tick that happens to arrive after it.
+        if let Some(first) = bars.first() {
+            if let Some(open) = Decimal::from_f64_retain(first.open) {
+                self.open_at(open);
+            }
+        }
+        for bar in bars {
+            if self.ohlc.len() == OHLC_HISTORY {
+                self.ohlc.pop_front();
+            }
+            self.ohlc.push_back(*bar);
+
+            if self.history.len() == PRICE_HISTORY {
+                self.history.pop_front();
+            }
+            if let Some(close) = Decimal::from_f64_retain(bar.close) {
+                self.history.push_back(close);
+                self.last = close;
+            }
+
+            self.breadth.update(bar);
+            let mut tick = TickInput::price(bar.close);
+            tick.candle = Some(*bar);
+            self.indicators.update(&tick);
+            self.profiles.update(&tick);
+            self.bars.update(&tick);
+        }
+    }
+
+    /// The most recent closed bars, oldest first, at most `n` of them.
+    ///
+    /// Closed only: the bar in progress is [`forming`](Self::forming), because
+    /// it is the one that will still change and a renderer draws it
+    /// differently.
+    #[must_use]
+    pub fn ohlc(&self, n: usize) -> Vec<wc::Candle> {
+        let skip = self.ohlc.len().saturating_sub(n);
+        self.ohlc.iter().skip(skip).copied().collect()
+    }
+
+    /// The bar still accumulating, or `None` before this market's first trade.
+    #[must_use]
+    pub fn forming(&self) -> Option<wc::Candle> {
+        self.candles.partial()
+    }
+
     /// A bounded recent price series (oldest first) for the chart.
     #[must_use]
     pub fn series(&self, n: usize) -> Vec<f64> {
@@ -1125,6 +1258,14 @@ pub struct AppState {
     pub bars: Vec<IndicatorSpec>,
     /// The bar size the candle-input indicators are fed at.
     pub timeframe: Timeframe,
+    /// How many recent events to keep for export, or `None` to record nothing.
+    ///
+    /// Crate-visible rather than public: a caller sets it through
+    /// [`set_recording`](Self::set_recording), which clamps the capacity and
+    /// clears what is held, so the two can never disagree.
+    pub(crate) record_capacity: Option<usize>,
+    /// The recorded events, oldest first, in the shape `Replay` takes.
+    pub(crate) recorded: VecDeque<Event>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -1140,6 +1281,11 @@ impl std::fmt::Debug for AppState {
             .field("profiles", &self.profiles)
             .field("bars", &self.bars)
             .field("timeframe", &self.timeframe)
+            .field("record_capacity", &self.record_capacity)
+            // By count, like `sources`: a reader wants to know a recording is
+            // running and how long it is, not to have thousands of trades
+            // printed into a panic message.
+            .field("recorded", &self.recorded.len())
             .finish()
     }
 }
@@ -1219,6 +1365,7 @@ impl AppState {
         match event {
             Event::Trade(print) => {
                 let price = print.price.to_f64().unwrap_or(0.0);
+                state.open_at(print.price);
                 state.last = print.price;
                 state.tape.push(print.clone());
                 state.footprint.add(print);
@@ -1243,6 +1390,10 @@ impl AppState {
                 // declining several times inside one bar.
                 if let Some(bar) = closed.as_ref() {
                     state.breadth.update(bar);
+                    if state.ohlc.len() == OHLC_HISTORY {
+                        state.ohlc.pop_front();
+                    }
+                    state.ohlc.push_back(*bar);
                 }
                 // The taker flow is this terminal's own: the aggressor side
                 // is on every print, and the derivatives feeds do not carry
@@ -1273,12 +1424,22 @@ impl AppState {
                 state.indicators.update(&tick);
                 state.profiles.update(&tick);
                 state.bars.update(&tick);
-                if state.history.len() == 512 {
+                if state.history.len() == PRICE_HISTORY {
                     state.history.pop_front();
                 }
                 state.history.push_back(print.price);
             }
-            Event::Ticker(ticker) => state.last = ticker.last,
+            Event::Ticker(ticker) => {
+                // Every field, not just the last price. The other three were
+                // dropped on the floor, which is why a watchlist could show a
+                // price and never a spread, a change or a volume: the numbers
+                // arrived on every ticker message and were discarded here.
+                state.open_at(ticker.last);
+                state.last = ticker.last;
+                state.bid = ticker.bid;
+                state.ask = ticker.ask;
+                state.volume = ticker.volume;
+            }
             Event::BookSnapshot(snap) => state.book.apply_snapshot(snap),
             Event::BookDelta(delta) => state.book.apply_delta(delta),
             // Account and lifecycle events do not affect per-symbol market state.
@@ -1420,6 +1581,11 @@ impl AppState {
         for state in self.symbols.values_mut() {
             state.candles = CandleBuilder::new(timeframe);
             state.indicators = IndicatorSet::from_specs(&self.indicators)?;
+            // The kept bars go too. They are bars of the *old* size, and a chart
+            // that drew them beside the new ones would show one series measured
+            // two ways -- the same reason the indicator set is rebuilt rather
+            // than continued.
+            state.ohlc.clear();
         }
         Ok(())
     }
@@ -1449,9 +1615,39 @@ impl AppState {
         }
         let folded = batch.len();
         for (id, sym, ev) in batch {
+            self.record(&ev);
             self.fold(id, &sym, &ev);
         }
         folded
+    }
+
+    /// Keep an event for export, if recording is on.
+    ///
+    /// Recorded here rather than inside `fold`, because `fold` is also how a
+    /// seek re-folds a recording: recording there would append the replayed
+    /// events back onto the recording, and every rewind would double it.
+    fn record(&mut self, event: &Event) {
+        let Some(capacity) = self.record_capacity else {
+            return;
+        };
+        if self.recorded.len() == capacity {
+            self.recorded.pop_front();
+        }
+        self.recorded.push_back(event.clone());
+    }
+
+    /// The recorded events, oldest first, in the shape `Replay` takes.
+    #[must_use]
+    pub fn recording(&self) -> Vec<Event> {
+        self.recorded.iter().cloned().collect()
+    }
+
+    /// Turn recording on with a capacity, or off with `None`. Clears what is
+    /// already held either way, so a capacity change never leaves a recording
+    /// that is part one size and part another.
+    pub fn set_recording(&mut self, capacity: Option<usize>) {
+        self.record_capacity = capacity.map(|c| c.clamp(1, MAX_RECORDING));
+        self.recorded = VecDeque::new();
     }
 
     /// Get the state for a key, if present.
@@ -1479,6 +1675,256 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A ticker carries four numbers and all four are kept.
+    ///
+    /// The fold used to take `last` and drop the bid, the ask and the volume on
+    /// the floor -- which is why a watchlist could show a price and never a
+    /// spread or a turnover, though every ticker message had carried them all
+    /// along.
+    #[test]
+    fn a_ticker_keeps_every_field_it_carries() {
+        let sym = Symbol::new("BTC", "USDT");
+        let mut state = AppState::default();
+        state.fold(
+            0,
+            &sym,
+            &Event::Ticker(Ticker {
+                symbol: sym.clone(),
+                last: dec!(20010),
+                bid: dec!(20009),
+                ask: dec!(20011),
+                volume: dec!(1234),
+            }),
+        );
+
+        let market = state.get(&(0, sym)).expect("the ticker created the market");
+        assert_eq!(market.last, dec!(20010));
+        assert_eq!(market.bid, dec!(20009));
+        assert_eq!(market.ask, dec!(20011));
+        assert_eq!(market.volume, dec!(1234));
+    }
+
+    /// The open is the first price folded and does not move with the market.
+    ///
+    /// If it walked forward the change would read zero on every frame, which is
+    /// the shape this is easiest to get wrong in.
+    #[test]
+    fn the_open_is_the_first_price_and_stays_there() {
+        let sym = Symbol::new("BTC", "USDT");
+        let mut state = AppState::default();
+        for price in [dec!(100), dec!(110), dec!(90)] {
+            state.fold(0, &sym, &trade(&sym, price, OrderSide::Buy));
+        }
+        let market = state.get(&(0, sym)).expect("the trades created the market");
+        assert_eq!(market.open, dec!(100));
+        assert_eq!(market.last, dec!(90));
+    }
+
+    /// A zero price does not become the open.
+    ///
+    /// Zero is what an unparseable price folds to, and an open of zero would
+    /// report every later price as an infinite gain.
+    #[test]
+    fn a_zero_price_does_not_open_the_window() {
+        let sym = Symbol::new("BTC", "USDT");
+        let mut state = AppState::default();
+        state.fold(0, &sym, &trade(&sym, Decimal::ZERO, OrderSide::Buy));
+        state.fold(0, &sym, &trade(&sym, dec!(100), OrderSide::Buy));
+        let market = state.get(&(0, sym)).expect("the trades created the market");
+        assert_eq!(market.open, dec!(100));
+    }
+
+    /// Backfilled history opens the window, not the first live tick after it.
+    ///
+    /// A subscription that seeds two hundred bars and then measures its change
+    /// from the next print would report a flat market on a day that had moved.
+    #[test]
+    fn seeded_history_sets_the_open_from_its_oldest_bar() {
+        let bars: Vec<wickra_core::Candle> = [(100.0, 0), (140.0, 1)]
+            .into_iter()
+            .map(|(close, ts)| {
+                wickra_core::Candle::new(close, close, close, close, 1.0, ts)
+                    .expect("an ordered candle")
+            })
+            .collect();
+        let mut state = SymbolState::new(&[], &[], &[], Timeframe::default())
+            .expect("an empty indicator set is constructible");
+        state.seed_bars(&bars);
+        assert!((state.open.to_f64().unwrap_or(0.0) - 100.0).abs() < 1e-9);
+    }
+
+    /// The rings answer whether they hold anything, and nothing asked.
+    ///
+    /// `is_empty` beside a `len` is not decoration -- it is what a caller reads
+    /// to decide whether to draw a panel at all, and a `len() == 0` written at
+    /// each call site is the same question answered four ways.
+    #[test]
+    fn the_rings_report_emptiness_before_and_after_a_print() {
+        let sym = Symbol::new("BTC", "USDT");
+        let mut state = AppState::default();
+
+        let market = SymbolState::new(&[], &[], &[], Timeframe::default())
+            .expect("an empty indicator set is constructible");
+        assert!(market.tape.is_empty());
+        assert!(market.footprint.is_empty());
+
+        state.fold(0, &sym, &trade(&sym, dec!(100), OrderSide::Buy));
+        let market = state.get(&(0, sym)).expect("the trade created the market");
+        assert!(!market.tape.is_empty());
+        assert!(!market.footprint.is_empty());
+    }
+
+    /// A set says whether it needs a reference market, and a set with none says
+    /// so.
+    ///
+    /// The fold reads this to decide whether to gather the other markets'
+    /// prices at all, so a set that answered wrongly would either do the work
+    /// for nothing or leave a pairwise indicator without its second input.
+    #[test]
+    fn an_indicator_set_says_whether_it_needs_a_reference() {
+        let plain = IndicatorSet::from_specs(&[IndicatorSpec::new("Sma", vec![3.0])])
+            .expect("Sma is registered");
+        assert!(!plain.wants_references());
+
+        let paired = IndicatorSet::from_specs(&[IndicatorSpec::paired(
+            "RollingCorrelation",
+            vec![20.0],
+            "ETH/USDT",
+        )])
+        .expect("RollingCorrelation is registered");
+        assert!(paired.wants_references());
+    }
+
+    /// A bar with a close that is not a number is dropped, not folded.
+    ///
+    /// A NaN close would make the change NaN and stay there, and every breadth
+    /// reading taken afterwards with it -- so the guard is the difference
+    /// between one bad bar and a session of them.
+    #[test]
+    fn a_breadth_bar_with_no_usable_close_is_ignored() {
+        let mut breadth = BreadthState::new();
+        let good =
+            wickra_core::Candle::new(100.0, 101.0, 99.0, 100.0, 5.0, 0).expect("an ordered candle");
+        breadth.update(&good);
+        let after_good = breadth.previous_close;
+
+        // `Candle::new` refuses a NaN, so the bad bar is assembled past it --
+        // which is exactly how one reaches the fold: from a feed, not from a
+        // constructor.
+        let mut bad = good;
+        bad.close = f64::NAN;
+        breadth.update(&bad);
+        assert_eq!(
+            breadth.previous_close, after_good,
+            "a NaN close moved the previous close"
+        );
+        assert!(breadth.change.is_finite(), "the change went to NaN");
+    }
+
+    /// A bar with an unusable volume folds as zero rather than poisoning it.
+    #[test]
+    fn a_breadth_bar_with_no_usable_volume_reads_as_zero() {
+        let mut breadth = BreadthState::new();
+        let mut bar =
+            wickra_core::Candle::new(100.0, 101.0, 99.0, 100.0, 5.0, 0).expect("an ordered candle");
+        bar.volume = f64::NEG_INFINITY;
+        breadth.update(&bar);
+        assert!(
+            breadth.volume.abs() < f64::EPSILON,
+            "volume: {}",
+            breadth.volume
+        );
+    }
+
+    /// `IndicatorEntry` prints its label and the length of its series.
+    ///
+    /// The indicator is a trait object with no `Debug` bound, so the label
+    /// stands in for it; dumping the series would bury the fields a reader of a
+    /// panic message is actually after.
+    #[test]
+    fn an_indicator_entry_prints_its_label_and_not_its_series() {
+        let sym = Symbol::new("BTC", "USDT");
+        let mut state = AppState {
+            indicators: vec![IndicatorSpec::new("Sma", vec![2.0])],
+            ..AppState::default()
+        };
+        for price in [dec!(100), dec!(101), dec!(102)] {
+            state.fold(0, &sym, &trade(&sym, price, OrderSide::Buy));
+        }
+
+        let shown = format!("{:?}", state.get(&(0, sym)).expect("the market exists"));
+        assert!(shown.contains("IndicatorEntry"), "{shown}");
+        assert!(shown.contains("Sma(2)"), "the label is missing: {shown}");
+        // Two, not three: a two-period average has no reading until its second
+        // price, so the series is one shorter than the prints that fed it. The
+        // number is what matters -- a length rather than the values themselves.
+        assert!(
+            shown.contains("series: 2"),
+            "the series was not counted: {shown}"
+        );
+    }
+
+    /// Seeding more history than the rings hold keeps the newest of it.
+    ///
+    /// A live subscription asks for as many bars as the config's `backfill`
+    /// says, and nothing clamps that to what a `SymbolState` carries -- so a
+    /// config asking for a thousand bars on a venue that has them walks both
+    /// rings past their bound. They evict rather than grow, and the bar that
+    /// survives has to be the newest one, because that is the one the chart
+    /// draws and the one the next tick continues from.
+    #[test]
+    fn seeding_past_the_rings_evicts_the_oldest_bars() {
+        let bars: Vec<wickra_core::Candle> = (0..600)
+            .map(|i| {
+                let close = 100.0 + f64::from(i);
+                wickra_core::Candle::new(close, close, close, close, 1.0, i64::from(i))
+                    .expect("an ordered candle")
+            })
+            .collect();
+
+        let mut state = SymbolState::new(&[], &[], &[], Timeframe::default())
+            .expect("an empty indicator set is constructible");
+        state.seed_bars(&bars);
+
+        assert_eq!(
+            state.ohlc.len(),
+            OHLC_HISTORY,
+            "the bar ring grew past its bound"
+        );
+        assert_eq!(
+            state.history.len(),
+            512,
+            "the price ring grew past its bound"
+        );
+        let newest = state.ohlc.back().expect("the ring is not empty");
+        assert!(
+            (newest.close - 699.0).abs() < 1e-9,
+            "the newest bar was evicted"
+        );
+        let oldest = state.ohlc.front().expect("the ring is not empty");
+        let first_kept = 700.0 - f64::from(u16::try_from(OHLC_HISTORY).expect("the ring is small"));
+        assert!((oldest.close - first_kept).abs() < 1e-9);
+    }
+
+    /// `AppState` is what a panicking test prints, and it holds a recording that
+    /// can run to thousands of events. Printing the ring itself would bury the
+    /// fields a reader is actually after, so the recorder is reported by count
+    /// -- and that only stays true if something reads it.
+    #[test]
+    fn the_debug_view_reports_the_recording_by_count() {
+        let mut state = AppState::default();
+        state.set_recording(Some(16));
+        let sym = Symbol::new("BTC", "USDT");
+        let event = trade(&sym, dec!(100), OrderSide::Buy);
+        state.fold(0, &sym, &event);
+        state.record(&event);
+
+        let shown = format!("{state:?}");
+        assert!(shown.contains("record_capacity: Some(16)"), "{shown}");
+        assert!(shown.contains("recorded: 1"), "{shown}");
+        assert!(shown.contains("sources: 0"), "{shown}");
+    }
 
     /// A tick carrying one closed candle, which is all the bar streams read.
     fn candle_tick(open: f64, high: f64, low: f64, close: f64) -> TickInput {
@@ -1563,16 +2009,25 @@ mod tests {
         assert!(last.close >= price - 2.0, "{last:?} against {price}");
     }
     use rust_decimal_macros::dec;
-    use wickra_exchange_core::Symbol;
+    use wickra_exchange_core::{Symbol, Ticker};
 
     fn trade(sym: &Symbol, price: Decimal, side: OrderSide) -> Event {
-        Event::Trade(TradePrint {
+        Event::Trade(stamped(sym, price, side, 0))
+    }
+
+    /// A print with a chosen timestamp.
+    ///
+    /// Built directly rather than by destructuring what `trade` returns: taking
+    /// the variant apart needs an `else` arm for a shape the constructor above
+    /// cannot produce, and a branch no run can take is one no test can cover.
+    fn stamped(sym: &Symbol, price: Decimal, side: OrderSide, timestamp: i64) -> TradePrint {
+        TradePrint {
             symbol: sym.clone(),
             price,
             quantity: dec!(2),
             aggressor: side,
-            timestamp: 0,
-        })
+            timestamp,
+        }
     }
 
     #[test]
@@ -1612,10 +2067,10 @@ mod tests {
             state.fold(0, &sym, &print_at(&sym, price));
         }
         let st = state.get(&(0, sym)).unwrap();
+        let levels = st.footprint.len();
         assert!(
-            st.footprint.len() <= MAX_FOOTPRINT_LEVELS,
-            "the footprint holds {} levels",
-            st.footprint.len()
+            levels <= MAX_FOOTPRINT_LEVELS,
+            "the footprint holds {levels} levels"
         );
     }
 
@@ -1813,11 +2268,11 @@ mod tests {
         }
         let series = &set.snapshot()[0].series;
         assert!(!series.is_empty(), "Atr recorded nothing over ten bars");
+        let kept = series.len();
+        let bars = ticks / 4;
         assert!(
-            series.len() > ticks / 4,
-            "series of {} is barely longer than the {} bars, so it is not carrying forward",
-            series.len(),
-            ticks / 4
+            kept > bars,
+            "series of {kept} is barely longer than the {bars} bars, so it is not carrying forward"
         );
     }
 
@@ -1877,10 +2332,7 @@ mod tests {
             ..AppState::default()
         };
         for step in 0..30_i64 {
-            let Event::Trade(mut print) = trade(&sym, dec!(100), OrderSide::Buy) else {
-                panic!("the trade helper must produce a trade event");
-            };
-            print.timestamp = step * 1_000;
+            let print = stamped(&sym, dec!(100), OrderSide::Buy, step * 1_000);
             state.fold(0, &sym, &Event::Trade(print));
         }
         let market = state.get(&(0, sym.clone())).unwrap();
