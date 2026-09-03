@@ -408,6 +408,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The benchmark workflow builds the C++ row where its source now lives. Moving
+  `throughput.cpp` into the C binding's CMake project left `bench.yml`
+  configuring `bindings/cpp/benchmarks`, a directory the same change deleted, so
+  every run since ended in `CMake Error: The source directory ... does not
+  exist`. It ended there *after* the C row had printed its table, which is why
+  the log looked like a complete benchmark with a failure stapled to the end.
+  One project is configured now and both executables are run out of it.
+- The published Go module no longer carries the test files. `cp bindings/go/*.go`
+  swept `*_test.go` into the mirror alongside the sources, and those tests locate
+  `golden/` by walking up from the working directory -- above the module, where a
+  consumer has no repository. `go test ./...` on the published module could
+  therefore never pass, and the failure would have been the first thing a Go user
+  saw. The sources are copied individually now.
 - Every binding README said the boundary offers *thirteen* commands. It offers
   nineteen. Thirteen is the number of rows in the table beneath the sentence,
   and a row groups the commands that belong together -- `Subscribe` /
