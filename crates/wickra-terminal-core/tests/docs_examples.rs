@@ -36,9 +36,12 @@ const DOCS: [&str; 8] = [
 /// blocks finds nothing in them. What they do carry uniformly is the command
 /// table, which P11.13 had to correct by hand across all eight, and which is
 /// checked below.
-const BINDING_READMES: [&str; 9] = [
+///
+/// Eight for nine languages: C and C++ share `bindings/c/README.md`, because the
+/// C++ surface is a header inside the C binding rather than a binding of its
+/// own -- the same shape the indicator library uses.
+const BINDING_READMES: [&str; 8] = [
     "bindings/c/README.md",
-    "bindings/cpp/README.md",
     "bindings/csharp/README.md",
     "bindings/go/README.md",
     "bindings/java/README.md",
@@ -46,6 +49,37 @@ const BINDING_READMES: [&str; 9] = [
     "bindings/python/README.md",
     "bindings/r/README.md",
     "bindings/wasm/README.md",
+];
+
+/// The English word for a count, for the prose that states one.
+///
+/// A table rather than a `match`: every arm of a match over this range but the
+/// live one would be a branch no test reaches, and the coverage gate reads an
+/// unreached branch as untested code rather than as a spelling table. Indexing
+/// panics on a count past the end, which is the right answer -- a boundary that
+/// grew past twenty needs a sentence written for it, not a silent numeral.
+const NUMBER_WORDS: [&str; 21] = [
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
+    "twenty",
 ];
 
 /// The repository root, found by walking up from this crate.
@@ -775,6 +809,20 @@ fn every_binding_readme_documents_every_command() {
                 "{rel} does not document the {variant} command"
             );
         }
+
+        // The sentence above the table, and not only the table. The prose said
+        // "thirteen" -- the number of table ROWS -- while the table below it
+        // carried all nineteen commands, because a row groups the commands that
+        // belong together (`Subscribe` / `Unsubscribe`, and three panel
+        // commands on one line). Every check above passed the whole time, in
+        // nine READMEs at once, and a reader takes the count from the sentence
+        // rather than by counting rows. `golden/README.md` said nineteen
+        // throughout, so the repository contradicted itself in public.
+        let spelled = NUMBER_WORDS[variants.len()];
+        assert!(
+            text.contains(&format!("the same {spelled} commands")),
+            "{rel} does not say it drives {spelled} commands"
+        );
 
         // And nothing the core does not have: a table row for a command that was
         // renamed or removed reads as an API that exists.

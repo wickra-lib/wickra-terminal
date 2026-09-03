@@ -78,7 +78,7 @@ node --test bindings/wasm/tests/*.test.cjs
 
 ## The command protocol
 
-Every binding drives the same thirteen commands, and the frame that comes back is
+Every binding drives the same nineteen commands, and the frame that comes back is
 the same JSON in all of them:
 
 | Command | Effect |
