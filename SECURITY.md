@@ -7,8 +7,8 @@ data. See [THREAT_MODEL.md](THREAT_MODEL.md) for what that leaves in scope.
 
 ## Supported versions
 
-Security fixes are applied to the latest released version, `0.1.0`, only; please
-upgrade to the newest release before reporting an issue.
+Security fixes are applied to the latest released version only; please upgrade
+to the newest release before reporting an issue.
 
 | Version | Supported |
 | --- | --- |
@@ -125,10 +125,9 @@ by a workflow, so no deployment token exists in this repository at all.
 
 ## Support timeline and end of support
 
-There is no release yet, so nothing is currently supported. When there is: only
-the **latest released version** receives security fixes, and publishing a newer
-release ends support for the previous one immediately. The supported-versions
-table above is authoritative.
+Only the **latest released version** receives security fixes, and publishing a
+newer release ends support for the previous one immediately. The
+supported-versions table above is authoritative.
 
 ## Remediation policy (dependencies and code scanning)
 

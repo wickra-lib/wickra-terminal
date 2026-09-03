@@ -25,10 +25,6 @@ binding.
 
 ## Install
 
-> **Pre-release.** The package is not on the registry yet, so until the first
-> release the way in is a source build (below). The install line is what it will
-> be once published.
-
 ```bash
 npm install wickra-terminal
 ```

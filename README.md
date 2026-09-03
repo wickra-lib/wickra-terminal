@@ -87,16 +87,12 @@ is actually about.
 
 ## Status
 
-**Pre-release — CI-verified, not yet published.** The core, both renderers, all
-ten language bindings, the indicator registry, the runtime source/symbol toggle,
-the panel set, the byte-exact golden corpus, property and fuzz tests, benchmarks
-and one runnable example per language are in place and green across the full CI
-matrix (10 languages x 3 OS).
-
-Not yet on any registry: the terminal depends on `wickra-exchange` as a git
-dependency and `cargo publish` rejects those, so the first release waits on that
-crate. [ROADMAP.md](ROADMAP.md) has what is done, what is open and what is not
-planned.
+**0.1.0 — the first release.** The core, both renderers, all ten language
+bindings, the indicator registry, the runtime source/symbol toggle, the panel
+set, the byte-exact golden corpus, property and fuzz tests, benchmarks and one
+runnable example per language are in place and green across the full CI matrix
+(10 languages x 3 OS). [ROADMAP.md](ROADMAP.md) has what is done, what is open
+and what is not planned.
 
 > **Read-only.** The terminal renders market data. It places no orders, holds no
 > credentials and keeps no position — the live source connects to public
@@ -168,11 +164,6 @@ cd web && npm install && npm run dev
 ```
 
 ## Install
-
-> **Pre-release.** Nothing is published yet — the terminal depends on
-> `wickra-exchange` as a git dependency and `cargo publish` rejects those, so the
-> first release waits on that crate. Until then, build from source (below). The
-> commands here are what they will be.
 
 | Binding | Install | Example |
 |---------|---------|---------|
