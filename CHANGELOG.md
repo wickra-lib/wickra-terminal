@@ -341,6 +341,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The README opens with the command that starts the terminal. Everything above
+  the first heading was prose about the architecture, so the first runnable line
+  sat under `## Quickstart`, past four screens of it -- and a reader who wants to
+  see the thing run before reading why it is shaped this way had no reason to
+  keep scrolling.
 - The C++ surface lives in the C binding rather than beside it. `bindings/cpp/`
   held a README and a benchmark while the header it documents,
   `wickra_terminal.hpp`, has always sat in `bindings/c/include/` -- so the
@@ -421,6 +426,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   consumer has no repository. `go test ./...` on the published module could
   therefore never pass, and the failure would have been the first thing a Go user
   saw. The sources are copied individually now.
+- The requirements list states the R floor. Every other binding's minimum was
+  named there and R stood alone as a bare "R", while `bindings/r/DESCRIPTION`
+  has declared `R (>= 3.0.0)` all along -- a floor a reader could only find by
+  opening the package manifest.
 - Every binding README said the boundary offers *thirteen* commands. It offers
   nineteen. Thirteen is the number of rows in the table beneath the sentence,
   and a row groups the commands that belong together -- `Subscribe` /
