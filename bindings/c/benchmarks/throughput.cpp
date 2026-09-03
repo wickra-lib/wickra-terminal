@@ -7,12 +7,14 @@
  * whose destructor frees the original. If that difference is large, the wrapper
  * is doing something it should not.
  *
- * Built by bindings/cpp/benchmarks/CMakeLists.txt:
+ * Built by bindings/c/benchmarks/CMakeLists.txt, the same project that builds
+ * the C row -- the C++ surface is a header inside the C binding, so one project
+ * builds both and the two numbers come off the same library:
  *
  *     cargo build -p wickra-terminal-c --release
- *     cmake -S bindings/cpp/benchmarks -B bindings/cpp/benchmarks/build
- *     cmake --build bindings/cpp/benchmarks/build --config Release
- *     ./bindings/cpp/benchmarks/build/throughput [ticks]
+ *     cmake -S bindings/c/benchmarks -B bindings/c/benchmarks/build
+ *     cmake --build bindings/c/benchmarks/build --config Release
+ *     ./bindings/c/benchmarks/build/throughput_cpp [ticks]
  */
 #include <algorithm>
 #include <array>

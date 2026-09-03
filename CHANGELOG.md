@@ -341,6 +341,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The C++ surface lives in the C binding rather than beside it. `bindings/cpp/`
+  held a README and a benchmark while the header it documents,
+  `wickra_terminal.hpp`, has always sat in `bindings/c/include/` -- so the
+  repository carried nine binding directories for eight bindings, and the C++
+  row of the benchmark table was measured by a second CMake project with its own
+  copy of the library lookup and the Windows DLL copy. `bindings/c/README.md` is
+  now the C / C++ page, carrying the ownership layer's surface, guarantees and
+  example whole, and one CMake project builds `throughput` and `throughput_cpp`
+  against the same library -- which is what makes the difference between the two
+  rows the cost of RAII and nothing else. This is the shape the indicator
+  library uses, and the shape the blueprint audit expects: it reported the C++
+  binding as carrying neither a golden nor a streaming test, because the tests
+  it was looking for are the nine under `examples/c/` that a binding directory
+  of its own hid from it.
+
 - `CITATION.cff` names the maintainer address the other repositories carry.
 - The citation guard now checks the pairing rather than one half of it.
   `version` and `date-released` are what GitHub's citation box and Zenodo
@@ -392,6 +407,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not one, and an indicator count of 514 against a core that wired two.
 
 ### Fixed
+
+- Every binding README said the boundary offers *thirteen* commands. It offers
+  nineteen. Thirteen is the number of rows in the table beneath the sentence,
+  and a row groups the commands that belong together -- `Subscribe` /
+  `Unsubscribe` on one line, the three panel commands on another -- so the table
+  was right the whole time and the sentence above it was not, in nine READMEs at
+  once, on the pages PyPI, npm, NuGet, Maven Central, `pkg.go.dev` and
+  r-universe render as the first thing a user of that language reads.
+  `golden/README.md` said nineteen throughout, so the repository contradicted
+  itself in public. The existing guard checked the table's contents thoroughly
+  and never read the prose; it now derives the spelled-out count from the
+  `Command` enum, so the sentence cannot drift from the code again.
+
+- The C / C++ page said the example suite holds seven tests. It holds nine.
 
 - A buffer overflow in the C examples, found by CodeQL's
   `cpp/overflowing-snprintf` on the first run after C/C++ entered the analysis

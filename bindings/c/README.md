@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://wickra.org"><img src="https://raw.githubusercontent.com/wickra-lib/.github/main/profile/wickra-banner.webp?v=514" alt="Wickra Terminal — the C ABI hub" width="100%"></a>
+  <a href="https://wickra.org"><img src="https://raw.githubusercontent.com/wickra-lib/.github/main/profile/wickra-banner.webp?v=514" alt="Wickra Terminal — the C / C++ API" width="100%"></a>
 </p>
 
 [![Built on Wickra](https://img.shields.io/badge/built%20on-wickra-3b82f6)](https://github.com/wickra-lib/wickra)
@@ -7,7 +7,7 @@
 [![codecov](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/codecov.svg)](https://codecov.io/gh/wickra-lib/wickra-terminal)
 [![License: MIT OR Apache-2.0](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/license.svg)](https://github.com/wickra-lib/wickra-terminal#license)
 
-# Wickra Terminal — C ABI
+# Wickra Terminal — C / C++
 
 ---
 
@@ -21,9 +21,15 @@ Five exports carry all ten languages. `scripts/check_binding_surface.py` asserts
 in CI that each of them reaches every binding, so a language cannot quietly fall
 behind the header.
 
+Two headers ship side by side: `wickra_terminal.h` is the ABI itself, and the
+optional `wickra_terminal.hpp` wraps it in a move-only RAII `Terminal` for
+exception-safe C++ lifetimes. Both travel in the same release artefact, so a
+consumer downloading the ABI gets the ownership layer with it.
+
 ## Requirements
 
 - A C99 compiler (the header is `cpp_compat`, so C++ links against it unchanged)
+- A C++17 compiler, for the optional `wickra_terminal.hpp`
 - `cbindgen` to regenerate the header
 
 ## Surface
@@ -75,6 +81,79 @@ wickra_terminal_free(t);
 A runnable C and C++ example lives in [`examples/c/`](https://github.com/wickra-lib/wickra-terminal/tree/main/examples/c),
 built and run in CI on all three platforms via CMake and ctest.
 
+## C++: the ownership layer
+
+C++ can call the ABI directly — `wickra_terminal.h` is already
+`extern "C"`-guarded — and for a long time that was the whole C++ story. What it
+cannot do directly is *own* anything: every handle and every returned string has
+to be freed by hand, on every path including the ones an exception takes.
+`wickra_terminal.hpp` adds ownership and nothing else. It declares no indicator
+logic, holds no state of its own, and compiles to the calls a careful author
+would have written. It just makes the careless version impossible.
+
+```cpp
+#include "wickra_terminal.hpp"
+
+namespace wickra::terminal {
+
+class Error : public std::runtime_error {
+    int code() const noexcept;              // WICKRA_TERMINAL_ERR / _ERR_NULL
+};
+
+class Terminal {
+    explicit Terminal(const std::string &config_json);   // throws Error
+    std::string command(const std::string &cmd_json);    // throws Error
+    bool valid() const noexcept;                         // false after a move
+
+    Terminal(Terminal &&) noexcept;                      // move-only
+    Terminal(const Terminal &) = delete;
+};
+
+std::string version();
+
+}
+```
+
+What the header guarantees, and what each guarantee is there to prevent:
+
+- **The handle has one owner.** Copying is deleted, because two owners of one
+  handle would free it twice. Moving is allowed and leaves the source empty, so
+  a moved-from destructor is a no-op.
+- **A returned string is always freed.** `wickra_terminal_command` allocates on
+  both exits — a frame on success, an error message on failure — and the failure
+  exit throws. A guard frees it however the scope is left.
+- **A failure is an exception.** `Error` carries the ABI's own message and its
+  status code, rather than a return code a caller can ignore.
+- **A moved-from `Terminal` throws** rather than passing a null handle across
+  the boundary.
+- **A panic does not unwind into C++.** The C ABI catches at its entry points;
+  the release profile is `panic = "unwind"` precisely so it can.
+
+```cpp
+#include "wickra_terminal.hpp"
+#include <cstdio>
+
+using wickra::terminal::Terminal;
+
+int main() {
+    Terminal term(
+        R"({"sources":[{"Synth":{"seed":1}}],)"
+        R"("layout":{"panels":[{"kind":"Chart","rect":{"x":0,"y":0,"w":100,"h":100}}]}})");
+
+    (void)term.command(R"({"type":"Subscribe","source":0,"symbol":"BTC/USDT"})");
+
+    std::string frame;
+    for (int i = 0; i < 20; i++) {
+        frame = term.command(R"({"type":"Tick"})");
+    }
+    std::printf("%s
+", frame.c_str());
+}
+```
+
+`CMAKE_CXX_STANDARD` is 17; the header uses a nested namespace and
+`[[nodiscard]]`.
+
 ## Build
 
 ```bash
@@ -95,15 +174,42 @@ cbindgen --config bindings/c/cbindgen.toml --crate wickra-terminal-c \
 the Rust surface; CI runs the same script, and it skips cleanly if `cbindgen` is
 not installed.
 
+`wickra_terminal.hpp` is hand-written rather than generated, so it is not part of
+that check — `scripts/check_binding_surface.py` holds it to the ABI instead, the
+same way it holds every other language to it.
+
+The C and C++ examples build from one CMake project:
+
+```bash
+cmake -S examples/c -B examples/c/build
+cmake --build examples/c/build --config Release
+```
+
 ## Test
 
 ```bash
 cargo test -p wickra-terminal-c
+ctest --test-dir examples/c/build -C Release --output-on-failure
 ```
+
+Nine tests, four of them C++: `terminal` drives the API, `golden_cpp` replays
+the shared corpus through it, `streaming_test_cpp` checks that streaming a feed
+and re-folding it in one batch reach byte-identical frames, and `lifetime`
+checks the ownership rules — that copying is rejected at compile time, that a
+moved-from terminal is empty and throws, that 500 failed commands leave the
+terminal usable, and that a failure carries the ABI's message rather than a
+placeholder.
+
+They live under `examples/c/` rather than beside this README, and that is
+deliberate. The C++ surface is a header inside this binding, so its tests link
+the same library the C tests link and one CMake project builds both — which is
+also what the repository blueprint prescribes: *`examples/c/CMakeLists.txt`
+builds the C and the C++ variants*. Compiling them the way a consumer compiles
+them is the point.
 
 ## The command protocol
 
-Every binding drives the same thirteen commands, and the frame that comes back is
+Every binding drives the same nineteen commands, and the frame that comes back is
 the same JSON in all of them:
 
 | Command | Effect |

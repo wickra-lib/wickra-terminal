@@ -76,7 +76,7 @@ Rscript bindings/r/tests/run_tests.R             # put target/release on PATH so
 
 ## The command protocol
 
-Every binding drives the same thirteen commands, and the frame that comes back is
+Every binding drives the same nineteen commands, and the frame that comes back is
 the same JSON in all of them:
 
 | Command | Effect |
