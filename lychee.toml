@@ -21,8 +21,15 @@ exclude_all_private = true
 # Exclude links that are not meant to resolve at check time: placeholder
 # hosts and the package-registry URLs that 404 until a release is published.
 # Loopback and private addresses are handled by exclude_all_private above.
+#
+# The changelog's version-compare links are the same class, and unlike the
+# registry URLs they do not stop 404ing after the first release: they point at
+# the tag being prepared, which is created after the release PR is merged. The
+# link check runs on push and pull_request and never on the tag, so every future
+# release PR would carry the same red links. One pattern covers all of them.
 exclude = [
     "example\\.com",
+    "github\\.com/wickra-lib/wickra-terminal/compare/",
     "^https?://crates\\.io/crates/wickra-terminal",
     "^https?://pypi\\.org/project/wickra-terminal",
     "^https?://www\\.npmjs\\.com/package/wickra-terminal",
