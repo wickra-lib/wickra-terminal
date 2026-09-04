@@ -1,6 +1,6 @@
 {
   "name": "wickra-terminal",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "The data-driven trading-terminal core: build a Terminal from a JSON config, drive it with commands, read back frame view-models. Node bindings powered by Rust.",
   "author": "kingchenc <support@wickra.org>",
   "main": "index.js",
@@ -43,12 +43,12 @@
     "node": ">= 22"
   },
   "optionalDependencies": {
-    "wickra-terminal-linux-x64-gnu": "0.1.1",
-    "wickra-terminal-linux-arm64-gnu": "0.1.1",
-    "wickra-terminal-darwin-x64": "0.1.1",
-    "wickra-terminal-darwin-arm64": "0.1.1",
-    "wickra-terminal-win32-x64-msvc": "0.1.1",
-    "wickra-terminal-win32-arm64-msvc": "0.1.1"
+    "wickra-terminal-linux-x64-gnu": "0.1.2",
+    "wickra-terminal-linux-arm64-gnu": "0.1.2",
+    "wickra-terminal-darwin-x64": "0.1.2",
+    "wickra-terminal-darwin-arm64": "0.1.2",
+    "wickra-terminal-win32-x64-msvc": "0.1.2",
+    "wickra-terminal-win32-arm64-msvc": "0.1.2"
   },
   "scripts": {
     "build": "napi build --platform --release",

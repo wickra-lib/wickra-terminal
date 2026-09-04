@@ -7,7 +7,7 @@ abstract: >-
   over it. Panels emit view-models, so one core drives every front-end, and 497 of
   the Wickra indicators are constructible by name from a config or at run time.
 type: software
-version: "0.1.1"
+version: "0.1.2"
 date-released: "2026-09-04"
 authors:
   - alias: kingchenc

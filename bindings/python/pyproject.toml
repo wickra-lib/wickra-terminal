@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "wickra-terminal"
-version = "0.1.1"
+version = "0.1.2"
 description = "The data-driven trading-terminal core: build a Terminal from a JSON config, drive it with commands, read back frame view-models."
 readme = "README.md"
 license = "MIT OR Apache-2.0"
