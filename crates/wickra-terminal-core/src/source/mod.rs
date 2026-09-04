@@ -20,7 +20,7 @@ use crate::error::Result;
 
 // The market vocabulary is the exchange layer's — re-exported so the whole core
 // (and every binding) speaks one set of types.
-pub use wickra_exchange_core::{Event, Symbol};
+pub use wickra_exchange_core::{DerivativesFeed, Event, Symbol};
 
 #[cfg(feature = "live")]
 pub use live::LiveSource;
@@ -143,6 +143,16 @@ pub fn event_symbol(event: &Event) -> Option<Symbol> {
         Event::BookSnapshot(s) => Some(s.symbol.clone()),
         Event::BookDelta(d) => Some(d.symbol.clone()),
         Event::OrderUpdate(o) => Some(o.symbol.clone()),
+        // Every derivatives channel names the market it prints for, so this is a
+        // market event like the rest — whether the terminal folds it is a
+        // separate question, answered in `AppState::apply`.
+        Event::Derivatives(d) => Some(match d {
+            DerivativesFeed::Funding(f) => f.symbol.clone(),
+            DerivativesFeed::OpenInterest(o) => o.symbol.clone(),
+            DerivativesFeed::Liquidation(l) => l.symbol.clone(),
+            DerivativesFeed::LongShortRatio(r) => r.symbol.clone(),
+            DerivativesFeed::MarkIndex(m) => m.symbol.clone(),
+        }),
         Event::BalanceUpdate(_)
         | Event::Subscribed { .. }
         | Event::Disconnected
@@ -221,6 +231,47 @@ mod tests {
     fn lifecycle_events_have_no_symbol_tag() {
         assert_eq!(event_symbol(&Event::Disconnected), None);
         assert_eq!(event_symbol(&Event::Reconnected), None);
+    }
+
+    #[test]
+    fn every_derivatives_channel_has_a_symbol_tag() {
+        let sym = Symbol::new("BTC", "USDT");
+        let want = Some(sym.clone());
+        let channels = [
+            DerivativesFeed::Funding(wickra_exchange_core::FundingRate {
+                symbol: sym.clone(),
+                rate: dec!(0.0001),
+                mark_price: dec!(20000),
+                timestamp: 0,
+            }),
+            DerivativesFeed::OpenInterest(wickra_exchange_core::OpenInterest {
+                symbol: sym.clone(),
+                open_interest: dec!(1000),
+                timestamp: 0,
+            }),
+            DerivativesFeed::Liquidation(wickra_exchange_core::Liquidation {
+                symbol: sym.clone(),
+                side: OrderSide::Sell,
+                price: dec!(19000),
+                quantity: dec!(2),
+                timestamp: 0,
+            }),
+            DerivativesFeed::LongShortRatio(wickra_exchange_core::LongShortRatio {
+                symbol: sym.clone(),
+                long_size: dec!(60),
+                short_size: dec!(40),
+                timestamp: 0,
+            }),
+            DerivativesFeed::MarkIndex(wickra_exchange_core::MarkIndex {
+                symbol: sym.clone(),
+                mark_price: dec!(20000),
+                index_price: dec!(19999),
+                timestamp: 0,
+            }),
+        ];
+        for channel in channels {
+            assert_eq!(event_symbol(&Event::Derivatives(channel)), want);
+        }
     }
 
     #[test]

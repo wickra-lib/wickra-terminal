@@ -58,7 +58,8 @@
         "price": "20002",
         "quantity": "3.0"
       }
-    ]
+    ],
+    "timestamp": 3
   },
   {
     "type": "trade",

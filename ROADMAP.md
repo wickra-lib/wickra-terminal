@@ -120,31 +120,21 @@ roughly the order they would pay off.
   one. So the family is reachable only through the `FeedDerivatives` command,
   from a host with its own source -- which is why that command exists. The work
   is in `wickra-exchange`, not here.
-- **First release.** Blocked, and not on a decision — on a dependency. The chain,
-  in full, because it has one link and no way round it:
+- **First release.** Done at 0.1.0, and worth leaving written down, because what
+  held it up was not a decision here and the same shape will recur.
 
-  `wickra-terminal-core` depends on `wickra-exchange`, pinned to a git revision.
-  `wickra-exchange` is not on crates.io. `cargo publish` refuses any crate with a
-  git dependency, so `wickra-terminal-core` cannot be published:
+  `wickra-terminal-core` depended on `wickra-exchange` by git revision, and
+  `cargo publish` refuses any crate with a git dependency. So nothing could be
+  published until that sibling had its own first release — and not merely the
+  crates.io half of it: `cargo-publish` is the first job in `release.yml`,
+  `github-release` waits on it and on every other publish job, and
+  `publish-release` waits on `github-release`. A tag pushed before that point
+  would have failed at the first job and produced no release assets at all.
 
-  ```text
-  $ cargo publish --dry-run -p wickra-terminal-core
-  error: failed to prepare local package for uploading
-  Caused by:
-    no matching package named `wickra-exchange` found
-    location searched: crates.io index
-  ```
-
-  Everything downstream follows from that one line. `cargo-publish` is the first
-  job in `release.yml`; `github-release` waits on it and on every other publish
-  job; `publish-release` waits on `github-release`. So the whole pipeline is
-  blocked, not merely the crates.io half — and no tag should be pushed until
-  `wickra-exchange` releases, because the run would fail at its first job.
-
-  This is recorded rather than worked around on purpose. Vendoring the dependency
-  or switching it to a path dependency would let `cargo publish` succeed while
-  shipping a tree that is not the one that was tested, which trades a visible
-  blocker for an invisible one.
+  It was recorded and waited out rather than worked around, on purpose.
+  Vendoring the dependency or switching it to a path dependency would have let
+  `cargo publish` succeed while shipping a tree that is not the one that was
+  tested — trading a visible blocker for an invisible one.
 
   The workflow itself audits clean — every action pinned to a full SHA, every job
   with a timeout, `contents: read` at the top with write granted only to the two

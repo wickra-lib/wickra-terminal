@@ -159,6 +159,11 @@ impl DataSource for SynthSource {
                         last_update_id: state.seq,
                         bids,
                         asks,
+                        // The synthetic clock, the same one stamped on the trade
+                        // above. This source is its own venue, so it has a
+                        // timestamp to give; the `0` the field documents is for
+                        // a real venue that published none.
+                        timestamp: self.t,
                     }),
                 ));
             }

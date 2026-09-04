@@ -29,10 +29,6 @@ to build or ship.
 
 ## Install
 
-> **Pre-release.** The package is not on the registry yet, so until the first
-> release the way in is a source build (below). The install line is what it will
-> be once published.
-
 ```xml
 <dependency>
   <groupId>org.wickra</groupId>

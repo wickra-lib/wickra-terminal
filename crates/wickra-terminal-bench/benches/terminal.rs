@@ -69,6 +69,10 @@ fn book_delta(sym: &Symbol, seq: u64) -> Event {
             level(2_000_200, 0), // a removal
             level(2_000_300, 3_000),
         ],
+        // Zero, like the trade fixture above: the fold being measured never
+        // reads it, and a clock in a benchmark input is a number that has to be
+        // held steady for the measurement to mean anything.
+        timestamp: 0,
     })
 }
 

@@ -26,10 +26,6 @@ other binding.
 
 ## Install
 
-> **Pre-release.** The package is not on the registry yet, so until the first
-> release the way in is a source build (below). The install line is what it will
-> be once published.
-
 ```r
 install.packages("wickraterminal", repos = "https://wickra-lib.r-universe.dev")
 ```

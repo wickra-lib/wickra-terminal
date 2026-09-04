@@ -19,7 +19,8 @@
     "last": "20010",
     "bid": "20009",
     "ask": "20011",
-    "volume": "1234567"
+    "volume": "1234567",
+    "timestamp": 1
   },
   {
     "type": "trade",
@@ -41,7 +42,8 @@
     "last": "20100",
     "bid": "20099",
     "ask": "20101",
-    "volume": "1240000"
+    "volume": "1240000",
+    "timestamp": 2
   },
   {
     "type": "trade",
@@ -63,6 +65,7 @@
     "last": "19900",
     "bid": "19899",
     "ask": "19902",
-    "volume": "1250000"
+    "volume": "1250000",
+    "timestamp": 3
   }
 ]

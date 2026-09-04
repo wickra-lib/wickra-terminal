@@ -101,6 +101,7 @@ mod tests {
                 bid: dec!(109),
                 ask: dec!(111),
                 volume: dec!(5000),
+                timestamp: 0,
             }),
         );
 

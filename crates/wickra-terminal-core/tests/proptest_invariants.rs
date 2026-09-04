@@ -40,6 +40,7 @@ fn snapshot(sym: &Symbol, bids: &[u32], asks: &[u32]) -> Event {
             .iter()
             .map(|&p| BookLevel::new(Decimal::from(p), Decimal::from(1)))
             .collect(),
+        timestamp: 0,
     })
 }
 
