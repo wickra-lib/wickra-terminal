@@ -1,7 +1,7 @@
 Package: wickraterminal
 Type: Package
 Title: Data-Driven Trading-Terminal Core
-Version: 0.1.0
+Version: 0.1.1
 Authors@R: person("kingchenc", role = c("aut", "cre"), email = "support@wickra.org")
 Description: R bindings for wickra-terminal over its C ABI hub: build a Terminal
     from a JSON config, drive it with command JSON and read back the frame JSON

@@ -1,6 +1,6 @@
 {
   "name": "wickra-terminal-linux-x64-gnu",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Native binding for wickra-terminal (Linux x64 GNU). Installed automatically as an optional dependency of wickra-terminal on matching platforms.",
   "main": "wickra-terminal.linux-x64-gnu.node",
   "files": [

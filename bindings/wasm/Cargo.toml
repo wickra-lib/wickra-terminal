@@ -21,7 +21,7 @@ workspace = true
 # wasm32 (the browser feeds Live over its own WebSocket, not the native client).
 # Declared as a direct path dep, not `workspace = true`, because cargo silently
 # ignores `default-features = false` on an inherited workspace dependency.
-wickra-terminal-core = { path = "../../crates/wickra-terminal-core", version = "0.1.0", default-features = false }
+wickra-terminal-core = { path = "../../crates/wickra-terminal-core", version = "0.1.1", default-features = false }
 wasm-bindgen = { workspace = true }
 
 # `wickra-exchange-core` (a transitive dependency via the terminal core, for the

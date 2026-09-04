@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-04
+
+The first release this repository can publish completely. `0.1.0` reached
+crates.io, npm, NuGet, Maven Central and the Go mirror, but not PyPI, and it
+produced no GitHub Release — one of eight wheel builds could not compile, and
+nothing stopped the other six registries from publishing around it.
+
+### Fixed
+
+- **The aarch64 glibc Python wheel could not be built at all.** `ring` refuses
+  to assemble unless the assembler defines `__ARM_ARCH`, and the manylinux2014
+  aarch64 *cross* toolchain does not, so the build stopped at
+  `#error "ARM assembler must define __ARM_ARCH"`. The musl cross image is newer
+  and defines it, which is why exactly one of the four Linux wheels failed.
+  `CFLAGS_aarch64_unknown_linux_gnu=-D__ARM_ARCH=8` states what aarch64 already
+  is — ARMv8-A — rather than raising the glibc floor for every aarch64 user by
+  moving to a newer manylinux image.
+- **The aarch64 cross-build was never exercised before a tag ran it.** The
+  wheel container smoke job built x86_64 only, so the one configuration that
+  could not work was also the one nothing tried. It now builds all four
+  combinations — glibc and musl, x86_64 and aarch64 — and imports each wheel
+  under the libc and architecture it was built for, through QEMU where needed.
+  Building a wheel and importing it are different claims.
+- **Nothing gated the irreversible publishes.** Every other repository in the
+  family has a job between building and publishing; this one did not, so a
+  failed build stopped only the registry that depended on it. There is now a
+  `gate` job that waits for every build, refuses any ref that is not a version
+  tag, and requires the tagged commit to have passed CI with no other workflow
+  red on it. All seven publish jobs sit behind it.
+- **The WASM package was built inside its own publish job**, which put its build
+  behind the gate rather than in front of it. Split into `wasm-build` and
+  `wasm-publish`, so the tarball that reaches npm is the one the gate waited for
+  and the one attached to the release.
+
+
 ## [0.1.0] - 2026-09-04
 
 ### Added
@@ -641,5 +676,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   floor, so only that row stays at 8.4.2. Written here rather than left as prose
   in the requirements file, because this file is now actually read.
 
-[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/wickra-lib/wickra-terminal/releases/tag/v0.1.0

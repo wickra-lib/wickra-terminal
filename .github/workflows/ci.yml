@@ -359,13 +359,29 @@ jobs:
   # wickra's equivalent stops at the build; a wheel that compiles is not a wheel
   # that loads, and the musllinux one is the variant nothing else touches.
   python-wheel-container-smoke:
-    name: Python wheel (${{ matrix.manylinux }} smoke)
+    name: Python wheel (${{ matrix.manylinux }}/${{ matrix.target }} smoke)
     runs-on: ubuntu-latest
     timeout-minutes: 30 # backstop: a container build from a cold cache is slow
     strategy:
       fail-fast: false
       matrix:
-        manylinux: [auto, musllinux_1_2]
+        include:
+          - { manylinux: auto, target: x86_64, platform: linux/amd64,
+              image: quay.io/pypa/manylinux_2_28_x86_64,
+              python: /opt/python/cp312-cp312/bin/python }
+          - { manylinux: musllinux_1_2, target: x86_64, platform: linux/amd64,
+              image: quay.io/pypa/musllinux_1_2_x86_64,
+              python: /opt/python/cp312-cp312/bin/python }
+          # aarch64 is cross-compiled, and the cross toolchain is a different
+          # toolchain: the glibc one could not assemble `ring` at all, and the
+          # first run in this repository to find that out was a release tag.
+          # Built here on every pull request instead.
+          - { manylinux: auto, target: aarch64, platform: linux/arm64,
+              image: quay.io/pypa/manylinux_2_28_aarch64,
+              python: /opt/python/cp312-cp312/bin/python }
+          - { manylinux: musllinux_1_2, target: aarch64, platform: linux/arm64,
+              image: quay.io/pypa/musllinux_1_2_aarch64,
+              python: /opt/python/cp312-cp312/bin/python }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -374,15 +390,30 @@ jobs:
       - name: Sync root README into bindings/python so the build matches release
         run: cp README.md bindings/python/README.md
 
+      # Running an aarch64 container on an x86_64 runner needs the emulator. The
+      # wheel is *built* by a cross-compiler either way; this is only so the
+      # import below can run under the libc the wheel was built for.
+      - name: Set up QEMU for the foreign architecture
+        if: matrix.target != 'x86_64'
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
+        with:
+          platforms: arm64
+
       # No vendored-TLS dance here, unlike wickra: this binding reaches the
       # network through rustls, so there is no openssl-sys in the graph and the
-      # minimal container needs no Perl to build one from source.
+      # minimal container needs no Perl to build one from source. rustls does
+      # bring `ring`, which is why the aarch64 rows need the define below.
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        env:
+          CFLAGS_aarch64_unknown_linux_gnu: -D__ARM_ARCH=8
         with:
           working-directory: bindings/python
-          target: x86_64
+          target: ${{ matrix.target }}
           args: --release --out dist
           manylinux: ${{ matrix.manylinux }}
+          # Keep in sync with release.yml, which carries the full reasoning.
+          before-script-linux: |
+            export CFLAGS_aarch64_unknown_linux_gnu="-D__ARM_ARCH=8"
 
       # Written to a file rather than passed with -c: the smoke needs both
       # quote characters, and nesting them inside `docker run sh -c '...'`
@@ -401,22 +432,22 @@ jobs:
           print("wheel loads and ticks:", len(frame), "bytes")
           PY
 
-      - name: Import the manylinux wheel on the runner
-        if: matrix.manylinux == 'auto'
+      # One step for all four rows rather than one per libc. Every wheel is
+      # imported under the libc and the architecture it was built for: a
+      # musllinux wheel cannot install on the glibc runner, and an aarch64 wheel
+      # cannot run on it at all, so importing either here would prove nothing.
+      # Building a wheel and importing it are different claims.
+      - name: Install and import the wheel under the target libc
+        env:
+          IMAGE: ${{ matrix.image }}
+          PY: ${{ matrix.python }}
+          PLATFORM: ${{ matrix.platform }}
         shell: bash
-        # A manylinux wheel is meant to install on any glibc distribution, and
-        # the runner is one, so installing it here is the real check.
         run: |
-          python -m pip install --no-index --find-links bindings/python/dist --force-reinstall --no-deps wickra-terminal
-          python wheel-smoke.py
-
-      - name: Import the musllinux wheel in an Alpine container
-        if: matrix.manylinux == 'musllinux_1_2'
-        shell: bash
-        # musl, so it cannot install on the glibc runner. Alpine is the platform
-        # this wheel exists for, and nothing else in CI ever loads it.
-        run: |
-          docker run --rm -v "$PWD:/io" -w /io python:3.12-alpine             sh -c "pip install --no-index --find-links bindings/python/dist --force-reinstall --no-deps wickra-terminal && python wheel-smoke.py"
+          set -euo pipefail
+          ls -lh bindings/python/dist/
+          docker run --rm --platform "$PLATFORM" -v "$PWD:/io" -w /io "$IMAGE" \
+            sh -c "$PY -m pip install --no-index --find-links bindings/python/dist --force-reinstall --no-deps wickra-terminal && $PY wheel-smoke.py"
 
   node:
     name: Node ${{ matrix.node-version }} on ${{ matrix.os }}

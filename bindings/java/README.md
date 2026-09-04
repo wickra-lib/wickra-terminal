@@ -33,7 +33,7 @@ to build or ship.
 <dependency>
   <groupId>org.wickra</groupId>
   <artifactId>wickra-terminal</artifactId>
-  <version>0.1.0</version>
+  <version>0.1.1</version>
 </dependency>
 ```
 

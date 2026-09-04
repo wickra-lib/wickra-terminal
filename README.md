@@ -95,7 +95,7 @@ is actually about.
 
 ## Status
 
-**0.1.0 — the first release.** The core, both renderers, all ten language
+**0.1.1 — the first complete release.** The core, both renderers, all ten language
 bindings, the indicator registry, the runtime source/symbol toggle, the panel
 set, the byte-exact golden corpus, property and fuzz tests, benchmarks and one
 runnable example per language are in place and green across the full CI matrix

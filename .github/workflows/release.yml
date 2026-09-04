@@ -27,10 +27,114 @@ env:
 
 jobs:
   # --------------------------------------------------------------------------
+  # Nothing irreversible happens above this job.
+  #
+  # `v0.1.0` is why it exists. One of eight wheel builds failed, and because the
+  # publish jobs depended only on their own artefacts, crates.io, npm, NuGet,
+  # Maven Central and the Go mirror published anyway. PyPI got nothing, the
+  # GitHub Release was skipped, and none of the five that shipped can be taken
+  # back. Every other repository in the family already had this job; this one
+  # did not, and that difference is the whole of what went wrong.
+  # --------------------------------------------------------------------------
+  gate:
+    name: Nothing publishes before this
+    needs: [python-wheels, python-sdist, node-build, tui-binaries, c-abi-build, wasm-build]
+    runs-on: ubuntu-latest
+    # Generous because this job waits for ci.yml to settle on the tagged commit;
+    # the wait itself is bounded to 45 minutes inside the step.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      # workflow_dispatch exists so a release whose publish step failed can be
+      # re-run without moving the tag. It must not become a way to publish from
+      # a branch: dispatched from main, GITHUB_REF_NAME is "main", cargo/npm/PyPI
+      # would push whatever the manifests currently say, csharp/java would push a
+      # 0.1.0 nupkg and jar, and go-mirror would replace the contents of the
+      # public wickra-terminal-go and tag it "vmain".
+      #
+      # The `release` environment carries no deployment-branch policy, so the
+      # `environment:` lines on the publish jobs stop nothing. This is the only
+      # thing in the way. Checked here rather than on each publish job: one gate,
+      # and a job that is skipped rather than failed reads as "nothing to do"
+      # instead of "refused".
+      - name: Refuse to publish from anything but a version tag
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          case "$REF" in
+            refs/tags/v*) echo "publishing for $REF" ;;
+            *)
+              echo "::error::release.yml publishes only for a refs/tags/v* ref; got $REF"
+              exit 1
+              ;;
+          esac
+
+      - name: The tagged commit must have passed CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # ci.yml runs on pushes to main and on pull requests, never on a tag,
+          # so this workflow cannot see the tag's health in its own run. Ask what
+          # the commit itself was graded, which is the merge commit the tag
+          # points at and therefore the state that was actually tested.
+          #
+          # A run that is still going carries conclusion `null`, which reads the
+          # same as one that failed -- and a tag pushed straight after its merge
+          # lands while ci.yml is still queued. Refusing there turns "tagged a
+          # minute early" into a failed release that needs a rerun, so wait for
+          # the verdict instead of treating its absence as one. A red conclusion
+          # still ends this immediately: only the undecided case waits.
+          deadline=$(( $(date +%s) + 45 * 60 ))
+          while :; do
+            ci_state=$(gh api "repos/${REPO}/actions/workflows/ci.yml/runs?head_sha=${SHA}&per_page=1" \
+                 -q '(.workflow_runs[0] // {}) | "\(.status // "missing") \(.conclusion // "null")"')
+            ci_status=${ci_state%% *}
+            ci=${ci_state##* }
+            if [ "$ci" = "success" ]; then
+              break
+            fi
+            if [ "$ci" != "null" ]; then
+              echo "::error::ci.yml on ${SHA} is ${ci}; refusing to publish"
+              exit 1
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::ci.yml on ${SHA} did not finish within 45 minutes (${ci_status}); refusing to publish"
+              exit 1
+            fi
+            echo "ci.yml on ${SHA}: ${ci_status} -- waiting"
+            sleep 30
+          done
+          echo "ci.yml on ${SHA}: success"
+
+          # And nothing else that did run may have failed. Listing required
+          # workflows by name would go stale -- a path-filtered one legitimately
+          # does not run for a version bump -- so the rule is about outcomes
+          # rather than about a roster: whatever ran, none of it is red.
+          bad=$(gh api "repos/${REPO}/actions/runs?head_sha=${SHA}&per_page=100" \
+                  -q '[.workflow_runs[]
+                       | select(.name != "Release")
+                       | select(.conclusion == "failure" or .conclusion == "timed_out"
+                                or .conclusion == "cancelled")
+                       | .name] | unique | join(", ")')
+          if [ -n "$bad" ]; then
+            echo "::error::the tagged commit has failing runs (${bad}); refusing to publish"
+            exit 1
+          fi
+          echo "every workflow that ran on this commit is green"
+
+  # --------------------------------------------------------------------------
   # crates.io: wickra-terminal-core then the wickra-terminal crate (lib + TUI binary)
   # --------------------------------------------------------------------------
   cargo-publish:
     name: Publish to crates.io
+    needs: [gate]
     timeout-minutes: 45
     runs-on: ubuntu-latest
     environment: release
@@ -143,15 +247,37 @@ jobs:
       - name: Sync root README into bindings/python so it ships with the wheel
         shell: bash
         run: cp README.md bindings/python/README.md
-      # The Python binding depends only on wickra-terminal-core without the `live`
-      # feature (no native networking), so the manylinux/musllinux containers
-      # build the wheel with no extra system dependencies.
+      # The Python binding takes `wickra-terminal-core` with default features,
+      # and `live` is one of them -- so the wheel carries the native exchange
+      # facade and, through reqwest and rustls, `ring`. This comment used to say
+      # the opposite, which is why nobody expected a C toolchain to matter here
+      # until a release tag found out.
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        env:
+          CFLAGS_aarch64_unknown_linux_gnu: -D__ARM_ARCH=8
         with:
           working-directory: bindings/python
           target: ${{ matrix.target }}
           args: --release --strip --out dist
           manylinux: ${{ matrix.manylinux }}
+          # `ring` refuses to assemble unless the assembler defines `__ARM_ARCH`
+          # (Arm C Language Extensions), and the manylinux2014 aarch64 *cross*
+          # toolchain does not: the build stops at
+          # `#error "ARM assembler must define __ARM_ARCH"`. The musl cross image
+          # is newer and defines it, which is why only the glibc aarch64 wheel
+          # failed and the other three Linux wheels built. aarch64 is ARMv8-A by
+          # definition, so 8 is what a modern compiler defines there -- this
+          # states it rather than picks it. Exported inside the container as well
+          # as set on the step: the Linux wheels are built in a container the
+          # step's own environment does not necessarily reach, and the native
+          # macOS/Windows builds have no container to export into.
+          #
+          # This keeps the wheel at manylinux2014 (glibc 2.17). Moving that entry
+          # to manylinux_2_28 would also work -- the newer image's compiler
+          # defines the macro -- but it would raise the glibc floor for every
+          # aarch64 Linux user to get around a missing preprocessor define.
+          before-script-linux: |
+            export CFLAGS_aarch64_unknown_linux_gnu="-D__ARM_ARCH=8"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: wheels-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.manylinux }}
@@ -180,7 +306,7 @@ jobs:
   python-publish:
     name: Publish to PyPI
     timeout-minutes: 45
-    needs: [python-wheels, python-sdist]
+    needs: [gate, python-wheels, python-sdist]
     runs-on: ubuntu-latest
     environment: release
     steps:
@@ -261,8 +387,8 @@ jobs:
 
   node-publish:
     name: Publish to npm
+    needs: [gate, node-build]
     timeout-minutes: 45
-    needs: node-build
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -419,16 +545,20 @@ jobs:
             bindings/node/npm/*/*.tgz
 
   # --------------------------------------------------------------------------
-  # WASM: wasm-pack build + npm publish (as `wickra-terminal-wasm`)
+  # WASM: built here, published in the job below.
+  #
+  # Split on purpose. While the build lived inside the publish job it sat
+  # *behind* the gate, so a wasm build that failed did so after crates.io, PyPI
+  # and npm had already published -- which is the half-shipped release the gate
+  # exists to prevent. Building here means the gate can wait for it, and the
+  # tarball that reaches npm is the same one attached to the release.
   # --------------------------------------------------------------------------
-  wasm-publish:
-    name: Publish wickra-terminal-wasm to npm
+  wasm-build:
+    name: Build wickra-terminal-wasm
     timeout-minutes: 45
     runs-on: ubuntu-latest
-    environment: release
     permissions:
       contents: read
-      id-token: write # Sigstore provenance from the GitHub OIDC token
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -472,13 +602,51 @@ jobs:
         with:
           name: wasm-tarball
           path: bindings/wasm/pkg/wickra-terminal-wasm-*.tgz
+
+  wasm-publish:
+    name: Publish wickra-terminal-wasm to npm
+    needs: [gate, wasm-build]
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write # Sigstore provenance from the GitHub OIDC token
+    steps:
+      # Checked out for the composite setup-node action alone -- a `uses: ./...`
+      # resolves against the workspace, so without this the step would not exist.
+      # Nothing else here reads the tree: what is published is the artefact
+      # wasm-build packed, not a fresh build of this checkout.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: Download the packed tarball
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: wasm-tarball
+          path: wasm-pkg
       - name: Publish wickra-terminal-wasm to npm (idempotent)
-        working-directory: bindings/wasm/pkg
         run: |
+          set -euo pipefail
+          tarball=$(find wasm-pkg -name 'wickra-terminal-wasm-*.tgz' | head -1)
+          if [ -z "$tarball" ]; then
+            echo "::error::wasm-build produced no tarball"
+            exit 1
+          fi
           # if/else rather than `A && B || C`: in that idiom C also runs when
           # A succeeded and B failed, so a publish that worked could still be
           # reported as a skip -- or, worse, exit 1.
-          if out=$(npm publish --access public --provenance 2>&1); then
+          #
+          # "./" is load-bearing: npm reads a bare `dir/file.tgz` as the
+          # `owner/repo` GitHub shorthand and tries to clone it rather than
+          # reading the file, dying on `git ls-remote` before it ever reaches
+          # the registry. That is what took wickra-backtest 0.1.1's wasm publish
+          # down after five other registries had already published.
+          if out=$(npm publish "./$tarball" --access public --provenance 2>&1); then
             echo "$out"
           elif echo "$out" | grep -q "You cannot publish over"; then
             echo "skip: version already on npm"
@@ -601,8 +769,8 @@ jobs:
   # workflow release.yml) for the WickraTerminal package.
   csharp-publish:
     name: Publish to NuGet
+    needs: [gate, c-abi-build]
     timeout-minutes: 45
-    needs: c-abi-build
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -707,8 +875,8 @@ jobs:
   # GPG_PASSPHRASE). The pom version must match the release tag.
   java-publish:
     name: Publish to Maven Central
+    needs: [gate, c-abi-build]
     timeout-minutes: 45
-    needs: c-abi-build
     runs-on: ubuntu-latest
     environment: release
     steps:
@@ -785,8 +953,8 @@ jobs:
   # wickra-terminal-go); the mirror's bot commit is intentionally unsigned.
   go-mirror:
     name: Mirror the Go module to wickra-terminal-go
+    needs: [gate, c-abi-build]
     timeout-minutes: 45
-    needs: c-abi-build
     runs-on: ubuntu-latest
     # This publishes to a second repository with a PAT, so it belongs behind the
     # same environment gate as the other six publishing jobs rather than beside
