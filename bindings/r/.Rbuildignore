@@ -8,3 +8,11 @@
 ^src/.*\.dylib$
 ^src/symbols\.rds$
 ^\.gitignore$
+
+# The golden corpus lives at the repository root, outside this package, so
+# tests/golden.R only resolves when run from there -- which CI does explicitly.
+# `R CMD check` runs everything under tests/ from the built tarball, where the
+# corpus does not exist, and that is what r-universe runs on every platform.
+# `golden_dir()` stops rather than returning NULL, so shipping this file would
+# fail every platform build the way wickraexchange 0.1.1 did: 0 of 13.
+^tests/golden\.R$

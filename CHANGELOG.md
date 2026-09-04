@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-04
+
+`0.1.1` published to all seven registries. This release exists because the R
+package it shipped cannot be checked where it is installed, and r-universe
+builds from the latest release rather than from `main` — so the fix only
+reaches it through a tag.
+
+### Fixed
+
+- **The R package shipped a test that stops outside the repository.**
+  `tests/run_tests.R` carried the golden-parity block, and `golden_dir()`
+  resolves the corpus by walking up the directory tree, ending in
+  `stop("golden/ not found")`. In this repository the corpus is at the root,
+  above `bindings/r`, so it resolves. Inside the tarball `R CMD build` produces
+  there is nothing above the package, and `R CMD check` runs everything under
+  `tests/` from exactly there — which is what r-universe runs on all thirteen
+  platforms. `wickraexchange` 0.1.1 built 0 of 13 binaries this way; this
+  package had not been built yet and stood in front of the same wall.
+
+  The block moves to `tests/golden.R`, `.Rbuildignore` keeps it out of the
+  tarball, and `ci.yml` runs it explicitly from the repository root, which is
+  the only place it can mean anything. `wickra-backtest` already had this shape.
+
+- **A green Maven job now means the jar is public.** The publishing plugin
+  stopped at `validated`, printed "to finish publishing visit …" and reported
+  success, so nothing in the run distinguished a deployment on its way from one
+  waiting for a manual click. `<waitUntil>published</waitUntil>` makes the job
+  wait for the deployment to publish.
+
+
 ## [0.1.1] - 2026-09-04
 
 The first release this repository can publish completely. `0.1.0` reached
@@ -676,6 +706,7 @@ nothing stopped the other six registries from publishing around it.
   floor, so only that row stays at 8.4.2. Written here rather than left as prose
   in the requirements file, because this file is now actually read.
 
-[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/wickra-lib/wickra-terminal/releases/tag/v0.1.0
