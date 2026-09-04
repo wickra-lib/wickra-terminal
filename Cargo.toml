@@ -35,20 +35,19 @@ keywords = ["trading", "terminal", "tui", "streaming", "charts"]
 categories = ["visualization", "finance", "command-line-utilities"]
 
 [workspace.dependencies]
-# Wickra ecosystem. wickra-core ships on crates.io; the exchange is consumed
-# from git until its first crates.io release (its tag is USER-GO gated), which
-# lets the terminal build against the real crate in CI.
+# Wickra ecosystem, all of it from crates.io.
 wickra-core = "1"
-# A `version` is pinned alongside `git` so the dependency is not a wildcard
-# (cargo-deny's `bans.wildcards = deny`); cargo checks it against the repo's
-# crate version. An explicit `rev` pins the tree as well, so `cargo update`
-# cannot silently move an unreleased dependency out from under a green CI run.
-# Move these to plain crates.io versions after the exchange release.
+# The exchange was consumed from a git rev until its first crates.io release;
+# that release is out, so both pins are plain versions — the move the comment
+# here has been asking for. A release of this repository could not have been
+# published while they stood: `cargo publish` resolves the registry version and
+# not the rev, so the crate that shipped would not have been the crate that was
+# tested.
 # `wickra-exchange-core` carries the market types (Symbol/Event/…) with no
 # networking, so it compiles on wasm32; the `wickra-exchange` facade adds the
 # native connectivity (tokio/reqwest) used only by the `live` feature.
-wickra-exchange-core = { git = "https://github.com/wickra-lib/wickra-exchange", rev = "73511aa99978bc34c5e65de885b9a1f653565155", version = "0.1" }
-wickra-exchange = { git = "https://github.com/wickra-lib/wickra-exchange", rev = "73511aa99978bc34c5e65de885b9a1f653565155", version = "0.1" }
+wickra-exchange-core = "0.1.1"
+wickra-exchange = "0.1.1"
 wickra-terminal-core = { version = "0.1.0", path = "crates/wickra-terminal-core" }
 # Serialization — the data-driven boundary (config/command/view-models as JSON).
 serde = { version = "1", features = ["derive"] }

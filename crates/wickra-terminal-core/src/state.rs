@@ -1442,8 +1442,17 @@ impl AppState {
             }
             Event::BookSnapshot(snap) => state.book.apply_snapshot(snap),
             Event::BookDelta(delta) => state.book.apply_delta(delta),
+            // Derivatives microstructure reaches this state through
+            // `apply_derivatives` and the host's `DerivativesUpdate` command,
+            // not through the stream: the live source subscribes to trades,
+            // book and ticker only, so no venue sends this variant here. Folding
+            // it in addition would give the same market two writers with
+            // different precision -- the command carries `f64`, this variant
+            // carries exchange `Decimal`s -- and the later of the two would win
+            // by arrival order.
+            Event::Derivatives(_)
             // Account and lifecycle events do not affect per-symbol market state.
-            Event::OrderUpdate(_)
+            | Event::OrderUpdate(_)
             | Event::BalanceUpdate(_)
             | Event::Subscribed { .. }
             | Event::Disconnected
@@ -1695,6 +1704,7 @@ mod tests {
                 bid: dec!(20009),
                 ask: dec!(20011),
                 volume: dec!(1234),
+                timestamp: 0,
             }),
         );
 
@@ -2169,6 +2179,7 @@ mod tests {
                 BookLevel::new(dec!(99), dec!(2)),
             ],
             asks: vec![BookLevel::new(dec!(101), dec!(1))],
+            timestamp: 0,
         });
         assert_eq!(book.best_bid(), Some((dec!(100), dec!(1))));
         assert_eq!(book.best_ask(), Some((dec!(101), dec!(1))));
@@ -2180,6 +2191,7 @@ mod tests {
             final_update_id: 2,
             bids: vec![BookLevel::new(dec!(100), dec!(0))],
             asks: vec![BookLevel::new(dec!(102), dec!(3))],
+            timestamp: 0,
         });
         assert_eq!(book.best_bid(), Some((dec!(99), dec!(2))));
         assert_eq!(
@@ -2577,6 +2589,7 @@ mod tests {
                 quantity: dec!(5),
             }],
             last_update_id: 1,
+            timestamp: 0,
         });
         assert_eq!(book.mid(), Some(dec!(100)));
     }
@@ -2593,6 +2606,7 @@ mod tests {
             }],
             asks: Vec::new(),
             last_update_id: 1,
+            timestamp: 0,
         });
         // No ask means no mid, and a TradeQuote without one is not a quote:
         // `TradeQuote::new` rejects a non-positive mid, and half a book has no
@@ -2630,6 +2644,7 @@ mod tests {
                         quantity: dec!(5),
                     }],
                     last_update_id: u64::try_from(step).unwrap_or(0),
+                    timestamp: 0,
                 }),
             );
             state.fold(0, &sym, &trade(&sym, mid + dec!(1), OrderSide::Buy));

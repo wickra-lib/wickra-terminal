@@ -78,6 +78,7 @@ fn canonical_feed() -> Vec<Event> {
             last_update_id: 10,
             bids: vec![level(19_999, 15), level(19_998, 25)],
             asks: vec![level(20_001, 12), level(20_002, 30)],
+            timestamp: 3,
         }),
         trade(20_002, 20, true, 4),
         trade(20_000, 10, false, 5),
@@ -105,6 +106,7 @@ fn ticker_feed() -> Vec<Event> {
             bid: Decimal::from(20_009),
             ask: Decimal::from(20_011),
             volume: Decimal::from(1_234_567),
+            timestamp: 1,
         }),
         trade(20_100, 30, true, 2),
         Event::Ticker(Ticker {
@@ -113,6 +115,7 @@ fn ticker_feed() -> Vec<Event> {
             bid: Decimal::from(20_099),
             ask: Decimal::from(20_101),
             volume: Decimal::from(1_240_000),
+            timestamp: 2,
         }),
         trade(19_900, 40, false, 3),
         Event::Ticker(Ticker {
@@ -121,6 +124,7 @@ fn ticker_feed() -> Vec<Event> {
             bid: Decimal::from(19_899),
             ask: Decimal::from(19_902),
             volume: Decimal::from(1_250_000),
+            timestamp: 3,
         }),
     ]
 }
@@ -134,6 +138,7 @@ fn book_delta_feed() -> Vec<Event> {
             last_update_id: 1,
             bids: vec![level(19_999, 10), level(19_998, 20), level(19_997, 30)],
             asks: vec![level(20_001, 10), level(20_002, 20), level(20_003, 30)],
+            timestamp: 1,
         }),
         // Re-price the top of book and remove a level a side.
         Event::BookDelta(BookDelta {
@@ -142,6 +147,7 @@ fn book_delta_feed() -> Vec<Event> {
             final_update_id: 2,
             bids: vec![level(19_999, 55), level(19_998, 0)],
             asks: vec![level(20_001, 45), level(20_002, 0)],
+            timestamp: 2,
         }),
         // Add a new level outside the previous range on each side.
         Event::BookDelta(BookDelta {
@@ -150,6 +156,7 @@ fn book_delta_feed() -> Vec<Event> {
             final_update_id: 3,
             bids: vec![level(19_996, 5)],
             asks: vec![level(20_004, 5)],
+            timestamp: 3,
         }),
         trade(20_000, 25, true, 4),
     ]
