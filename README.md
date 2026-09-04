@@ -29,6 +29,14 @@ the [Wickra](https://github.com/wickra-lib/wickra) core — live charts, order-b
 tape and <!--indicator-count-->497<!--/indicator-count--> streaming indicators — with a native **TUI** and a **Web** front-end
 as a *second renderer* of the same logic, driven by the same config.
 
+```bash
+# The native TUI over a live Binance feed. No config file, no account, no key.
+cargo run -p wickra-terminal -- --source live:binance:BTC/USDT
+
+# Or a deterministic synthetic feed, if the network is not the point right now.
+cargo run -p wickra-terminal -- --source synth:1
+```
+
 Every one of the **514** indicators and bar builders Wickra ships is reachable:
 497 through the indicator registry, 6 as profiles, 10 as alternative bar types,
 and the footprint through the panel that renders it. Three surfaces rather than
@@ -296,7 +304,7 @@ python scripts/check_binding_surface.py     # every binding matches the C ABI he
   `instability`/`darling`), and to build the Node binding. The library crate
   `wickra-terminal-core` keeps the workspace MSRV of ≥ 1.86.
 - Renderer/binding toolchains as needed: Node ≥ 22, Python ≥ 3.9, a C toolchain,
-  .NET 8, JDK 22+, Go 1.23, R — see each `bindings/<lang>/README.md`.
+  .NET 8, JDK 22+, Go 1.23, R ≥ 3.0.0 — see each `bindings/<lang>/README.md`.
 
 ## Ecosystem
 

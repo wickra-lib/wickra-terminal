@@ -343,6 +343,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The README opens with the command that starts the terminal. Everything above
+  the first heading was prose about the architecture, so the first runnable line
+  sat under `## Quickstart`, past four screens of it -- and a reader who wants to
+  see the thing run before reading why it is shaped this way had no reason to
+  keep scrolling.
 - The C++ surface lives in the C binding rather than beside it. `bindings/cpp/`
   held a README and a benchmark while the header it documents,
   `wickra_terminal.hpp`, has always sat in `bindings/c/include/` -- so the
@@ -410,6 +415,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The benchmark workflow builds the C++ row where its source now lives. Moving
+  `throughput.cpp` into the C binding's CMake project left `bench.yml`
+  configuring `bindings/cpp/benchmarks`, a directory the same change deleted, so
+  every run since ended in `CMake Error: The source directory ... does not
+  exist`. It ended there *after* the C row had printed its table, which is why
+  the log looked like a complete benchmark with a failure stapled to the end.
+  One project is configured now and both executables are run out of it.
+- The published Go module no longer carries the test files. `cp bindings/go/*.go`
+  swept `*_test.go` into the mirror alongside the sources, and those tests locate
+  `golden/` by walking up from the working directory -- above the module, where a
+  consumer has no repository. `go test ./...` on the published module could
+  therefore never pass, and the failure would have been the first thing a Go user
+  saw. The sources are copied individually now.
+- The requirements list states the R floor. Every other binding's minimum was
+  named there and R stood alone as a bare "R", while `bindings/r/DESCRIPTION`
+  has declared `R (>= 3.0.0)` all along -- a floor a reader could only find by
+  opening the package manifest.
 - Every binding README said the boundary offers *thirteen* commands. It offers
   nineteen. Thirteen is the number of rows in the table beneath the sentence,
   and a row groups the commands that belong together -- `Subscribe` /
@@ -575,6 +597,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `wnaf` moved off a yanked release. It arrives through
+  `wickra-exchange-core -> p256 -> primeorder`, crates.io withdrew 0.14.0, and
+  `yanked = "deny"` turned that into a red supply-chain job without a line of
+  this repository changing -- which is the gate working: a yanked version is one
+  the publisher has asked people to stop using. 0.14.1 is the same API, so the
+  lockfile is the whole change.
 - The live source holds a `dyn MarketData`, not a `dyn Exchange`. `connect`
   hands back the whole exchange -- order placement and balances alongside the
   reads -- and the source kept it, so nothing but review stood between an edit

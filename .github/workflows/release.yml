@@ -831,7 +831,14 @@ jobs:
           set -e
           out=wickra-terminal-go-module
           mkdir -p "$out/include" "$out/lib"
-          cp bindings/go/*.go "$out/"
+          # Sources only. The test files stay behind: they locate golden/ by
+          # walking up from the working directory, and the published module has
+          # no repository above it -- a consumer running `go test ./...` on the
+          # module gets a suite that can never find its fixtures.
+          for f in bindings/go/*.go; do
+            case "$f" in *_test.go) continue ;; esac
+            cp "$f" "$out/"
+          done
           cp bindings/go/include/wickra_terminal.h "$out/include/"
           cp bindings/go/README.md "$out/"
           cp LICENSE-MIT LICENSE-APACHE "$out/"

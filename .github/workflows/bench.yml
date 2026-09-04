@@ -72,13 +72,17 @@ jobs:
       - name: Rust, no boundary
         run: cargo run -p wickra-terminal-example --bin throughput --release -- "$TICKS"
 
+      # One project builds both rows. The C++ surface is a header inside the C
+      # binding -- `bindings/c/include/wickra_terminal.hpp` over the C header --
+      # so its benchmark lives beside the C one and there is no second CMake
+      # tree to configure. Measured against the same library, the difference
+      # between the two rows is what the ownership layer costs and nothing else.
       - name: C and C++
         run: |
-          for lang in c cpp; do
-            cmake -S "bindings/$lang/benchmarks" -B "bindings/$lang/benchmarks/build" -DCMAKE_BUILD_TYPE=Release
-            cmake --build "bindings/$lang/benchmarks/build" --config Release
-            "./bindings/$lang/benchmarks/build/throughput" "$TICKS"
-          done
+          cmake -S bindings/c/benchmarks -B bindings/c/benchmarks/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build bindings/c/benchmarks/build --config Release
+          ./bindings/c/benchmarks/build/throughput "$TICKS"
+          ./bindings/c/benchmarks/build/throughput_cpp "$TICKS"
 
       - uses: ./.github/actions/setup-python
         with:
