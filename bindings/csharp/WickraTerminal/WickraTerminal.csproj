@@ -9,7 +9,7 @@
     <AssemblyName>WickraTerminal</AssemblyName>
 
     <PackageId>WickraTerminal</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Authors>kingchenc</Authors>
     <Description>The data-driven trading-terminal core for .NET over the Wickra C ABI: build a Terminal from a JSON config, drive it with commands, read back frame view-models.</Description>
     <PackageLicenseExpression>MIT OR Apache-2.0</PackageLicenseExpression>

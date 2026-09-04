@@ -1,7 +1,7 @@
 {
   "name": "wickra-terminal-example-node",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A runnable Node.js example for the Wickra terminal.",
   "license": "MIT OR Apache-2.0",
   "dependencies": {

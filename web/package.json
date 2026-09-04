@@ -1,7 +1,7 @@
 {
   "name": "wickra-terminal-web",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "The Web renderer of the Wickra trading terminal: a Vue front-end over the WASM binding, sharing the core's view-models with the native TUI.",
   "license": "MIT OR Apache-2.0",

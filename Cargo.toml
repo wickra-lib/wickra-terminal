@@ -23,7 +23,7 @@ members = [
 exclude = ["fuzz"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.86"
 license = "MIT OR Apache-2.0"
@@ -48,7 +48,7 @@ wickra-core = "1"
 # native connectivity (tokio/reqwest) used only by the `live` feature.
 wickra-exchange-core = "0.1.1"
 wickra-exchange = "0.1.1"
-wickra-terminal-core = { version = "0.1.0", path = "crates/wickra-terminal-core" }
+wickra-terminal-core = { version = "0.1.1", path = "crates/wickra-terminal-core" }
 # Serialization — the data-driven boundary (config/command/view-models as JSON).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
