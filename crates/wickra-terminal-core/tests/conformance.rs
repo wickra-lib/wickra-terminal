@@ -75,7 +75,8 @@ fn live_source_is_object_safe_and_reports_its_kind() {
     assert_eq!(sources[0].kind(), SourceKind::Live);
 }
 
-/// Every market kind opens, and none of them opens the spot book by mistake.
+/// Every market kind binance routes opens, and none of them opens the spot book
+/// by mistake.
 ///
 /// Offline: `connect` builds the venue's HTTP client and does not reach for a
 /// socket -- the sockets are opened on the first poll. So the one thing worth
@@ -83,13 +84,8 @@ fn live_source_is_object_safe_and_reports_its_kind() {
 /// was hard-coded to spot and a perpetual could not be opened at all.
 #[cfg(feature = "live")]
 #[test]
-fn a_live_source_opens_every_market_kind() {
-    for market in [
-        Market::Spot,
-        Market::UsdMFutures,
-        Market::CoinMFutures,
-        Market::Margin,
-    ] {
+fn a_live_source_opens_every_market_kind_the_venue_routes() {
+    for market in [Market::Spot, Market::UsdMFutures] {
         let source = build_source(
             5,
             &SourceSpec::Live {
@@ -101,6 +97,37 @@ fn a_live_source_opens_every_market_kind() {
         )
         .unwrap_or_else(|err| panic!("binance {market:?}: {err}"));
         assert_eq!(source.kind(), SourceKind::Live);
+    }
+}
+
+/// A market the venue does not route is refused, not quietly re-pointed.
+///
+/// Binance's inverse contracts and its margin account are reachable in this
+/// terminal's config surface but not through the exchange client: only bybit and
+/// okx route `CoinMFutures` to an inverse endpoint, and no client signs a margin
+/// order on any venue. The exchange refuses both rather than falling through to
+/// another market's endpoints, which is the failure worth having -- a source
+/// that opened would show a book, and the instrument behind it would not be the
+/// one the config named.
+#[cfg(feature = "live")]
+#[test]
+fn a_market_the_venue_does_not_route_is_refused() {
+    for market in [Market::CoinMFutures, Market::Margin] {
+        // `expect_err` is not available here: it needs the success type to be
+        // `Debug`, and `Box<dyn DataSource>` is not.
+        let Err(err) = build_source(
+            5,
+            &SourceSpec::Live {
+                venue: "binance".to_string(),
+                symbol: "BTC/USDT".to_string(),
+                testnet: false,
+                market,
+            },
+        ) else {
+            panic!("binance {market:?} opened, but the venue does not route it");
+        };
+        let message = err.to_string();
+        assert!(message.contains("not routed by this client"), "{message}");
     }
 }
 

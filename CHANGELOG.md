@@ -7,10 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-09-03
+## [0.1.0] - 2026-09-04
 
 ### Added
 
+- A live source opens only a market its venue actually routes. Binance routes
+  spot and USD-margined futures; its inverse contracts reach an inverse endpoint
+  on bybit and okx only, and no venue signs a margin-account order. Asking for
+  one of the others now fails when the source is built, with the venue and the
+  market named. The alternative is worse than an error: the config would be
+  accepted, a book would open, and the instrument behind it would not be the one
+  that was asked for.
 - The browser's live bridge reconnects. It carried `onmessage` and nothing else
   -- no `onerror`, no `onclose`, no retry -- so a dropped socket left the chart
   frozen at the last print with no indication that anything had happened, where
