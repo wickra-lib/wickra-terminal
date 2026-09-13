@@ -39,10 +39,19 @@ if [ -n "${WKTERM_INC}" ] && [ -n "${WKTERM_LIB}" ]; then
   lib="${WKTERM_LIB}"
 else
   version=$(sed -n 's/^Version:[[:space:]]*//p' DESCRIPTION)
-  # R_ARCH is /x64 on 64-bit Windows and /arm64 on the aarch64 build.
-  case "${R_ARCH}" in
-    *arm64*) triple="aarch64-pc-windows-msvc" ;;
-    *) triple="x86_64-pc-windows-msvc" ;;
+  # Detect the R architecture, not the shell's. R_ARCH is empty on the
+  # single-architecture arm64 build of R, and `uname -m` reports x86_64 there
+  # because the shell runs under emulation, so either would pull the x64 C ABI
+  # into an arm64 R ("machine type x64 conflicts with arm64" at link time).
+  # R.version$arch reflects the R build that loads the DLL.
+  arch=$("${R_HOME}/bin/Rscript" -e 'cat(R.version$arch)')
+  case "${arch}" in
+    x86_64) triple="x86_64-pc-windows-msvc" ;;
+    aarch64 | arm64) triple="aarch64-pc-windows-msvc" ;;
+    *)
+      echo "wickraterminal: unsupported Windows arch '${arch}' - set WKTERM_INC/WKTERM_LIB"
+      exit 1
+      ;;
   esac
   url="https://github.com/wickra-lib/wickra-terminal/releases/download/v${version}/wickra-terminal-c-${triple}.tar.gz"
   echo "wickraterminal: downloading C ABI ${triple} for v${version}"

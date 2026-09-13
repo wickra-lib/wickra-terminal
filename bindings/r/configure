@@ -39,6 +39,17 @@ wkterm_download() {
   return 1
 }
 
+# WebAssembly (r-universe's webR target) is not supported and says so rather
+# than failing further in. The sibling libraries build their C ABI from source
+# for wasm32-unknown-emscripten right here, but this one is a live terminal on
+# tokio, mio and a websocket client: mio has no emscripten backend, so the
+# crate cannot compile for the target, and nothing it does would work without
+# sockets and a TTY anyway.
+if [ "$(uname -s)" = "Emscripten" ]; then
+  echo "wickraterminal: no WebAssembly build - this package is a live terminal client and wasm has neither sockets nor a TTY."
+  exit 1
+fi
+
 if [ -n "${WKTERM_INC}" ] && [ -n "${WKTERM_LIB}" ]; then
   echo "wickraterminal: using C ABI from WKTERM_INC / WKTERM_LIB (dev override)"
   inc="${WKTERM_INC}"
