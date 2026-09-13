@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The R package installs on Windows/arm64.** `configure.win` chose the C
+  ABI by `R_ARCH`, which is empty on the single-architecture arm64 build of
+  R, so the x64 DLL was staged into an arm64 R and the link failed with
+  "machine type x64 conflicts with arm64" on both r-universe arm64 jobs. The
+  architecture now comes from `R.version$arch`, the R build that loads the
+  DLL, as in the sibling packages.
+- **`configure` says why there is no WebAssembly build.** It reported the
+  target as an unsupported OS; it now states the reason (a live terminal on
+  tokio and mio has no emscripten backend, and no sockets or TTY to use), so
+  the red `wasm-release` job on r-universe is a documented limit rather than
+  an accident.
+
 ## [0.1.2] - 2026-09-04
 
 `0.1.1` published to all seven registries. This release exists because the R
