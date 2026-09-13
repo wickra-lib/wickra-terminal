@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-09-13
+
 ### Fixed
 
 - **The R package installs on Windows/arm64.** `configure.win` chose the C
@@ -720,7 +722,8 @@ nothing stopped the other six registries from publishing around it.
   floor, so only that row stays at 8.4.2. Written here rather than left as prose
   in the requirements file, because this file is now actually read.
 
-[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/wickra-lib/wickra-terminal/releases/tag/v0.1.0
