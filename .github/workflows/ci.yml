@@ -178,7 +178,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
+      - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: cargo-deny
@@ -268,7 +268,7 @@ jobs:
 
       - name: Install cargo-semver-checks
         if: steps.baseline.outputs.published == 'yes'
-        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
+        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: cargo-semver-checks
@@ -569,7 +569,7 @@ jobs:
         timeout-minutes: 6
       - uses: ./.github/actions/warm-cargo
       - name: Install wasm-pack
-        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
+        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: wasm-pack
@@ -608,7 +608,7 @@ jobs:
         timeout-minutes: 6
       - uses: ./.github/actions/warm-cargo
       - name: Install wasm-pack
-        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
+        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: wasm-pack
@@ -654,7 +654,7 @@ jobs:
         timeout-minutes: 6
       - uses: ./.github/actions/warm-cargo
       - name: Install cbindgen
-        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
+        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: cbindgen
@@ -964,7 +964,7 @@ jobs:
         timeout-minutes: 6
       - uses: ./.github/actions/warm-cargo
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
+        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: cargo-llvm-cov
@@ -1047,7 +1047,7 @@ jobs:
         with:
           working-directory: fuzz
       - name: Install cargo-fuzz
-        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
+        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: cargo-fuzz
