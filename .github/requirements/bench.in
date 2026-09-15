@@ -1,0 +1,5 @@
+# Tooling for bench.yml: maturin builds the wheel the Python throughput
+# benchmark measures; the benchmark itself has no dependencies beyond the
+# package. Locked output: bench.txt (Python 3.12, the version bench.yml runs).
+# Refresh via scripts/update-lockfiles.sh.
+maturin

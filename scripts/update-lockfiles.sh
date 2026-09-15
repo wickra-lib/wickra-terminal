@@ -47,7 +47,7 @@ echo "==> Python (.github/requirements/*.txt via uv)"
 # everyone who regenerates a lockfile. Set WICKRA_BOOTSTRAP_UV=1 to opt in; the
 # bootstrap then fetches one pinned release archive and refuses to use it unless
 # its checksum matches the one recorded here.
-UV_VERSION="0.12.9"
+UV_VERSION="0.12.13"
 uv_sha256() {
   case "$1" in
     x86_64-unknown-linux-gnu)  echo "ec7a99cd05e0cd7f80243f135ce1361c76835cb0ee60055d14d20eba8eba1460" ;;
@@ -92,5 +92,6 @@ req=".github/requirements"
 cc="./scripts/update-lockfiles.sh"
 uv pip compile --quiet --python-version 3.9  --generate-hashes --custom-compile-command "$cc" "$req/ci-dev-py39.in" -o "$req/ci-dev-py39.txt"
 uv pip compile --quiet --python-version 3.10 --generate-hashes --custom-compile-command "$cc" "$req/ci-dev-py3.in"  -o "$req/ci-dev-py3.txt"
+uv pip compile --quiet --python-version 3.12 --generate-hashes --custom-compile-command "$cc" "$req/bench.in"      -o "$req/bench.txt"
 
 echo "==> Done. Review 'git diff' before committing."
