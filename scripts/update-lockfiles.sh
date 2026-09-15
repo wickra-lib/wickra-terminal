@@ -47,7 +47,7 @@ echo "==> Python (.github/requirements/*.txt via uv)"
 # everyone who regenerates a lockfile. Set WICKRA_BOOTSTRAP_UV=1 to opt in; the
 # bootstrap then fetches one pinned release archive and refuses to use it unless
 # its checksum matches the one recorded here.
-UV_VERSION="0.12.13"
+UV_VERSION="0.12.14"
 uv_sha256() {
   case "$1" in
     x86_64-unknown-linux-gnu)  echo "ec7a99cd05e0cd7f80243f135ce1361c76835cb0ee60055d14d20eba8eba1460" ;;
