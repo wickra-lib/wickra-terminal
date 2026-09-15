@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://wickra.org"><img src="https://raw.githubusercontent.com/wickra-lib/.github/main/profile/wickra-banner.webp?v=514" alt="Wickra — streaming-first trading terminal" width="100%"></a>
+  <a href="https://wickra.org"><img src="https://raw.githubusercontent.com/wickra-lib/.github/main/profile/wickra-banner.webp?v=514" alt="Wickra Terminal — the data-driven streaming trading terminal: one core in ten languages, a native TUI and a Web renderer" width="100%"></a>
 </p>
 
 [![Built on Wickra](https://img.shields.io/badge/built%20on-wickra-3b82f6)](https://github.com/wickra-lib/wickra)
@@ -304,7 +304,7 @@ python scripts/check_binding_surface.py     # every binding matches the C ABI he
   `instability`/`darling`), and to build the Node binding. The library crate
   `wickra-terminal-core` keeps the workspace MSRV of ≥ 1.86.
 - Renderer/binding toolchains as needed: Node ≥ 22, Python ≥ 3.9, a C toolchain,
-  .NET 8, JDK 22+, Go 1.23, R ≥ 3.0.0 — see each `bindings/<lang>/README.md`.
+  .NET 8, JDK 22+, Go 1.23, R ≥ 4.1 — see each `bindings/<lang>/README.md`.
 
 ## Ecosystem
 

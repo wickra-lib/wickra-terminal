@@ -20,10 +20,21 @@
 # finding could say something true about. A generator owning a file is not on
 # its own a reason to stop analysing it.
 #
+# `bindings/node/src/lib.rs` is hand-written, but what CodeQL reports on it is
+# not: every exported `#[napi]` class raises one `rust/access-invalid-pointer`
+# anchored on its `pub struct` line while the file contains no `unsafe` at
+# all -- the dereference the rule sees lives in napi-derive's expansion, and
+# CodeQL attributes it back to the macro's source span. The count grows by
+# one per class and the rule can say nothing true about the file. Excluded by
+# path rather than by disabling the query: `query-filters` cannot be scoped,
+# and the same rule earns its place on `bindings/c/src`, where the real
+# raw-pointer code lives.
+#
 # The rule for adding to this list: a path belongs here when a generator owns
-# the file end to end and stamps it as such, AND the findings it produces are
-# about the generator's idiom rather than about this code. Never because a
+# the file end to end and stamps it as such, or when every finding it produces
+# is about a macro's idiom rather than about this code. Never because a
 # finding was inconvenient.
 paths-ignore:
   - bindings/node/index.js
   - bindings/node/index.d.ts
+  - bindings/node/src/lib.rs
