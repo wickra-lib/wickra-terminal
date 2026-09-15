@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-09-15
+
 ### Security
 
 - **rustls 0.23.45.** RUSTSEC-2026-0285: rustls accepted TLS 1.3 handshake
@@ -728,7 +730,8 @@ nothing stopped the other six registries from publishing around it.
   floor, so only that row stays at 8.4.2. Written here rather than left as prose
   in the requirements file, because this file is now actually read.
 
-[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.0...v0.1.1
