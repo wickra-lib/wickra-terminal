@@ -1,11 +1,14 @@
-# Python 3.9 tooling for the binding test job in ci.yml.
+# Python 3.9 dev/test tooling for the ci.yml python job.
 #
-# 3.9 is the abi3 floor the wheel is built against, and it is the one row that
-# cannot take pytest 9: PYSEC-2026-1845 (CVE-2025-71176) is fixed in 9.0.3, and
-# pytest 9 requires Python >= 3.10. The 8.x line ends at 8.4.2 with no backport,
-# so this row gets the newest pytest that runs here and the others get the fix.
-# Collapse this file into ci-dev-py3.in once the matrix floor moves off 3.9.
+# Split from ci-dev-py3.in because a resolution for 3.9 is not the same as one
+# for 3.13, and the wheels have to exist for the interpreter that installs them
+# (3.9 is the abi3 floor the wheel is built against).
 #
 # Locked output: ci-dev-py39.txt. Refresh via scripts/update-lockfiles.sh.
 maturin
-pytest<9
+# No pytest here, deliberately. pytest 9.x requires Python 3.10, so this row
+# could only ever pin 8.4.2 -- below the fix for GHSA-6w46-j5rx-g56g, with no
+# 8.x backport. Keeping a vulnerable package pinned to run tests that never
+# needed it is the wrong trade, so the 3.9 row runs
+# bindings/python/tests/run_without_pytest.py instead: the same modules, plain
+# functions with plain asserts, on the floor interpreter.
