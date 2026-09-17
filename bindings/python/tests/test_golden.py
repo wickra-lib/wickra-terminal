@@ -13,8 +13,6 @@ seven other language suites, with no change to any of them.
 import json
 import os
 
-import pytest
-
 import wickra_terminal as wt
 
 
@@ -39,24 +37,27 @@ def _scenarios():
     return [(g, s) for s in manifest["scenarios"]]
 
 
-@pytest.mark.parametrize(
-    "golden,scenario", _scenarios(), ids=[s["name"] for _, s in _scenarios()]
-)
-def test_golden_parity_frame_is_byte_exact(golden, scenario):
-    config = _read(golden, *scenario["config"].split("/"))
-    expected = _read(golden, *scenario["expected"].split("/")).strip()
-    commands = [
-        line
-        for line in _read(golden, *scenario["commands"].split("/")).splitlines()
-        if line.strip()
-    ]
-    assert commands, scenario["name"]
+def test_golden_parity_frame_is_byte_exact():
+    # A plain loop rather than pytest.mark.parametrize, so the Python 3.9 CI
+    # row can run this module without pytest (see run_without_pytest.py); the
+    # scenario name is in every message so a failure still says which case.
+    scenarios = _scenarios()
+    assert scenarios, "no golden scenarios in the manifest"
+    for golden, scenario in scenarios:
+        config = _read(golden, *scenario["config"].split("/"))
+        expected = _read(golden, *scenario["expected"].split("/")).strip()
+        commands = [
+            line
+            for line in _read(golden, *scenario["commands"].split("/")).splitlines()
+            if line.strip()
+        ]
+        assert commands, scenario["name"]
 
-    term = wt.Terminal(config)
-    frame = ""
-    for command in commands:
-        frame = term.command(command)
-    assert frame.strip() == expected, scenario["name"]
+        term = wt.Terminal(config)
+        frame = ""
+        for command in commands:
+            frame = term.command(command)
+        assert frame.strip() == expected, scenario["name"]
 
 
 def test_the_corpus_covers_more_than_one_scenario():

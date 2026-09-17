@@ -27,16 +27,10 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-# Floors, not pins, since this is a published extra rather than a CI lockfile --
-# but floors that exclude the versions carrying PYSEC-2026-1845. `pytest>=7`
-# admitted every vulnerable release, which is what a scanner reads off the
-# published metadata. 3.9 has no patched pytest (the fix lands in 9.0.3, which
-# needs >= 3.10, and 8.x has no backport), so it floors at the newest release
-# that runs there.
-test = [
-    "pytest>=8.4.2; python_version < '3.10'",
-    "pytest>=9.0.3; python_version >= '3.10'",
-]
+# A floor, not a pin, since this is a published extra rather than a CI lockfile;
+# CI installs from the hash-locked .github/requirements/ files, where 3.10 and up
+# get pytest 9.1.1 and the 3.9 row runs the suite without pytest at all.
+test = ["pytest>=7"]
 
 [project.urls]
 Homepage = "https://github.com/wickra-lib/wickra-terminal"

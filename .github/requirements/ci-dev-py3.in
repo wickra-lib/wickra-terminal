@@ -6,4 +6,4 @@
 #
 # Locked output: ci-dev-py3.txt. Refresh via scripts/update-lockfiles.sh.
 maturin
-pytest>=9.0.3
+pytest

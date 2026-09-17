@@ -36,7 +36,7 @@ categories = ["visualization", "finance", "command-line-utilities"]
 
 [workspace.dependencies]
 # Wickra ecosystem, all of it from crates.io.
-wickra-core = "1"
+wickra-core = "1.0"
 # The exchange was consumed from a git rev until its first crates.io release;
 # that release is out, so both pins are plain versions — the move the comment
 # here has been asking for. A release of this repository could not have been
@@ -46,8 +46,8 @@ wickra-core = "1"
 # `wickra-exchange-core` carries the market types (Symbol/Event/…) with no
 # networking, so it compiles on wasm32; the `wickra-exchange` facade adds the
 # native connectivity (tokio/reqwest) used only by the `live` feature.
-wickra-exchange-core = "0.1.1"
-wickra-exchange = "0.1.1"
+wickra-exchange-core = "=0.1.5"
+wickra-exchange = "=0.1.5"
 wickra-terminal-core = { version = "0.1.4", path = "crates/wickra-terminal-core" }
 # Serialization — the data-driven boundary (config/command/view-models as JSON).
 serde = { version = "1", features = ["derive"] }
