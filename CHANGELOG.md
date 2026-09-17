@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **wickra-exchange 0.1.5.** The facade and its core move from the caret
+  `0.1.1` that `cargo update` could have moved and nobody did -- four patches
+  behind the release the family is on -- to `=0.1.5` with the `=` every sibling
+  uses; the lock follows and the workspace compiles unchanged.
+- **The Python 3.9 CI row installs no pytest.** The row pinned pytest 8.4.2
+  (below the fix for GHSA-6w46-j5rx-g56g) to run one parametrized golden test,
+  with an OSV suppression and a two-line `[test]` extra to say why. The golden
+  test loops over the manifest instead, with the scenario name in every
+  message; the 3.9 row runs the same eight modules through
+  `bindings/python/tests/run_without_pytest.py`, `ci-dev-py39.txt` carries
+  maturin alone, the extra floors at `pytest>=7` like the family's, and the
+  suppression goes with the exposure.
+- **The repository spells shared things the way the family does.** A cross-repo
+  scan lined the 24 wickra-lib repositories up and this one also differed in:
+  `wickra-core = "1"` where the family writes `"1.0"`, the Maven compiler and
+  surefire plugins one line behind (3.16.0 / 3.6.0), `@napi-rs/cli` ^3.8.6
+  against ^3.9.0, the example job running the newest Java rather than the
+  floor (`release 22` and `dotnet 8.0.x` now), and `bench.yml` asking for Go
+  1.25 where every other workflow says `stable`.
+
 ### Fixed
 
 - **The Java binding loads the library it ships.** The jar carries the native
