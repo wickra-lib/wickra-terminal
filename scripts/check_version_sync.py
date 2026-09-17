@@ -65,7 +65,7 @@ TOUCHPOINTS: list[tuple[str, str, str, int]] = [
         1,
     ),
     # The Maven install snippet a reader copies verbatim.
-    ("bindings/java/README.md", "install snippet", r"@V@", 1),
+    ("bindings/java/README.md", "install snippet (Maven and Gradle)", r"@V@", 2),
     # The supported-version row. A security policy naming a version nobody can
     # install is worse than one naming none.
     ("SECURITY.md", "supported version", r"@V@", 1),

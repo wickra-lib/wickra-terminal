@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://wickra.org"><img src="https://raw.githubusercontent.com/wickra-lib/.github/main/profile/wickra-banner.webp?v=514" alt="Wickra Terminal — the data-driven streaming trading terminal: one core in ten languages, a native TUI and a Web renderer" width="100%"></a>
+  <a href="https://wickra.org"><img src="https://raw.githubusercontent.com/wickra-lib/.github/main/profile/wickra-banner.webp?v=514-7" alt="Wickra Terminal — the data-driven streaming trading terminal: one core in ten languages, a native TUI and a Web renderer" width="100%"></a>
 </p>
 
 [![Built on Wickra](https://img.shields.io/badge/built%20on-wickra-3b82f6)](https://github.com/wickra-lib/wickra)
@@ -43,9 +43,11 @@ and the footprint through the panel that renders it. Three surfaces rather than
 one list, because a reading, a histogram and a bar are not the same shape of
 answer — see [`docs/INDICATORS.md`](docs/INDICATORS.md).
 
-> **▶ Live demo:** the Wickra library's own 514 indicators over real Binance market data, computed live in your browser — **[live.wickra.org](https://live.wickra.org)** · zero backend, powered by `wickra-wasm`.
+> **▶ Live demos:** the backtester compiled to WebAssembly, an equity curve building bar by bar — **[backtest-live.wickra.org](https://backtest-live.wickra.org)**;
+> one StrategySpec side by side in Python, Rust, JS and Go — **[playground.wickra.org](https://playground.wickra.org)**;
+> all 514 indicators of the core over a real Binance feed — **[live.wickra.org](https://live.wickra.org)**. Zero backend, all of them.
 
-> **Part of the [Wickra ecosystem](https://github.com/wickra-lib):** the same data-driven core and ten-language binding surface also power [wickra-exchange](https://github.com/wickra-lib/wickra-exchange), [wickra-backtest](https://github.com/wickra-lib/wickra-backtest), [wickra-screener](https://github.com/wickra-lib/wickra-screener) and 20 more — see [the full list](https://github.com/wickra-lib).
+**Part of the [Wickra ecosystem](#ecosystem):** the same data-driven core and ten-language binding surface also power [wickra-exchange](https://github.com/wickra-lib/wickra-exchange), [wickra-backtest](https://github.com/wickra-lib/wickra-backtest), [wickra-screener](https://github.com/wickra-lib/wickra-screener) and 20 more — see [the full list](https://github.com/wickra-lib).
 
 The heart is a single data-driven core, [`wickra-terminal-core`](crates/wickra-terminal-core):
 it folds market events into an O(1) `AppState` and turns panels into
@@ -70,6 +72,26 @@ The core is exposed as a **JSON-over-C-ABI data API** (`Terminal::command_json`)
 in **Rust, Python, Node.js, WASM, C, C++, C#, Go, Java and R** — so a developer in
 any language builds their own front-end on the same core.
 
+## Status
+
+**0.1.4 — the current release.** The core, both renderers, all ten language
+bindings, the indicator registry, the runtime source/symbol toggle, the panel
+set, the byte-exact golden corpus, property and fuzz tests, benchmarks and one
+runnable example per language are in place and green across the full CI matrix
+(10 languages x 3 OS). [ROADMAP.md](ROADMAP.md) has what is done, what is open
+and what is not planned.
+
+> **Read-only.** The terminal renders market data. It places no orders, holds no
+> credentials and keeps no position — the live source connects to public
+> endpoints with empty credentials. Execution is not a flag that is off; it is a
+> layer that is not built. See [THREAT_MODEL.md](THREAT_MODEL.md).
+
+## Documentation
+
+- [Architecture](ARCHITECTURE.md) — the core, the renderer split, the data-driven boundary.
+- [docs/INDICATORS.md](docs/INDICATORS.md) · [docs/PANELS.md](docs/PANELS.md) · [docs/SOURCES.md](docs/SOURCES.md) · [docs/RENDERERS.md](docs/RENDERERS.md) · [docs/STREAMING.md](docs/STREAMING.md) · [docs/Cookbook.md](docs/Cookbook.md).
+- [ROADMAP.md](ROADMAP.md) · [BENCHMARKS.md](BENCHMARKS.md) · [SECURITY.md](SECURITY.md).
+
 ## Why this shape
 
 Most terminals are an application with a data layer inside. This one is a data
@@ -92,26 +114,6 @@ is actually about.
 - **Exact where it matters.** Prices and quantities are `Decimal` through the
   market layer, converted to `f64` only at the view-model edge, where they are
   drawn rather than compared.
-
-## Status
-
-**0.1.4 — the current release.** The core, both renderers, all ten language
-bindings, the indicator registry, the runtime source/symbol toggle, the panel
-set, the byte-exact golden corpus, property and fuzz tests, benchmarks and one
-runnable example per language are in place and green across the full CI matrix
-(10 languages x 3 OS). [ROADMAP.md](ROADMAP.md) has what is done, what is open
-and what is not planned.
-
-> **Read-only.** The terminal renders market data. It places no orders, holds no
-> credentials and keeps no position — the live source connects to public
-> endpoints with empty credentials. Execution is not a flag that is off; it is a
-> layer that is not built. See [THREAT_MODEL.md](THREAT_MODEL.md).
-
-## Documentation
-
-- [Architecture](ARCHITECTURE.md) — the core, the renderer split, the data-driven boundary.
-- [docs/INDICATORS.md](docs/INDICATORS.md) · [docs/PANELS.md](docs/PANELS.md) · [docs/SOURCES.md](docs/SOURCES.md) · [docs/RENDERERS.md](docs/RENDERERS.md) · [docs/STREAMING.md](docs/STREAMING.md) · [docs/Cookbook.md](docs/Cookbook.md).
-- [ROADMAP.md](ROADMAP.md) · [BENCHMARKS.md](BENCHMARKS.md) · [SECURITY.md](SECURITY.md).
 
 ## Quickstart
 
@@ -206,25 +208,6 @@ frame = json.loads(term.command(json.dumps({"type": "Tick"})))
 print(frame["panels"][0])          # the chart panel's view-model
 ```
 
-## Benchmarks
-
-The frame budget is dominated by the terminal's own CPU work — folding events and
-building view-models — not by rendering. Criterion medians on a Windows x86-64
-laptop, single-threaded, with the default two-indicator overlay:
-
-| Path | Median | Throughput |
-|------|--------|------------|
-| Fold one trade into state | 142 ns | ~7.0 M/s |
-| Apply an L2 depth diff | 107 ns | ~9.3 M/s |
-| Build all five panels' view-models | 8.9 µs | ~113 K/s |
-| One full tick (poll + fold + build) | 9.7 µs | ~103 K/s |
-| The same tick across the FFI boundary | 17.7 µs | ~56 K/s |
-
-A full tick costs about ten microseconds, so the core sustains a hundred thousand
-of frames per second — far above any renderer's budget, which is the point of the
-O(1) fold. The indicator count is a direct multiplier: those numbers are two
-indicators, and the registry offers <!--indicator-count-->497<!--/indicator-count-->. See [BENCHMARKS.md](BENCHMARKS.md).
-
 ## Project layout
 
 ```
@@ -306,6 +289,25 @@ python scripts/check_binding_surface.py     # every binding matches the C ABI he
 - Renderer/binding toolchains as needed: Node ≥ 22, Python ≥ 3.9, a C toolchain,
   .NET 8, JDK 22+, Go 1.23, R ≥ 4.1 — see each `bindings/<lang>/README.md`.
 
+## Benchmarks
+
+The frame budget is dominated by the terminal's own CPU work — folding events and
+building view-models — not by rendering. Criterion medians on a Windows x86-64
+laptop, single-threaded, with the default two-indicator overlay:
+
+| Path | Median | Throughput |
+|------|--------|------------|
+| Fold one trade into state | 142 ns | ~7.0 M/s |
+| Apply an L2 depth diff | 107 ns | ~9.3 M/s |
+| Build all five panels' view-models | 8.9 µs | ~113 K/s |
+| One full tick (poll + fold + build) | 9.7 µs | ~103 K/s |
+| The same tick across the FFI boundary | 17.7 µs | ~56 K/s |
+
+A full tick costs about ten microseconds, so the core sustains a hundred thousand
+of frames per second — far above any renderer's budget, which is the point of the
+O(1) fold. The indicator count is a direct multiplier: those numbers are two
+indicators, and the registry offers <!--indicator-count-->497<!--/indicator-count-->. See [BENCHMARKS.md](BENCHMARKS.md).
+
 ## Ecosystem
 
 Part of the [Wickra](https://github.com/wickra-lib/wickra) family — each one a
@@ -351,8 +353,20 @@ vulnerabilities privately — never in a public issue.
 
 ## License
 
-Dual-licensed under either [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at
-your option.
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or
+  <http://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
+
+at your option. Use it, fork it, modify it, redistribute it — commercially or
+not — file issues, send pull requests; all welcome.
+
+### Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
+dual licensed as above, without any additional terms or conditions.
 
 ## Disclaimer
 

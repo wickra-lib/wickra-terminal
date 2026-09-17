@@ -1,26 +1,23 @@
 <p align="center">
-  <a href="https://wickra.org"><img src="https://raw.githubusercontent.com/wickra-lib/.github/main/profile/wickra-banner.webp?v=514" alt="Wickra Terminal — the data-driven streaming trading terminal: one core in ten languages, a native TUI and a Web renderer" width="100%"></a>
+  <a href="https://wickra.org"><img src="https://raw.githubusercontent.com/wickra-lib/.github/main/profile/wickra-banner.webp?v=514-7" alt="Wickra Terminal — the data-driven streaming trading terminal: one core in ten languages, a native TUI and a Web renderer" width="100%"></a>
 </p>
 
-[![Built on Wickra](https://img.shields.io/badge/built%20on-wickra-3b82f6)](https://github.com/wickra-lib/wickra)
 [![CI](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/ci.svg)](https://github.com/wickra-lib/wickra-terminal/actions/workflows/ci.yml)
 [![codecov](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/codecov.svg)](https://codecov.io/gh/wickra-lib/wickra-terminal)
+[![PyPI](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/pypi.svg)](https://pypi.org/project/wickra-terminal/)
 [![License: MIT OR Apache-2.0](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/license.svg)](https://github.com/wickra-lib/wickra-terminal#license)
 
 # Wickra Terminal — Python
 
 ---
 
-> **▶ Web renderer:** the same core drives a browser front-end (WASM + Vue) as a second renderer — see [`web/`](https://github.com/wickra-lib/wickra-terminal/tree/main/web).
+> **▶ Live demo:** the Wickra library's own 514 indicators over real Binance market data, computed live in your browser — **[live.wickra.org](https://live.wickra.org)** · zero backend, powered by `wickra-wasm`.
+
+**One core. Ten languages. Two renderers — for Python. `pip install wickra-terminal` — prebuilt wheels for Linux, macOS and Windows, nothing to compile.**
 
 Python bindings for the [wickra-terminal](https://github.com/wickra-lib/wickra-terminal) data-driven core, built with
 PyO3. Build a `Terminal` from a JSON config, drive it with command JSON, read back
 frame view-models — the same protocol as the native TUI and every other binding.
-
-## Requirements
-
-- Python 3.9 or newer (one abi3 wheel covers every later minor)
-- No runtime dependencies
 
 ## Install
 
@@ -28,7 +25,22 @@ frame view-models — the same protocol as the native TUI and every other bindin
 pip install wickra-terminal
 ```
 
-## Usage
+Pre-built wheels ship for Linux, macOS and Windows — there is nothing to
+compile and no C library to track down.
+
+### Requirements
+
+- Python 3.9 or newer (one abi3 wheel covers every later minor)
+- No runtime dependencies
+
+### Building from this repository (contributors)
+
+```bash
+maturin develop --release
+pytest bindings/python/tests -q
+```
+
+## Quick start
 
 ```python
 import json
@@ -44,7 +56,7 @@ frame = json.loads(term.command(json.dumps({"type": "Tick"})))
 print(frame["panels"][0])
 ```
 
-## API
+### API
 
 | Name | Returns |
 |------|---------|
@@ -59,14 +71,7 @@ signatures instead of `Any`.
 A `Terminal` is bound to the thread that created it: it owns non-`Send` feed
 sources, so the pyclass is `unsendable`.
 
-## Build and test from source
-
-```bash
-maturin develop --release
-pytest bindings/python/tests -q
-```
-
-## The command protocol
+### The command protocol
 
 Every binding drives the same nineteen commands, and the frame that comes back is
 the same JSON in all of them:
@@ -97,33 +102,54 @@ A frame is `{"panels": [...]}`, one entry per configured panel, each tagged with
 its `panel` kind — `chart`, `book`, `tape`, `watchlist`, `footprint`, `profile`, `bars`. See
 [`docs/`](https://github.com/wickra-lib/wickra-terminal/tree/main/docs) for the panel and source references.
 
-## Cross-language equality
+### Cross-language equality
 
 The same config and the same command sequence produce a byte-identical frame in
 Rust, Python, Node.js, WASM, C, C++, C#, Go, Java and R. That is not an aspiration:
 [`golden/`](https://github.com/wickra-lib/wickra-terminal/tree/main/golden) holds a recorded feed and the expected frame,
 and every binding's test suite asserts its own output against that one file.
 
+## Benchmark
+
+`benchmarks/` reports this binding's throughput over the shared core. It measures
+the call overhead of PyO3, not a cross-library ratio (the same Rust core runs
+under every binding) — see the repository
+[BENCHMARKS.md](https://github.com/wickra-lib/wickra-terminal/blob/main/BENCHMARKS.md) for the
+numbers, the machine and how each harness is run.
+
 ## Documentation
+
+The full guide, the spec reference and the API documentation live in the main
+repository and the documentation site:
+
+- **Repository:** <https://github.com/wickra-lib/wickra-terminal>
+- **Docs** (guides, spec reference, cookbook): <https://terminal.wickra.org>
+- **Runnable example:** [`examples/python/`](https://github.com/wickra-lib/wickra-terminal/tree/main/examples/python)
 
 - **Repository:** <https://github.com/wickra-lib/wickra-terminal>
 - **Panels, sources, renderers, streaming:** [`docs/`](https://github.com/wickra-lib/wickra-terminal/tree/main/docs)
 - **Cookbook:** [`docs/Cookbook.md`](https://github.com/wickra-lib/wickra-terminal/blob/main/docs/Cookbook.md)
 - **Built on Wickra:** <https://github.com/wickra-lib/wickra> · <https://docs.wickra.org>
 
+Wickra Terminal ships native bindings for Python, Node.js, WASM and Rust, plus a C ABI hub that any
+C-capable language (C, C++, C#, Go, Java, R) links against — all forwarding to the
+same data-driven, `unsafe`-forbidden Rust core.
+
 ## Security
 
 Found a security issue? **Please don't open a public issue.** Report it privately
 via the repository's *Security* tab (*"Report a vulnerability"*) or email
-**support@wickra.org**. Full policy: <https://github.com/wickra-lib/wickra-terminal/blob/main/SECURITY.md>.
+**support@wickra.org** with a subject line starting `[wickra security]`. Full
+policy: <https://github.com/wickra-lib/wickra-terminal/blob/main/SECURITY.md>.
 
 ## Disclaimer
 
-Not a trading system, and not financial advice. The terminal renders market data
-and derived view-models; what you do with them is your own risk. Provided **as
-is**, without warranty of any kind.
+This software is provided "as is", without warranty of any kind. It is a research
+and engineering tool, **not financial advice**. Trading carries risk of loss. Run
+in paper mode and against exchange testnets, and review the code before risking
+real capital.
 
 ## License
 
-Dual-licensed under [MIT](https://github.com/wickra-lib/wickra-terminal/blob/main/LICENSE-MIT) or
-[Apache-2.0](https://github.com/wickra-lib/wickra-terminal/blob/main/LICENSE-APACHE), at your option.
+Licensed under either of [Apache-2.0](https://github.com/wickra-lib/wickra-terminal/blob/main/LICENSE-APACHE)
+or [MIT](https://github.com/wickra-lib/wickra-terminal/blob/main/LICENSE-MIT) at your option.

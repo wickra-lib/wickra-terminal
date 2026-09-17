@@ -23,7 +23,7 @@ expected file. Adding a scenario is one entry in `SCENARIOS` in
 `crates/wickra-terminal-core/tests/golden.rs` plus a regeneration — no binding test
 changes, in any language.
 
-## The files
+## Layout
 
 - `configs/<name>.json` — the complete `Terminal::new` config, so a binding
   builds the identical terminal from one file with no JSON assembly.
@@ -83,7 +83,7 @@ the most. It now walks the manifest like the others, and like the Java and R
 suites it does so by splitting on the quote character rather than linking a JSON
 parser, which is the whole reason every manifest value is a plain path.
 
-## Regenerating
+## Blessing
 
 After an intentional change to the state fold or the view-model schema:
 
