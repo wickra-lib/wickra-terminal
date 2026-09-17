@@ -2,16 +2,18 @@
   <a href="https://wickra.org"><img src="https://raw.githubusercontent.com/wickra-lib/.github/main/profile/wickra-banner.webp?v=514" alt="Wickra Terminal — the data-driven streaming trading terminal: one core in ten languages, a native TUI and a Web renderer" width="100%"></a>
 </p>
 
-[![Built on Wickra](https://img.shields.io/badge/built%20on-wickra-3b82f6)](https://github.com/wickra-lib/wickra)
 [![CI](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/ci.svg)](https://github.com/wickra-lib/wickra-terminal/actions/workflows/ci.yml)
 [![codecov](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/codecov.svg)](https://codecov.io/gh/wickra-lib/wickra-terminal)
+[![GitHub release](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/release.svg)](https://github.com/wickra-lib/wickra-terminal/releases/latest)
 [![License: MIT OR Apache-2.0](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/license.svg)](https://github.com/wickra-lib/wickra-terminal#license)
 
 # Wickra Terminal — C / C++
 
 ---
 
-> **▶ Web renderer:** the same core drives a browser front-end (WASM + Vue) as a second renderer — see [`web/`](https://github.com/wickra-lib/wickra-terminal/tree/main/web).
+> **▶ Live demo:** the Wickra library's own 514 indicators over real Binance market data, computed live in your browser — **[live.wickra.org](https://live.wickra.org)** · zero backend, powered by `wickra-wasm`.
+
+**One core. Ten languages. Two renderers — for C / C++. `cargo build -p wickra-terminal-c --release` — a prebuilt shared/static library plus a generated `wickra_terminal.h`, no system dependencies.**
 
 The C ABI hub for [wickra-terminal](https://github.com/wickra-lib/wickra-terminal): a `cdylib` + `staticlib` that every
 C-capable language (C, C++, C#, Go, Java, R) links against. The surface is a
@@ -26,13 +28,103 @@ optional `wickra_terminal.hpp` wraps it in a move-only RAII `Terminal` for
 exception-safe C++ lifetimes. Both travel in the same release artefact, so a
 consumer downloading the ABI gets the ownership layer with it.
 
-## Requirements
+## Install
+
+Grab the prebuilt header + library for your platform from the
+[GitHub releases](https://github.com/wickra-lib/wickra-terminal/releases) — each archive
+has `wickra_terminal.h`, the C++ wrapper where the binding ships one, and the shared/static
+library — or build from source:
+
+```bash
+cargo build -p wickra-terminal-c --release
+# -> target/release/libwickra_terminal.{so,dylib} or wickra_terminal.dll (+ import lib) + a staticlib
+```
+
+Then compile against the header and link the library.
+
+### Requirements
 
 - A C99 compiler (the header is `cpp_compat`, so C++ links against it unchanged)
 - A C++17 compiler, for the optional `wickra_terminal.hpp`
 - `cbindgen` to regenerate the header
 
-## Surface
+### Building from this repository (contributors)
+
+**Build.**
+
+```bash
+cargo build -p wickra-terminal-c --release
+```
+
+The library is named `wickra_terminal` (`.dll` / `.so` / `.dylib`, plus a
+`.a`/`.lib` static library) under `target/release/`.
+
+The header is generated and committed. Regenerate it with:
+
+```bash
+cbindgen --config bindings/c/cbindgen.toml --crate wickra-terminal-c \
+  --output bindings/c/include/wickra_terminal.h
+```
+
+`.github/scripts/check-cbindgen.sh` verifies the committed header still matches
+the Rust surface; CI runs the same script, and it skips cleanly if `cbindgen` is
+not installed.
+
+`wickra_terminal.hpp` is hand-written rather than generated, so it is not part of
+that check — `scripts/check_binding_surface.py` holds it to the ABI instead, the
+same way it holds every other language to it.
+
+The C and C++ examples build from one CMake project:
+
+```bash
+cmake -S examples/c -B examples/c/build
+cmake --build examples/c/build --config Release
+```
+
+**Test.**
+
+```bash
+cargo test -p wickra-terminal-c
+ctest --test-dir examples/c/build -C Release --output-on-failure
+```
+
+Nine tests, four of them C++: `terminal` drives the API, `golden_cpp` replays
+the shared corpus through it, `streaming_test_cpp` checks that streaming a feed
+and re-folding it in one batch reach byte-identical frames, and `lifetime`
+checks the ownership rules — that copying is rejected at compile time, that a
+moved-from terminal is empty and throws, that 500 failed commands leave the
+terminal usable, and that a failure carries the ABI's message rather than a
+placeholder.
+
+They live under `examples/c/` rather than beside this README, and that is
+deliberate. The C++ surface is a header inside this binding, so its tests link
+the same library the C tests link and one CMake project builds both — which is
+also what the repository blueprint prescribes: *`examples/c/CMakeLists.txt`
+builds the C and the C++ variants*. Compiling them the way a consumer compiles
+them is the point.
+
+## Quick start
+
+```c
+WickraTerminal *t = wickra_terminal_new(
+    "{\"sources\":[{\"Synth\":{\"seed\":1}}],"
+    "\"layout\":{\"panels\":[{\"kind\":\"Chart\",\"rect\":{\"x\":0,\"y\":0,\"w\":100,\"h\":100}}]}}");
+
+char *out = NULL;
+wickra_terminal_command(t, "{\"type\":\"Subscribe\",\"source\":0,\"symbol\":\"BTC/USDT\"}", &out);
+wickra_terminal_free_string(out);
+
+wickra_terminal_command(t, "{\"type\":\"Tick\"}", &out); /* out = frame JSON */
+printf("%s\n", out);
+wickra_terminal_free_string(out);
+
+wickra_terminal_free(t);
+```
+
+A runnable C and C++ example lives in [`examples/c/`](https://github.com/wickra-lib/wickra-terminal/tree/main/examples/c),
+built and run in CI on all three platforms via CMake and ctest.
+
+### Surface
 
 ```c
 #include "wickra_terminal.h"
@@ -60,28 +152,7 @@ const char     *wickra_terminal_version(void); /* static — do not free */
   it. A test reads this crate's own source and fails if an entry point is
   added without one.
 
-## Example
-
-```c
-WickraTerminal *t = wickra_terminal_new(
-    "{\"sources\":[{\"Synth\":{\"seed\":1}}],"
-    "\"layout\":{\"panels\":[{\"kind\":\"Chart\",\"rect\":{\"x\":0,\"y\":0,\"w\":100,\"h\":100}}]}}");
-
-char *out = NULL;
-wickra_terminal_command(t, "{\"type\":\"Subscribe\",\"source\":0,\"symbol\":\"BTC/USDT\"}", &out);
-wickra_terminal_free_string(out);
-
-wickra_terminal_command(t, "{\"type\":\"Tick\"}", &out); /* out = frame JSON */
-printf("%s\n", out);
-wickra_terminal_free_string(out);
-
-wickra_terminal_free(t);
-```
-
-A runnable C and C++ example lives in [`examples/c/`](https://github.com/wickra-lib/wickra-terminal/tree/main/examples/c),
-built and run in CI on all three platforms via CMake and ctest.
-
-## C++: the ownership layer
+### C++: the ownership layer
 
 C++ can call the ABI directly — `wickra_terminal.h` is already
 `extern "C"`-guarded — and for a long time that was the whole C++ story. What it
@@ -154,60 +225,7 @@ int main() {
 `CMAKE_CXX_STANDARD` is 17; the header uses a nested namespace and
 `[[nodiscard]]`.
 
-## Build
-
-```bash
-cargo build -p wickra-terminal-c --release
-```
-
-The library is named `wickra_terminal` (`.dll` / `.so` / `.dylib`, plus a
-`.a`/`.lib` static library) under `target/release/`.
-
-The header is generated and committed. Regenerate it with:
-
-```bash
-cbindgen --config bindings/c/cbindgen.toml --crate wickra-terminal-c \
-  --output bindings/c/include/wickra_terminal.h
-```
-
-`.github/scripts/check-cbindgen.sh` verifies the committed header still matches
-the Rust surface; CI runs the same script, and it skips cleanly if `cbindgen` is
-not installed.
-
-`wickra_terminal.hpp` is hand-written rather than generated, so it is not part of
-that check — `scripts/check_binding_surface.py` holds it to the ABI instead, the
-same way it holds every other language to it.
-
-The C and C++ examples build from one CMake project:
-
-```bash
-cmake -S examples/c -B examples/c/build
-cmake --build examples/c/build --config Release
-```
-
-## Test
-
-```bash
-cargo test -p wickra-terminal-c
-ctest --test-dir examples/c/build -C Release --output-on-failure
-```
-
-Nine tests, four of them C++: `terminal` drives the API, `golden_cpp` replays
-the shared corpus through it, `streaming_test_cpp` checks that streaming a feed
-and re-folding it in one batch reach byte-identical frames, and `lifetime`
-checks the ownership rules — that copying is rejected at compile time, that a
-moved-from terminal is empty and throws, that 500 failed commands leave the
-terminal usable, and that a failure carries the ABI's message rather than a
-placeholder.
-
-They live under `examples/c/` rather than beside this README, and that is
-deliberate. The C++ surface is a header inside this binding, so its tests link
-the same library the C tests link and one CMake project builds both — which is
-also what the repository blueprint prescribes: *`examples/c/CMakeLists.txt`
-builds the C and the C++ variants*. Compiling them the way a consumer compiles
-them is the point.
-
-## The command protocol
+### The command protocol
 
 Every binding drives the same nineteen commands, and the frame that comes back is
 the same JSON in all of them:
@@ -238,33 +256,54 @@ A frame is `{"panels": [...]}`, one entry per configured panel, each tagged with
 its `panel` kind — `chart`, `book`, `tape`, `watchlist`, `footprint`, `profile`, `bars`. See
 [`docs/`](https://github.com/wickra-lib/wickra-terminal/tree/main/docs) for the panel and source references.
 
-## Cross-language equality
+### Cross-language equality
 
 The same config and the same command sequence produce a byte-identical frame in
 Rust, Python, Node.js, WASM, C, C++, C#, Go, Java and R. That is not an aspiration:
 [`golden/`](https://github.com/wickra-lib/wickra-terminal/tree/main/golden) holds a recorded feed and the expected frame,
 and every binding's test suite asserts its own output against that one file.
 
+## Benchmark
+
+`benchmarks/` reports this binding's throughput over the shared core. It measures
+the call overhead of the C ABI itself, not a cross-library ratio (the same Rust core runs
+under every binding) — see the repository
+[BENCHMARKS.md](https://github.com/wickra-lib/wickra-terminal/blob/main/BENCHMARKS.md) for the
+numbers, the machine and how each harness is run.
+
 ## Documentation
+
+The full guide, the spec reference and the API documentation live in the main
+repository and the documentation site:
+
+- **Repository:** <https://github.com/wickra-lib/wickra-terminal>
+- **Docs** (guides, spec reference, cookbook): <https://terminal.wickra.org>
+- **Runnable example:** [`examples/c/`](https://github.com/wickra-lib/wickra-terminal/tree/main/examples/c)
 
 - **Repository:** <https://github.com/wickra-lib/wickra-terminal>
 - **Panels, sources, renderers, streaming:** [`docs/`](https://github.com/wickra-lib/wickra-terminal/tree/main/docs)
 - **Cookbook:** [`docs/Cookbook.md`](https://github.com/wickra-lib/wickra-terminal/blob/main/docs/Cookbook.md)
 - **Built on Wickra:** <https://github.com/wickra-lib/wickra> · <https://docs.wickra.org>
 
+Wickra Terminal ships native bindings for Python, Node.js, WASM and Rust, plus a C ABI hub that any
+C-capable language (C, C++, C#, Go, Java, R) links against — all forwarding to the
+same data-driven, `unsafe`-forbidden Rust core.
+
 ## Security
 
 Found a security issue? **Please don't open a public issue.** Report it privately
 via the repository's *Security* tab (*"Report a vulnerability"*) or email
-**support@wickra.org**. Full policy: <https://github.com/wickra-lib/wickra-terminal/blob/main/SECURITY.md>.
+**support@wickra.org** with a subject line starting `[wickra security]`. Full
+policy: <https://github.com/wickra-lib/wickra-terminal/blob/main/SECURITY.md>.
 
 ## Disclaimer
 
-Not a trading system, and not financial advice. The terminal renders market data
-and derived view-models; what you do with them is your own risk. Provided **as
-is**, without warranty of any kind.
+This software is provided "as is", without warranty of any kind. It is a research
+and engineering tool, **not financial advice**. Trading carries risk of loss. Run
+in paper mode and against exchange testnets, and review the code before risking
+real capital.
 
 ## License
 
-Dual-licensed under [MIT](https://github.com/wickra-lib/wickra-terminal/blob/main/LICENSE-MIT) or
-[Apache-2.0](https://github.com/wickra-lib/wickra-terminal/blob/main/LICENSE-APACHE), at your option.
+Licensed under either of [Apache-2.0](https://github.com/wickra-lib/wickra-terminal/blob/main/LICENSE-APACHE)
+or [MIT](https://github.com/wickra-lib/wickra-terminal/blob/main/LICENSE-MIT) at your option.

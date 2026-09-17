@@ -83,7 +83,7 @@ the most. It now walks the manifest like the others, and like the Java and R
 suites it does so by splitting on the quote character rather than linking a JSON
 parser, which is the whole reason every manifest value is a plain path.
 
-## Regenerating
+## Blessing
 
 After an intentional change to the state fold or the view-model schema:
 

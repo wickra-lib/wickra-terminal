@@ -1,17 +1,19 @@
 <p align="center">
-  <a href="https://wickra.org"><img src="https://raw.githubusercontent.com/wickra-lib/.github/main/profile/wickra-banner.webp?v=514" alt="Wickra Terminal — the data-driven trading terminal for WebAssembly" width="100%"></a>
+  <a href="https://wickra.org"><img src="https://raw.githubusercontent.com/wickra-lib/.github/main/profile/wickra-banner.webp?v=514" alt="Wickra Terminal — the data-driven streaming trading terminal: one core in ten languages, a native TUI and a Web renderer" width="100%"></a>
 </p>
 
-[![Built on Wickra](https://img.shields.io/badge/built%20on-wickra-3b82f6)](https://github.com/wickra-lib/wickra)
 [![CI](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/ci.svg)](https://github.com/wickra-lib/wickra-terminal/actions/workflows/ci.yml)
 [![codecov](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/codecov.svg)](https://codecov.io/gh/wickra-lib/wickra-terminal)
+[![npm](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/npm.svg)](https://www.npmjs.com/package/wickra-terminal-wasm)
 [![License: MIT OR Apache-2.0](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/license.svg)](https://github.com/wickra-lib/wickra-terminal#license)
 
 # Wickra Terminal — WASM
 
 ---
 
-> **▶ Web renderer:** the same core drives a browser front-end (WASM + Vue) as a second renderer — see [`web/`](https://github.com/wickra-lib/wickra-terminal/tree/main/web).
+> **▶ Live demo:** the Wickra library's own 514 indicators over real Binance market data, computed live in your browser — **[live.wickra.org](https://live.wickra.org)** · zero backend, powered by `wickra-wasm`.
+
+**One core. Ten languages. Two renderers — for WASM. `npm install wickra-terminal-wasm` — pure WebAssembly, runs anywhere a modern JS engine does.**
 
 WebAssembly bindings for the [wickra-terminal](https://github.com/wickra-lib/wickra-terminal) data-driven core, built
 with wasm-bindgen. This is the binding the web renderer runs on: build a
@@ -23,12 +25,20 @@ feature is disabled here. The web renderer opens its own WebSocket and hands the
 events in through the `Feed` command, which is why `Feed` matters more to this
 binding than to any other.
 
-## Requirements
+## Install
+
+```bash
+npm install wickra-terminal-wasm
+```
+
+### Requirements
 
 - `wasm-pack` and the `wasm32-unknown-unknown` target
 - A bundler or an ES-module-capable browser for the `web` target
 
-## Build
+### Building from this repository (contributors)
+
+**Build.**
 
 ```bash
 wasm-pack build bindings/wasm --target web                        # for the browser
@@ -38,7 +48,13 @@ wasm-pack build bindings/wasm --target nodejs --out-dir pkg-node  # for the test
 The `web` target is what [`web/`](https://github.com/wickra-lib/wickra-terminal/tree/main/web) imports; the `nodejs`
 target is the only form `require()` can load, which is what the tests run against.
 
-## Usage (browser)
+**Test.**
+
+```bash
+node --test bindings/wasm/tests/*.test.cjs
+```
+
+## Quick start
 
 ```js
 import init, { Terminal, version } from "./pkg/wickra_terminal_wasm.js";
@@ -55,7 +71,7 @@ const frame = JSON.parse(term.command(JSON.stringify({ type: "Tick" })));
 console.log(frame.panels[0], version());
 ```
 
-## API
+### API
 
 | Name | Returns |
 |------|---------|
@@ -70,13 +86,7 @@ finaliser, so a terminal dropped without it leaks its linear-memory allocation
 for the lifetime of the page. Anything that rebuilds a terminal — a config
 change, a source swap — must release the old one.
 
-## Test
-
-```bash
-node --test bindings/wasm/tests/*.test.cjs
-```
-
-## The command protocol
+### The command protocol
 
 Every binding drives the same nineteen commands, and the frame that comes back is
 the same JSON in all of them:
@@ -107,33 +117,54 @@ A frame is `{"panels": [...]}`, one entry per configured panel, each tagged with
 its `panel` kind — `chart`, `book`, `tape`, `watchlist`, `footprint`, `profile`, `bars`. See
 [`docs/`](https://github.com/wickra-lib/wickra-terminal/tree/main/docs) for the panel and source references.
 
-## Cross-language equality
+### Cross-language equality
 
 The same config and the same command sequence produce a byte-identical frame in
 Rust, Python, Node.js, WASM, C, C++, C#, Go, Java and R. That is not an aspiration:
 [`golden/`](https://github.com/wickra-lib/wickra-terminal/tree/main/golden) holds a recorded feed and the expected frame,
 and every binding's test suite asserts its own output against that one file.
 
+## Benchmark
+
+`benchmarks/` reports this binding's throughput over the shared core. It measures
+the call overhead of wasm-bindgen, not a cross-library ratio (the same Rust core runs
+under every binding) — see the repository
+[BENCHMARKS.md](https://github.com/wickra-lib/wickra-terminal/blob/main/BENCHMARKS.md) for the
+numbers, the machine and how each harness is run.
+
 ## Documentation
+
+The full guide, the spec reference and the API documentation live in the main
+repository and the documentation site:
+
+- **Repository:** <https://github.com/wickra-lib/wickra-terminal>
+- **Docs** (guides, spec reference, cookbook): <https://terminal.wickra.org>
+- **Runnable example:** [`examples/wasm/`](https://github.com/wickra-lib/wickra-terminal/tree/main/examples/wasm)
 
 - **Repository:** <https://github.com/wickra-lib/wickra-terminal>
 - **Panels, sources, renderers, streaming:** [`docs/`](https://github.com/wickra-lib/wickra-terminal/tree/main/docs)
 - **Cookbook:** [`docs/Cookbook.md`](https://github.com/wickra-lib/wickra-terminal/blob/main/docs/Cookbook.md)
 - **Built on Wickra:** <https://github.com/wickra-lib/wickra> · <https://docs.wickra.org>
 
+Wickra Terminal ships native bindings for Python, Node.js, WASM and Rust, plus a C ABI hub that any
+C-capable language (C, C++, C#, Go, Java, R) links against — all forwarding to the
+same data-driven, `unsafe`-forbidden Rust core.
+
 ## Security
 
 Found a security issue? **Please don't open a public issue.** Report it privately
 via the repository's *Security* tab (*"Report a vulnerability"*) or email
-**support@wickra.org**. Full policy: <https://github.com/wickra-lib/wickra-terminal/blob/main/SECURITY.md>.
+**support@wickra.org** with a subject line starting `[wickra security]`. Full
+policy: <https://github.com/wickra-lib/wickra-terminal/blob/main/SECURITY.md>.
 
 ## Disclaimer
 
-Not a trading system, and not financial advice. The terminal renders market data
-and derived view-models; what you do with them is your own risk. Provided **as
-is**, without warranty of any kind.
+This software is provided "as is", without warranty of any kind. It is a research
+and engineering tool, **not financial advice**. Trading carries risk of loss. Run
+in paper mode and against exchange testnets, and review the code before risking
+real capital.
 
 ## License
 
-Dual-licensed under [MIT](https://github.com/wickra-lib/wickra-terminal/blob/main/LICENSE-MIT) or
-[Apache-2.0](https://github.com/wickra-lib/wickra-terminal/blob/main/LICENSE-APACHE), at your option.
+Licensed under either of [Apache-2.0](https://github.com/wickra-lib/wickra-terminal/blob/main/LICENSE-APACHE)
+or [MIT](https://github.com/wickra-lib/wickra-terminal/blob/main/LICENSE-MIT) at your option.

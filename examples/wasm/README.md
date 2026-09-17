@@ -1,42 +1,43 @@
-# Wickra Terminal WASM example
+# Wickra Terminal WASM examples
 
-The shortest program that drives the terminal core from a browser: no build
-tool, no framework, one HTML file that loads the module and issues commands.
-
-The full Web renderer lives in [`web/`](../../web/) and is what you want if you
-are looking for the product. This is what you want if you are looking for the
-*shape* — how a page opens a terminal, subscribes a market and reads a frame.
+Browser demos for the [Wickra Terminal WASM binding](../../bindings/wasm): an HTML page whose module script
+loads the package the same way (`init()`, then construct), builds the same
+object every other binding builds and prints the same output into the page, so
+the pattern transfers one-to-one to your own page.
 
 ## Build
 
-The module ships as a `wasm-pack` `--target web` bundle. Build it once from the
-repository root:
+The WASM module ships as a `wasm-pack` `--target web` bundle. Build it once from
+the repository root:
 
 ```bash
-wasm-pack build bindings/wasm --target web --out-dir pkg
+wasm-pack build bindings/wasm --target web
 ```
-
-That drops `bindings/wasm/pkg/` with the `.wasm` binary, the JS loader and the
-TypeScript types. The page imports the loader via
-`../../bindings/wasm/pkg/wickra_terminal_wasm.js`.
 
 ## Serve
 
-An ES-module script needs a real HTTP origin; `file://` will not load it. Any
-static server from the repository root works:
+ES modules and `fetch()` both need a real HTTP origin, not `file://`. Any static
+server from the repository root works:
 
 ```bash
+# Python:
 python -m http.server 8000
-# then open http://localhost:8000/examples/wasm/
+
+# Or Node:
+npx http-server -p 8000
 ```
 
-## What it shows
+Then open the demo at `http://localhost:8000/examples/wasm/<file>`. CI cannot open
+a browser; it extracts the `<script type="module">` and parses it with
+`node --check`, so a broken edit fails there rather than in a reader's tab.
 
-A recorded feed rather than a synthetic one, deliberately: the page plays it to
-the end, then rewinds to the second trade and shows the frame the forward pass
-had at that point. That is the time-machine, and it is the thing a browser
-cannot fake — `Seek` throws the folded state away and rebuilds it from the
-recording, in WebAssembly, with no engine behind it.
+## Demos
 
-The same three calls the native TUI makes: construct from a config, apply a
-command, read the frame that comes back.
+| Demo | What it shows |
+|------|---------------|
+| `index.html` | A runnable example against this binding. |
+
+## See also
+
+- [`bindings/wasm/README.md`](../../bindings/wasm/README.md) — install, quick start and the API of the package.
+- [`examples/README.md`](../README.md) — the same example in every other language.

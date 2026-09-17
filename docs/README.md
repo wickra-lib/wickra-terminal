@@ -39,3 +39,11 @@ release behind would be worse than none:
 
 Anything that is *not* one of those — quickstarts, prose, the pitch — belongs on
 the site. Do not start a second documentation tree here.
+
+## Editing the docs
+
+The documentation site is a separate git repository at
+`https://github.com/wickra-lib/wickra-terminal-site`. Open a pull request there to
+propose changes; the site is built with VitePress and deploys to
+`terminal.wickra.org`. The files in this directory change in the same commit as
+the code they describe.

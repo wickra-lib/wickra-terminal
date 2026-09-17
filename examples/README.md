@@ -1,39 +1,92 @@
-# Examples
+# Wickra Terminal examples
 
 Two scenarios, in every language.
 
-**`synth`** opens a deterministic `Synth` source, subscribes `BTC/USDT`, ticks
-the terminal a few times and prints a frame of view-models — the shortest
-program that drives the core.
+## Rust — `examples/rust/`
 
-**`time_machine`** plays a recorded feed to its end, rewinds to the second
-trade, and shows the frame the forward pass had at that point. `Seek` throws the
-folded state away and rebuilds it from the recording, so a rewind is
-deterministic rather than approximate — which is what makes a recording more
-than a slow synthetic feed, and it is the one capability a reader cannot guess
-from the first scenario.
+| Example | What it does |
+| --- | --- |
+| `src/main.rs` | A runnable Rust example: drive a synthetic feed and print a frame. |
 
-Neither is language-specific. Both are the same JSON commands over the same
-three calls; what differs between the files is only how each language spells
-them.
+## C / C++ — `examples/c/`
 
-| Language | `synth` | `time_machine` |
-|----------|---------|----------------|
-| Rust | `cargo run -p wickra-terminal-example --bin synth` | `cargo run -p wickra-terminal-example --bin time_machine` |
-| C | [`c/synth.c`](c/synth.c) | [`c/time_machine.c`](c/time_machine.c) |
-| C++ | [`c/terminal.cpp`](c/terminal.cpp) | (the C example, through the same ABI) |
-| Python | `python examples/python/synth_terminal.py` | `python examples/python/time_machine.py` |
-| Node.js | `node examples/node/synth_terminal.js` | `node examples/node/time_machine.js` |
-| WASM | [`wasm/`](wasm/) | (the same page — press *Rewind*) |
-| Go | `cd examples/go && go run .` | `cd examples/go && go run . time-machine` |
-| C# | `dotnet run --project examples/csharp` | `dotnet run --project examples/csharp -- time-machine` |
-| Java | [`java/SynthTerminal.java`](java/SynthTerminal.java) | [`java/TimeMachine.java`](java/TimeMachine.java) |
-| R | `Rscript examples/r/synth_terminal.R` | `Rscript examples/r/time_machine.R` |
+Build the library first (`cargo build -p wickra-terminal-c --release`), then build and run
+the examples via CMake, as the CI C ABI job does:
 
-Go and C# select the scenario with an argument rather than putting it in a
-directory of its own. Go allows one `main` per package, and the C# project file
-carries forty lines of native-library plumbing that would go stale in a second
-copy — one program with two scenarios is the honest shape for both.
+```bash
+cmake -S examples/c -B examples/c/build
+cmake --build examples/c/build --config Release
+ctest --test-dir examples/c/build -C Release --output-on-failure
+```
+
+| Example | What it does |
+| --- | --- |
+| `lifetime.cpp` | Lifetime tests for the C++ RAII header. |
+| `synth.c` | A minimal C example: drive a synthetic feed and print a frame. |
+| `terminal.cpp` | A C++ example, over the shipped RAII header. |
+| `time_machine.c` | A runnable C example: rewind a recorded feed and watch state re-fold. |
+
+## C# — `examples/csharp/`
+
+| Example | What it does |
+| --- | --- |
+| `Program.cs` | A runnable C# example: drive a synthetic feed and print a frame. |
+| `TimeMachine.cs` | A runnable example against this binding. |
+
+## Go — `examples/go/`
+
+| Example | What it does |
+| --- | --- |
+| `synth_terminal.go` | A runnable Go example: drive a synthetic feed and print a frame. |
+| `time_machine.go` | The time-machine scenario: rewind a recorded feed and watch state re-fold. |
+
+## R — `examples/r/`
+
+| Example | What it does |
+| --- | --- |
+| `synth_terminal.R` | A runnable R example: drive a synthetic feed and print a frame. |
+| `time_machine.R` | A runnable example against this binding. |
+
+## Java — `examples/java/`
+
+| Example | What it does |
+| --- | --- |
+| `SynthTerminal.java` | A runnable Java example: drive a synthetic feed and print a frame. |
+| `TimeMachine.java` | A runnable Java example: rewind a recorded feed and watch state re-fold. |
+
+## Python — `examples/python/`
+
+| Example | What it does |
+| --- | --- |
+| `synth_terminal.py` | A runnable Python example: drive a synthetic feed and print a frame. |
+| `time_machine.py` | A runnable Python example: rewind a recorded feed and watch state re-fold. |
+
+## Node.js — `examples/node/`
+
+| Example | What it does |
+| --- | --- |
+| `synth_terminal.js` | A runnable Node.js example: drive a synthetic feed and print a frame. |
+| `time_machine.js` | A runnable Node example: rewind a recorded feed and watch state re-fold. |
+
+## WASM — `examples/wasm/`
+
+Build the WASM package, serve the repository root, and open the page in a browser;
+the module script inside it is what runs (CI parses it with `node --check`):
+
+```bash
+wasm-pack build bindings/wasm --target web
+python -m http.server 8000     # then open http://localhost:8000/examples/wasm/
+```
+
+| Example | What it does |
+| --- | --- |
+| `index.html` | A runnable example against this binding. |
+
+## Example datasets
+
+The examples are self-contained: the spec and the input are inline, so there is
+no shared `data/` directory to load. The cross-language golden fixtures, which
+every binding is checked against byte for byte, live in [`../golden/`](../golden).
 
 ## Building the native library
 
@@ -42,64 +95,6 @@ The C, Go, C#, Java and R examples link the `wickra_terminal` C ABI:
 ```bash
 cargo build --release -p wickra-terminal-c
 ```
-
-## C / C++
-
-```bash
-cmake -S examples/c -B examples/c/build
-cmake --build examples/c/build --config Release
-ctest --test-dir examples/c/build -C Release --output-on-failure
-```
-
-The CMake build copies the runtime DLL next to each executable on Windows and
-caps each test's timeout, so a missing dependency fails fast instead of hanging.
-
-## Go
-
-cgo links the library from `bindings/go/lib/<goos>_<goarch>/`, which CI stages
-from the release build. Stage it once and the example runs from anywhere:
-
-```bash
-mkdir -p bindings/go/lib/linux_amd64        # or darwin_arm64, windows_amd64, ...
-cp target/release/libwickra_terminal.so bindings/go/lib/linux_amd64/
-cd examples/go && go run .
-```
-
-## C#
-
-The project copies the native library beside the executable, so there is
-nothing to stage:
-
-```bash
-dotnet run --project examples/csharp
-```
-
-## Java
-
-FFM needs `--enable-native-access`, and the library directory is a system
-property rather than a path lookup:
-
-```bash
-mvn -f bindings/java/pom.xml -q package -DskipTests
-javac -cp bindings/java/target/classes examples/java/SynthTerminal.java -d examples/java/out
-java --enable-native-access=ALL-UNNAMED -Dnative.lib.dir=target/release \
-     -cp "bindings/java/target/classes:examples/java/out" SynthTerminal
-```
-
-The classpath separator is `:` on Linux and macOS and `;` on Windows.
-
-## R
-
-`WKTERM_INC` and `WKTERM_LIB` point the package at a local build instead of a
-downloaded release asset:
-
-```bash
-export WKTERM_INC="$PWD/bindings/c/include" WKTERM_LIB="$PWD/target/release"
-R CMD INSTALL bindings/r
-Rscript examples/r/synth_terminal.R
-```
-
-On Windows the library directory also has to be on `PATH` for the DLL to load.
 
 ## Python / Node.js
 
