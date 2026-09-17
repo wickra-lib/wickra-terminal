@@ -23,7 +23,7 @@ expected file. Adding a scenario is one entry in `SCENARIOS` in
 `crates/wickra-terminal-core/tests/golden.rs` plus a regeneration — no binding test
 changes, in any language.
 
-## The files
+## Layout
 
 - `configs/<name>.json` — the complete `Terminal::new` config, so a binding
   builds the identical terminal from one file with no JSON assembly.

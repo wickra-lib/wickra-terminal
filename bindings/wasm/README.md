@@ -57,7 +57,7 @@ node --test bindings/wasm/tests/*.test.cjs
 ## Quick start
 
 ```js
-import init, { Terminal, version } from "./pkg/wickra_terminal_wasm.js";
+import init, { Terminal, version } from "wickra-terminal-wasm";
 
 await init();
 
