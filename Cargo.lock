@@ -3004,7 +3004,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -3710,9 +3710,9 @@ dependencies = [
 
 [[package]]
 name = "wickra-exchange"
-version = "0.1.5"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b220f0a78613125e1bb22fcf1fe5e436001f4ffc4e6c531073a8dbc5138483e"
+checksum = "c7dcf3533a43331e332f755a377a5e98bf4d8bac459a793150067fdfba008f2c"
 dependencies = [
  "flate2",
  "futures-util",
@@ -3724,9 +3724,9 @@ dependencies = [
 
 [[package]]
 name = "wickra-exchange-core"
-version = "0.1.5"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e3b9f03c4f79d94ef9d2e8a59b91ddb22685c07933836dcc9fa7b567f2e5971"
+checksum = "63c62c6c64d143f955b0f36225de3d28b33bc364d9c6c20cc06fd097ac5b4c62"
 dependencies = [
  "base64",
  "hex",
@@ -3744,7 +3744,7 @@ dependencies = [
 
 [[package]]
 name = "wickra-terminal"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "clap",
  "crossterm",
@@ -3754,7 +3754,7 @@ dependencies = [
 
 [[package]]
 name = "wickra-terminal-bench"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "codspeed-criterion-compat",
  "rust_decimal",
@@ -3764,14 +3764,14 @@ dependencies = [
 
 [[package]]
 name = "wickra-terminal-c"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "wickra-terminal-core",
 ]
 
 [[package]]
 name = "wickra-terminal-core"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "proptest",
  "rust_decimal",
@@ -3787,14 +3787,14 @@ dependencies = [
 
 [[package]]
 name = "wickra-terminal-example"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "wickra-terminal-core",
 ]
 
 [[package]]
 name = "wickra-terminal-node"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "napi",
  "napi-build",
@@ -3804,7 +3804,7 @@ dependencies = [
 
 [[package]]
 name = "wickra-terminal-python"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "pyo3",
  "wickra-terminal-core",
@@ -3812,7 +3812,7 @@ dependencies = [
 
 [[package]]
 name = "wickra-terminal-wasm"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "getrandom 0.2.17",
  "getrandom 0.3.4",
