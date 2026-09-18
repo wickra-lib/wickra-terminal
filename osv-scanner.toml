@@ -26,6 +26,3 @@
 # suppression matching nothing only hides the next real finding. OSV-Scanner and
 # Scorecard read the lockfile instead, which is why the record is needed here and
 # only here.
-[[IgnoredVulns]]
-id = "RUSTSEC-2026-0235"
-reason = "rkyv is a lockfile-only entry behind an optional rust_decimal feature this workspace does not enable; it is never compiled."
