@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-09-18
+
 ### Changed
 
+- **Family pins follow the owners' releases:** wickra-exchange =0.1.5 -> =0.1.6, wickra-exchange-core =0.1.5 -> =0.1.6. No code of this repository changes; the engine it links is the one those releases ship.
 - **wickra-exchange 0.1.5.** The facade and its core move from the caret
   `0.1.1` that `cargo update` could have moved and nobody did -- four patches
   behind the release the family is on -- to `=0.1.5` with the `=` every sibling
@@ -811,7 +814,8 @@ nothing stopped the other six registries from publishing around it.
   floor, so only that row stays at 8.4.2. Written here rather than left as prose
   in the requirements file, because this file is now actually read.
 
-[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.1...v0.1.2
