@@ -3,6 +3,34 @@
 #include <Rinternals.h>
 #include <R_ext/Rdynload.h>
 #include <stdio.h>
+
+#ifdef WICKRA_WASM_STUB
+/* WebAssembly (webR, r-universe's wasm build). The C ABI cannot be built for
+ * wasm32-unknown-emscripten -- it is a live terminal on tokio, mio and a
+ * websocket client, mio has no emscripten backend, and webR has neither
+ * sockets nor a TTY -- so configure builds this glue without it. The package
+ * installs and loads in webR, and every entry point says why it cannot run
+ * there instead of the install failing. */
+static SEXP wkterm_unavailable(void) {
+    Rf_error("wickraterminal is not available in WebAssembly: it is a live terminal client, and "
+             "webR has neither sockets nor a TTY. Use it from a native R session.");
+    return R_NilValue;
+}
+
+SEXP wkterm_version(void) { return wkterm_unavailable(); }
+
+SEXP wkterm_new(SEXP config_json) {
+    (void)config_json;
+    return wkterm_unavailable();
+}
+
+SEXP wkterm_command(SEXP ext, SEXP cmd_json) {
+    (void)ext;
+    (void)cmd_json;
+    return wkterm_unavailable();
+}
+
+#else
 #include "wickra_terminal.h"
 
 /* --- handle lifetime ----------------------------------------------------- */
@@ -90,6 +118,8 @@ SEXP wkterm_command(SEXP ext, SEXP cmd_json) {
     UNPROTECT(1);
     return result;
 }
+
+#endif /* WICKRA_WASM_STUB */
 
 /* --- registration -------------------------------------------------------- */
 

@@ -4,3 +4,11 @@
 # its own `js` feature (see bindings/wasm/Cargo.toml) and ignores this cfg.
 [target.wasm32-unknown-unknown]
 rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
+
+# No `[resolver] incompatible-rust-versions = "fallback"` here, unlike the rest
+# of the family. That setting resolves the whole workspace for its lowest
+# rust-version (1.86), and this workspace carries the TUI crate and the Node
+# binding at 1.88. Under it a refresh stepped the TUI's ratatui, darling and
+# strum back to older lines and `time` below the RUSTSEC-2026-0009 fix. The two
+# MSRV jobs guard each floor instead, and the crates the 1.86 build reaches that
+# need more are held in the lock (the icu crates, yoke-derive).

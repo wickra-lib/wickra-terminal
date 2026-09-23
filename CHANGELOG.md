@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-09-23
+
+A maintenance release: the terminal, its renderers and its bindings are
+unchanged. It publishes the refreshed dependency tree and toolchain pins.
+
+### Changed
+
+- **Built on wickra-core 1.0.6.** The lock takes the indicator core's latest
+  release; the `1.0` requirement already admitted it.
+- **The family pins follow the owners' releases.** `wickra-exchange` =0.1.6 ->
+  =0.1.7, `wickra-exchange-core` =0.1.6 -> =0.1.7 -- the exact pins this
+  repository keeps on its siblings move to the versions those repositories
+  release in the same train, and every tracked lockfile follows.
+- **Third-party dependencies refreshed.** `Cargo.lock` takes 139 crates to their
+  newest semver-compatible versions, run across the family in one pass so every
+  repository resolves the same day's versions. The refresh itself changes no
+  manifest. The count includes Dependabot's serde 1.0.229 and napi-group
+  updates. The icu crates (reached through `reqwest`) stay at 2.2.0: 2.3.0
+  raised its declared `rust-version` to 1.88, above this workspace's 1.86 floor.
+- **The lock does not resolve for a single Rust floor, deliberately.** The rest
+  of the family now sets `incompatible-rust-versions = "fallback"`; this
+  workspace does not, and `.cargo/config.toml` says why. The setting resolves
+  the whole workspace for its lowest `rust-version` (1.86), while the TUI crate
+  and the Node binding sit at 1.88 -- under it a refresh stepped the TUI's
+  ratatui, darling and strum back to older lines and `time` below the
+  RUSTSEC-2026-0009 fix. Each floor is guarded by its own MSRV job, and
+  `yoke-derive` stays at 0.8.2 because 0.8.3 needs Rust 1.87 without declaring
+  it and the 1.86 build reaches it through the icu crates.
+- **`@napi-rs/cli` 3.10.4** for the Node binding, the family's line.
+- **uv 0.12.18** for the lockfile bootstrap in `scripts/update-lockfiles.sh`,
+  with all four platform checksums moved together.
+- **The README's static badges are served by the organization** rather than
+  hot-linked from shields.io, so they no longer break when shields is down.
+
+### Fixed
+
+- **The R package's WebAssembly build installs instead of failing.** r-universe
+  builds every package for webR, and `configure` refused with an error, so the
+  wasm build of every release was red. The C ABI still cannot target
+  `wasm32-unknown-emscripten` (mio has no emscripten backend, and webR has
+  neither sockets nor a TTY), so `configure` now builds the `.Call` glue without
+  it: the package installs and loads in webR, and each entry point raises an
+  error that says why it cannot run there. Native builds are unchanged; both
+  variants compiled before release, the stub with r-universe's emcc 5.0.7.
+- **The link check no longer names a README that is gone.** Both lychee jobs
+  still listed `bindings/csharp/WickraTerminal/README.md`, removed when the
+  READMEs took the family's shape; lychee refuses a missing input outright, so
+  the weekly run would have failed before checking a single link.
+
 ## [0.1.5] - 2026-09-18
 
 ### Changed
@@ -144,7 +193,6 @@ reaches it through a tag.
   waiting for a manual click. `<waitUntil>published</waitUntil>` makes the job
   wait for the deployment to publish.
 
-
 ## [0.1.1] - 2026-09-04
 
 The first release this repository can publish completely. `0.1.0` reached
@@ -178,7 +226,6 @@ nothing stopped the other six registries from publishing around it.
   behind the gate rather than in front of it. Split into `wasm-build` and
   `wasm-publish`, so the tarball that reaches npm is the one the gate waited for
   and the one attached to the release.
-
 
 ## [0.1.0] - 2026-09-04
 
@@ -814,7 +861,8 @@ nothing stopped the other six registries from publishing around it.
   floor, so only that row stays at 8.4.2. Written here rather than left as prose
   in the requirements file, because this file is now actually read.
 
-[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.2...v0.1.3
