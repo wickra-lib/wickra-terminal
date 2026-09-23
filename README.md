@@ -74,7 +74,7 @@ any language builds their own front-end on the same core.
 
 ## Status
 
-**0.1.5 — the current release.** The core, both renderers, all ten language
+**0.1.6 — the current release.** The core, both renderers, all ten language
 bindings, the indicator registry, the runtime source/symbol toggle, the panel
 set, the byte-exact golden corpus, property and fuzz tests, benchmarks and one
 runnable example per language are in place and green across the full CI matrix

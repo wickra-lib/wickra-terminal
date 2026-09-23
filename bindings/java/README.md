@@ -37,14 +37,14 @@ Maven:
 <dependency>
   <groupId>org.wickra</groupId>
   <artifactId>wickra-terminal</artifactId>
-  <version>0.1.5</version>
+  <version>0.1.6</version>
 </dependency>
 ```
 
 Gradle:
 
 ```kotlin
-implementation("org.wickra:wickra-terminal:0.1.5")
+implementation("org.wickra:wickra-terminal:0.1.6")
 ```
 
 The native library ships prebuilt per platform inside the jar and is

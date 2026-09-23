@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-09-23
+
+A maintenance release: the terminal, its renderers and its bindings are
+unchanged. It publishes the refreshed dependency tree and toolchain pins.
+
+### Changed
+
+- **Built on wickra-core 1.0.5.** The lock takes the indicator core's latest
+  release; the `1.0` requirement already admitted it.
+- **Third-party dependencies refreshed.** `Cargo.lock` takes 129 crates to their
+  newest semver-compatible versions, run across the family in one pass so every repository resolves
+  the same day's versions. No manifest changed. The count includes Dependabot's
+  serde 1.0.229 and napi-group updates. The icu crates (reached through
+  `reqwest`) stay at 2.2.0: 2.3.0 raised its declared `rust-version` to 1.88,
+  above this workspace's 1.86 floor.
+- **`@napi-rs/cli` 3.10.4** for the Node binding, the family's line.
+- **uv 0.12.18** for the lockfile bootstrap in `scripts/update-lockfiles.sh`,
+  with all four platform checksums moved together.
+- **The README's static badges are served by the organization** rather than
+  hot-linked from shields.io, so they no longer break when shields is down.
+
+### Fixed
+
+- **The link check no longer names a README that is gone.** Both lychee jobs
+  still listed `bindings/csharp/WickraTerminal/README.md`, removed when the
+  READMEs took the family's shape; lychee refuses a missing input outright, so
+  the weekly run would have failed before checking a single link.
+
 ## [0.1.5] - 2026-09-18
 
 ### Changed
@@ -144,7 +172,6 @@ reaches it through a tag.
   waiting for a manual click. `<waitUntil>published</waitUntil>` makes the job
   wait for the deployment to publish.
 
-
 ## [0.1.1] - 2026-09-04
 
 The first release this repository can publish completely. `0.1.0` reached
@@ -178,7 +205,6 @@ nothing stopped the other six registries from publishing around it.
   behind the gate rather than in front of it. Split into `wasm-build` and
   `wasm-publish`, so the tarball that reaches npm is the one the gate waited for
   and the one attached to the release.
-
 
 ## [0.1.0] - 2026-09-04
 
@@ -814,7 +840,8 @@ nothing stopped the other six registries from publishing around it.
   floor, so only that row stays at 8.4.2. Written here rather than left as prose
   in the requirements file, because this file is now actually read.
 
-[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.2...v0.1.3
