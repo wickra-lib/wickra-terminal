@@ -5,12 +5,10 @@
 [target.wasm32-unknown-unknown]
 rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
 
-# The lockfile must resolve for the workspace's MSRV (rust-version in
-# Cargo.toml), not just for the newest stable. Without this, `cargo update`
-# takes a dependency's latest release even when it requires a newer compiler,
-# and the MSRV job is the first to notice -- the icu crates moved to Rust 1.88
-# under a routine refresh while the workspace stays at 1.86. With `fallback`,
-# cargo prefers the newest version the MSRV can build and only reaches past it
-# when nothing else satisfies the requirement.
-[resolver]
-incompatible-rust-versions = "fallback"
+# No `[resolver] incompatible-rust-versions = "fallback"` here, unlike the rest
+# of the family. That setting resolves the whole workspace for its lowest
+# rust-version (1.86), and this workspace carries the TUI crate and the Node
+# binding at 1.88. Under it a refresh stepped the TUI's ratatui, darling and
+# strum back to older lines and `time` below the RUSTSEC-2026-0009 fix. The two
+# MSRV jobs guard each floor instead, and the crates the 1.86 build reaches that
+# need more are held in the lock (the icu crates, yoke-derive).
