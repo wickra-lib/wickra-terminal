@@ -14,14 +14,18 @@ unchanged. It publishes the refreshed dependency tree and toolchain pins.
 
 ### Changed
 
-- **Built on wickra-core 1.0.5.** The lock takes the indicator core's latest
+- **Built on wickra-core 1.0.6.** The lock takes the indicator core's latest
   release; the `1.0` requirement already admitted it.
-- **Third-party dependencies refreshed.** `Cargo.lock` takes 129 crates to their
+- **The family pins follow the owners' releases.** `wickra-exchange` =0.1.6 ->
+  =0.1.7, `wickra-exchange-core` =0.1.6 -> =0.1.7 -- the exact pins this
+  repository keeps on its siblings move to the versions those repositories
+  release in the same train, and every tracked lockfile follows.
+- **Third-party dependencies refreshed.** `Cargo.lock` takes 139 crates to their
   newest semver-compatible versions, run across the family in one pass so every
-  repository resolves the same day's versions. No manifest changed. The count
-  includes Dependabot's serde 1.0.229 and napi-group updates. The icu crates
-  (reached through `reqwest`) stay at 2.2.0: 2.3.0 raised its declared
-  `rust-version` to 1.88, above this workspace's 1.86 floor.
+  repository resolves the same day's versions. The refresh itself changes no
+  manifest. The count includes Dependabot's serde 1.0.229 and napi-group
+  updates. The icu crates (reached through `reqwest`) stay at 2.2.0: 2.3.0
+  raised its declared `rust-version` to 1.88, above this workspace's 1.86 floor.
 - **The lock does not resolve for a single Rust floor, deliberately.** The rest
   of the family now sets `incompatible-rust-versions = "fallback"`; this
   workspace does not, and `.cargo/config.toml` says why. The setting resolves
