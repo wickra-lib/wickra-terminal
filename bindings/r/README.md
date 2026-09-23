@@ -52,6 +52,10 @@ Rscript bindings/r/tests/run_tests.R             # put target/release on PATH so
 
 `run_tests.R` is both the behavioural suite and the golden-parity check.
 
+In the browser (webR, r-universe's WebAssembly build) the package installs and loads, but it
+cannot run: a live terminal needs sockets and a TTY, which webR has not, and every call says
+so. Use it from a native R session.
+
 ## Quick start
 
 ```r

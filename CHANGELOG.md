@@ -43,6 +43,14 @@ unchanged. It publishes the refreshed dependency tree and toolchain pins.
 
 ### Fixed
 
+- **The R package's WebAssembly build installs instead of failing.** r-universe
+  builds every package for webR, and `configure` refused with an error, so the
+  wasm build of every release was red. The C ABI still cannot target
+  `wasm32-unknown-emscripten` (mio has no emscripten backend, and webR has
+  neither sockets nor a TTY), so `configure` now builds the `.Call` glue without
+  it: the package installs and loads in webR, and each entry point raises an
+  error that says why it cannot run there. Native builds are unchanged; both
+  variants compiled before release, the stub with r-universe's emcc 5.0.7.
 - **The link check no longer names a README that is gone.** Both lychee jobs
   still listed `bindings/csharp/WickraTerminal/README.md`, removed when the
   READMEs took the family's shape; lychee refuses a missing input outright, so

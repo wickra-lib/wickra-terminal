@@ -39,15 +39,17 @@ wkterm_download() {
   return 1
 }
 
-# WebAssembly (r-universe's webR target) is not supported and says so rather
-# than failing further in. The sibling libraries build their C ABI from source
-# for wasm32-unknown-emscripten right here, but this one is a live terminal on
-# tokio, mio and a websocket client: mio has no emscripten backend, so the
-# crate cannot compile for the target, and nothing it does would work without
-# sockets and a TTY anyway.
+# WebAssembly (r-universe's webR target). The sibling libraries build their C
+# ABI from source for wasm32-unknown-emscripten right here, but this one is a
+# live terminal on tokio, mio and a websocket client: mio has no emscripten
+# backend, so the crate cannot compile for the target, and nothing it does would
+# work without sockets and a TTY anyway. The glue is built without the C ABI
+# instead (WICKRA_WASM_STUB): the package installs and loads in webR, and each
+# entry point says why it cannot run there -- rather than a failed build.
 if [ "$(uname -s)" = "Emscripten" ]; then
-  echo "wickraterminal: no WebAssembly build - this package is a live terminal client and wasm has neither sockets nor a TTY."
-  exit 1
+  echo "wickraterminal: WebAssembly build without the C ABI - a live terminal client needs sockets and a TTY, which webR has not; every call says so."
+  printf 'PKG_CPPFLAGS = -DWICKRA_WASM_STUB\n' > src/Makevars
+  exit 0
 fi
 
 if [ -n "${WKTERM_INC}" ] && [ -n "${WKTERM_LIB}" ]; then
