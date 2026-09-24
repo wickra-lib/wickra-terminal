@@ -3725,9 +3725,9 @@ dependencies = [
 
 [[package]]
 name = "wickra-exchange"
-version = "0.1.7"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c7101b33edb139cdef187c5faf70b759e6db873e1d7b61fb9da4f2c826bc8ad"
+checksum = "40a9559b60ee03a798367870346880ab49998c6bcfe02b0099d2058fca509485"
 dependencies = [
  "flate2",
  "futures-util",
@@ -3739,9 +3739,9 @@ dependencies = [
 
 [[package]]
 name = "wickra-exchange-core"
-version = "0.1.7"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80b085e2528517b59de0cac5c26b0ed99922f7db99bb8067245ebb9be29863d0"
+checksum = "34ea8c9061f9fdac95f13360864b11bd79899a4f84ee543e1a81b6723ca22e0e"
 dependencies = [
  "base64",
  "hex",
@@ -3759,7 +3759,7 @@ dependencies = [
 
 [[package]]
 name = "wickra-terminal"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "clap",
  "crossterm",
@@ -3769,7 +3769,7 @@ dependencies = [
 
 [[package]]
 name = "wickra-terminal-bench"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "codspeed-criterion-compat",
  "rust_decimal",
@@ -3779,14 +3779,14 @@ dependencies = [
 
 [[package]]
 name = "wickra-terminal-c"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "wickra-terminal-core",
 ]
 
 [[package]]
 name = "wickra-terminal-core"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "proptest",
  "rust_decimal",
@@ -3802,14 +3802,14 @@ dependencies = [
 
 [[package]]
 name = "wickra-terminal-example"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "wickra-terminal-core",
 ]
 
 [[package]]
 name = "wickra-terminal-node"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "napi",
  "napi-build",
@@ -3819,7 +3819,7 @@ dependencies = [
 
 [[package]]
 name = "wickra-terminal-python"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "pyo3",
  "wickra-terminal-core",
@@ -3827,7 +3827,7 @@ dependencies = [
 
 [[package]]
 name = "wickra-terminal-wasm"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "getrandom 0.2.17",
  "getrandom 0.3.4",
