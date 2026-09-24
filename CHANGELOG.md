@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-09-24
+
+A follow-up release: the terminal, its renderers and its bindings are unchanged.
+It pins wickra-exchange 0.1.8, the release that makes exchange's R package build
+on r-universe's WebAssembly target and its release pipeline re-runnable.
+
+### Changed
+
+- **Built on wickra-exchange 0.1.8.** The exact pins on `wickra-exchange` and
+  `wickra-exchange-core` move from =0.1.7 to =0.1.8, and every tracked lockfile
+  follows. Nothing in exchange's Rust API changed between the two; 0.1.8 fixes
+  its R package's WebAssembly build and its Maven Central step.
+
 ## [0.1.7] - 2026-09-24
 
 A release-pipeline release: the terminal, its renderers and its bindings are the
@@ -880,7 +893,8 @@ nothing stopped the other six registries from publishing around it.
   floor, so only that row stays at 8.4.2. Written here rather than left as prose
   in the requirements file, because this file is now actually read.
 
-[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.4...v0.1.5
