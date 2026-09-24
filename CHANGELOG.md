@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-09-24
+
+A release-pipeline release: the terminal, its renderers and its bindings are the
+same code as 0.1.6. It exists so that a complete release -- every package plus
+its build provenance and its GitHub Release -- stands on the current version.
+
+### Fixed
+
+- **A release can be finished by a re-run once Maven Central has the bundle.**
+  0.1.6's Maven step uploaded its bundle, then timed out after 30 minutes of
+  polling while Central went on to publish it. That skipped the jobs behind it
+  -- the build-provenance attestation and the GitHub Release -- and a re-run
+  would have failed on the duplicate. The Java job now looks the version up on
+  repo1.maven.org first and skips the deploy when it is there, building the jar
+  instead, as the family's other release workflows do. 0.1.6's release page was
+  completed from its run's own artifacts plus the jars on Maven Central (it
+  carries the sources and javadoc jars too, which this workflow does not
+  attach), but it has no provenance attestation; this release does.
+
 ## [0.1.6] - 2026-09-23
 
 A maintenance release: the terminal, its renderers and its bindings are
@@ -861,7 +880,8 @@ nothing stopped the other six registries from publishing around it.
   floor, so only that row stays at 8.4.2. Written here rather than left as prose
   in the requirements file, because this file is now actually read.
 
-[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.3...v0.1.4
