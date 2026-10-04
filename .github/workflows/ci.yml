@@ -622,8 +622,8 @@ jobs:
         timeout-minutes: 10 # fail fast on a stuck download instead of hanging the job
         with:
           tool: wasm-pack
-      # The web app depends on the wasm binding's pkg/ via a file: dependency, so
-      # build it before installing web dependencies.
+      # The web app imports the wasm binding's pkg/ through a Vite alias, so build
+      # it before the web tests and build.
       - name: Build the wasm binding (web target)
         run: wasm-pack build --target web
         working-directory: bindings/wasm

@@ -9,8 +9,8 @@ Web and TUI are two renderers of one core, not two products.
 
 ## Prerequisites
 
-Build the WASM binding first (the web app depends on its `pkg/` via a `file:`
-dependency):
+Build the WASM binding first (the web app imports its `pkg/` through a Vite
+alias, see `vite.config.ts`):
 
 ```bash
 ( cd ../bindings/wasm && wasm-pack build --target web )
