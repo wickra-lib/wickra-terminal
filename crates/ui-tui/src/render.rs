@@ -158,7 +158,7 @@ mod tests {
         // One row: the panel area saturates to nothing and the footer takes it.
         let (view, config) = two_panels();
         let buffer = harness::draw(20, 1, |frame, _| draw(frame, &view, &config, "x", 0, &[]));
-        assert!(!buffer.content().is_empty());
+        assert_ne!(buffer.content(), []);
     }
 
     #[test]

@@ -135,7 +135,7 @@ mod tests {
         let drained = src.poll();
         assert_eq!(drained.len(), 2);
         assert_eq!(drained[0].0, btc);
-        assert!(src.poll().is_empty());
+        assert_eq!(src.poll(), Vec::new());
     }
 
     #[test]
