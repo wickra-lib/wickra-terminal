@@ -83,8 +83,8 @@ mod tests {
         .expect("the book panel answers with a book");
 
         assert_eq!(view.symbol, "BTC/USDT");
-        assert!(view.bids.is_empty());
-        assert!(view.asks.is_empty());
+        assert_eq!(view.bids, Vec::new());
+        assert_eq!(view.asks, Vec::new());
         assert!(view.spread.is_none(), "a spread appeared from nowhere");
     }
 }

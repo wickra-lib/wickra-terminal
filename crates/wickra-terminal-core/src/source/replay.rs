@@ -155,7 +155,7 @@ mod tests {
             })
             .collect();
         assert_eq!(prices, vec![dec!(100), dec!(101), dec!(102)]);
-        assert!(r.poll().is_empty());
+        assert_eq!(r.poll(), Vec::new());
     }
 
     #[test]
@@ -205,7 +205,7 @@ mod tests {
         // Only the ETH print is emitted; the BTC prints are skipped.
         let (sym, _) = r.poll().into_iter().next().unwrap();
         assert_eq!(sym, eth);
-        assert!(r.poll().is_empty());
+        assert_eq!(r.poll(), Vec::new());
     }
 
     #[test]

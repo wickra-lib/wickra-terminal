@@ -860,7 +860,7 @@ mod tests {
     fn new_with_synth_source_has_no_focus_until_subscribed() {
         let mut term = Terminal::new(&synth_config()).unwrap();
         // Nothing subscribed yet: an empty frame.
-        assert!(term.tick().panels.is_empty());
+        assert_eq!(term.tick().panels, Vec::new());
         term.subscribe(0, &Symbol::new("BTC", "USDT")).unwrap();
         // Now the default layout's panels render.
         let frame = term.tick();
@@ -884,7 +884,7 @@ mod tests {
             })
             .unwrap();
         assert!(chart.last > 0.0);
-        assert!(!chart.series.is_empty());
+        assert_ne!(chart.series, Vec::<f64>::new());
     }
 
     #[test]
@@ -913,7 +913,7 @@ mod tests {
         term.subscribe(id, &Symbol::new("ETH", "USDT")).unwrap();
         assert_eq!(term.state().watchlist.len(), 1);
         term.remove_source(id);
-        assert!(term.state().watchlist.is_empty());
+        assert_eq!(term.state().watchlist, Vec::new());
         assert!(term.state().focus.is_none());
     }
 
@@ -1235,7 +1235,7 @@ mod tests {
         term.seek(0, 0).unwrap();
         let st = term.state().get(&(0, sym.clone())).unwrap();
         assert_eq!(st.last, Decimal::ZERO);
-        assert!(st.series(10).is_empty());
+        assert_eq!(st.series(10), Vec::<f64>::new());
     }
 
     #[test]

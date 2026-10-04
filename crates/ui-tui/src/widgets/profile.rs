@@ -183,6 +183,6 @@ mod tests {
             symbol: "S".to_owned(),
             profiles: vec![row("P", vec![1.0], false)],
         };
-        assert!(!drawn(&view, 3, 4).is_empty());
+        assert_ne!(drawn(&view, 3, 4), "");
     }
 }

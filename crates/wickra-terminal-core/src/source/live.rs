@@ -397,7 +397,10 @@ mod tests {
     #[test]
     fn a_poll_with_nothing_subscribed_forwards_nothing() {
         let btc = Symbol::new("BTC", "USDT");
-        assert!(forwarded(vec![print(&btc, 100)], &HashSet::new()).is_empty());
+        assert_eq!(
+            forwarded(vec![print(&btc, 100)], &HashSet::new()),
+            Vec::new()
+        );
     }
 
     #[test]
@@ -408,7 +411,7 @@ mod tests {
         let mut subscribed = HashSet::new();
         subscribed.insert(btc);
         let out = forwarded(vec![Event::Disconnected, Event::Reconnected], &subscribed);
-        assert!(out.is_empty());
+        assert_eq!(out, Vec::new());
     }
 
     /// An exchange that answers from memory, so the source's own logic can be
@@ -573,9 +576,10 @@ mod tests {
         let stub = StubExchange::new();
         stub.state.borrow_mut().klines_fail = true;
         let mut source = stubbed(&stub);
-        assert!(source
-            .backfill(&Symbol::new("BTC", "USDT"), "1m", 200)
-            .is_empty());
+        assert_eq!(
+            source.backfill(&Symbol::new("BTC", "USDT"), "1m", 200),
+            Vec::new()
+        );
     }
 
     #[test]

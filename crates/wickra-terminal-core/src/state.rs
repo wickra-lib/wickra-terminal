@@ -2305,7 +2305,7 @@ mod tests {
         for _ in 0..10 {
             set.update(&price(100.0));
         }
-        assert!(set.snapshot()[0].series.is_empty());
+        assert_eq!(set.snapshot()[0].series, Vec::<f64>::new());
     }
 
     #[test]

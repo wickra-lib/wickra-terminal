@@ -206,9 +206,9 @@ mod tests {
         let sym = Symbol::new("ETH", "USDT");
         let mut s = SynthSource::new(1, 7);
         s.subscribe(&sym).unwrap();
-        assert!(!s.poll().is_empty());
+        assert_ne!(s.poll(), Vec::new());
         s.unsubscribe(&sym);
-        assert!(s.poll().is_empty());
+        assert_eq!(s.poll(), Vec::new());
     }
 
     #[test]

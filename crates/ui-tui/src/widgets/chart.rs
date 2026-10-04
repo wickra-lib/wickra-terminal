@@ -477,7 +477,7 @@ mod tests {
         // Dividing by rows - 1 is a division by zero at one row, and the high is
         // the label that matters: it is the edge a price is about to cross.
         assert_eq!(scale_labels(100.0, 200.0, 1)[0].trim(), "200.00");
-        assert!(scale_labels(100.0, 200.0, 0).is_empty());
+        assert_eq!(scale_labels(100.0, 200.0, 0), Vec::<String>::new());
     }
 
     #[test]
@@ -770,14 +770,14 @@ mod tests {
             vec![100.0, 101.0, 102.0],
             vec![("Sma(2)", vec![101.0]), ("Ema(2)", Vec::new())],
         );
-        assert!(super::overlays(&view).is_empty());
+        assert_eq!(super::overlays(&view), Vec::<&[f64]>::new());
     }
 
     /// Nothing is overlaid on a price series that is not a line either.
     #[test]
     fn nothing_is_overlaid_before_there_are_two_prices() {
         let view = with_series(vec![100.0], vec![("Sma(2)", vec![100.0, 101.0])]);
-        assert!(super::overlays(&view).is_empty());
+        assert_eq!(super::overlays(&view), Vec::<&[f64]>::new());
     }
 
     /// The range spans every series and ignores what is not a number.
@@ -827,6 +827,6 @@ mod tests {
         let buffer = harness::draw(SCALE_WIDTH + 2, 3, |frame, area| {
             render(frame, area, &view, false);
         });
-        assert!(!harness::text(&buffer).is_empty());
+        assert_ne!(harness::text(&buffer), "");
     }
 }

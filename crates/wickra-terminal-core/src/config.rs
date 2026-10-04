@@ -446,7 +446,7 @@ mod tests {
     fn default_layout_has_five_panels_and_default_keybinds() {
         let cfg = Config::default_layout();
         assert_eq!(cfg.layout.panels.len(), 5);
-        assert!(cfg.sources.is_empty());
+        assert_eq!(cfg.sources, Vec::new());
         assert_eq!(cfg.layout.keybinds.bindings.get("quit").unwrap(), "q");
     }
 

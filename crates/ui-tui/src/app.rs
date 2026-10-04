@@ -688,7 +688,7 @@ mod tests {
         app.input_submit();
         assert_eq!(app.terminal.state().watchlist.len(), 1);
         app.on_action(Action::RemoveSymbol);
-        assert!(app.terminal.state().watchlist.is_empty());
+        assert_eq!(app.terminal.state().watchlist, Vec::new());
     }
 
     #[test]
@@ -1216,7 +1216,7 @@ mod tests {
         app.on_action(Action::ScrollDown);
         app.on_action(Action::ScrollUp);
         assert_eq!(app.status, before, "an empty layout reported a scroll");
-        assert!(app.scroll.is_empty());
+        assert_eq!(app.scroll, Vec::<usize>::new());
     }
 
     /// A bars panel reports the longest of its streams, so it scrolls.
@@ -1442,8 +1442,8 @@ mod tests {
         )];
         let mut app = App::new(Terminal::new(&config).unwrap());
         app.on_action(Action::RemovePanel);
-        assert!(app.terminal.config().layout.panels.is_empty());
-        assert!(app.scroll.is_empty());
+        assert_eq!(app.terminal.config().layout.panels, Vec::new());
+        assert_eq!(app.scroll, Vec::<usize>::new());
 
         // And the panel-local keys are no-ops rather than panics.
         app.on_action(Action::ScrollDown);

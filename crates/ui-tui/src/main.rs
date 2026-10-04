@@ -235,7 +235,7 @@ mod tests {
     #[test]
     fn a_source_shorthand_that_does_not_parse_is_reported() {
         let err = build_config(&cli(Some("teleport:1"), None)).unwrap_err();
-        assert!(!err.to_string().is_empty());
+        assert_ne!(err.to_string(), "");
     }
 
     #[test]
@@ -243,7 +243,7 @@ mod tests {
         // The terminal starts with no source and the renderer draws its hint;
         // defaulting to a synth feed here would show a market nobody asked for.
         let cfg = build_config(&cli(None, None)).unwrap();
-        assert!(cfg.sources.is_empty());
+        assert_eq!(cfg.sources, Vec::new());
         assert_eq!(cfg.layout.panels, Config::default_layout().layout.panels);
     }
 

@@ -109,9 +109,9 @@ mod tests {
             view.last.abs() < f64::EPSILON,
             "an unfolded market has no last price"
         );
-        assert!(view.series.is_empty());
-        assert!(view.bars.is_empty());
+        assert_eq!(view.series, Vec::<f64>::new());
+        assert_eq!(view.bars, Vec::new());
         assert!(view.forming.is_none());
-        assert!(view.indicators.is_empty());
+        assert_eq!(view.indicators, Vec::new());
     }
 }
