@@ -12,7 +12,7 @@ to the newest release before reporting an issue.
 
 | Version | Supported |
 | --- | --- |
-| 0.1.8 (latest) | :white_check_mark: |
+| 0.2.0 (latest) | :white_check_mark: |
 
 ## Reporting a vulnerability
 
