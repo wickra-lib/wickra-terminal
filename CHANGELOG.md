@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-06
+
+A follow-up release on the wickra 2.0 family.
+
+### Changed
+
+- **Built on wickra 2.0 and wickra-exchange 0.2.0.** `wickra-core` moves from
+  1.0 to 2.0, the formula-audit release of the indicator core; the exact pins
+  on `wickra-exchange` and `wickra-exchange-core` move from =0.1.8 to =0.2.0
+  (root and `fuzz/`); every tracked lockfile follows. Indicators the audit
+  corrected return the values of their published definitions; wickra's
+  changelog lists them, with the warmup changes and the new defaults.
+- **`EstimatedLeverageRatio` needs a reference symbol.** wickra-core 2.0
+  computes CryptoQuant's ratio from open interest and the exchange's coin
+  reserve, which no derivatives tick carries; it joins the pairwise kinds: the
+  price is the open interest, the reference series the exchange reserve.
+
 ## [0.1.8] - 2026-09-24
 
 A follow-up release: the terminal, its renderers and its bindings are unchanged.
@@ -893,7 +910,8 @@ nothing stopped the other six registries from publishing around it.
   floor, so only that row stays at 8.4.2. Written here rather than left as prose
   in the requirements file, because this file is now actually read.
 
-[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.8...v0.2.0
 [0.1.8]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.5...v0.1.6

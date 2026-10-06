@@ -4805,12 +4805,13 @@ pub const ALIASES: [(&str, &str); 2] = [("Bollinger", "BollingerBands"), ("Macd"
 /// These are the kinds [`build`] refuses: they need a reference symbol, which is
 /// a property of the spec rather than of the parameters. Exposed so a caller can
 /// tell a user which indicators need one before they try.
-pub const PAIRWISE: [&str; 24] = [
+pub const PAIRWISE: [&str; 25] = [
     "Alpha",
     "Beta",
     "BetaNeutralSpread",
     "Cointegration",
     "DistanceSsd",
+    "EstimatedLeverageRatio",
     "GrangerCausality",
     "HasbrouckInformationShare",
     "InformationRatio",
@@ -5556,8 +5557,12 @@ fn build_inner(
             inner: map_new(kind, wc::Equivolume::new(usize_param(params, 0, kind)?))?,
             last: None,
         })),
-        "EstimatedLeverageRatio" => Ok(Box::new(DerivIn {
+        // CryptoQuant's ratio is open interest over the exchange's coin reserve,
+        // which no DerivativesTick carries: the price is the open interest and
+        // the reference series the exchange reserve.
+        "EstimatedLeverageRatio" => Ok(Box::new(PairIn {
             inner: wc::EstimatedLeverageRatio::new(),
+            reference: pair_reference(kind, reference)?.to_string(),
         })),
         "EvenBetterSinewave" => Ok(Box::new(ScalarPrice {
             inner: map_new(
