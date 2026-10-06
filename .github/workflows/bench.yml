@@ -127,6 +127,7 @@ jobs:
         with:
           go-version: "stable"
           cache-dependency-path: bindings/go/go.sum
+          cache: false
       - name: Go
         run: |
           mkdir -p bindings/go/lib/linux_amd64
