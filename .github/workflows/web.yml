@@ -1,13 +1,15 @@
 name: Web renderer
 
-# Build the browser renderer (WASM + Vue) on every change that can break it.
+# Build the browser renderer (WASM + Vue) and deploy it to Cloudflare Pages as
+# the project `wickra-terminal`, served at https://terminal-web.wickra.org.
 #
-# This workflow does not publish. Cloudflare builds and deploys the renderer
-# from the repository itself through its Git integration, so there is no API
-# token here and no deploy step to gate on one. What this job is for is the
-# other half: catching a renderer that stopped compiling before Cloudflare
-# tries to build it, and covering the two things a Pages build would not --
-# the wasm-pack step and the core it is built against.
+# Cloudflare's Git integration cannot build this: the Pages build image has no
+# Rust, and the renderer needs the WASM binding built first. So the build runs
+# here and wrangler uploads web/dist. The deploy step needs the organization
+# secrets CLOUDFLARE_API_TOKEN (Account > Cloudflare Pages: Edit) and
+# CLOUDFLARE_ACCOUNT_ID; without them the job builds, says so, and stays green.
+# The first deploy creates the Pages project; the custom domain is attached
+# once on the project in the Cloudflare dashboard, which writes its DNS record.
 on:
   push:
     branches: [main]
@@ -21,11 +23,20 @@ on:
 permissions:
   contents: read
 
+# One deploy at a time, the newest last; a deploy in flight is never cut off.
+concurrency:
+  group: web-deploy
+  cancel-in-progress: false
+
 jobs:
   build:
-    name: Build the web renderer
+    name: Build + deploy the web renderer
     timeout-minutes: 30
     runs-on: ubuntu-latest
+    # Exposed to step-level `if:` so the deploy is skipped (not failed) when the
+    # secret is absent. Cloudflare needs both an API token and the account id.
+    env:
+      CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -62,3 +73,27 @@ jobs:
       - name: Build the web renderer
         working-directory: web
         run: npm run build
+
+      # Deploy via the wrangler CLI at an exact version rather than a third-party
+      # action, so the workflow keeps its SHA-pinned action set. Cloudflare reads
+      # the token and the account id from the environment.
+      - name: Deploy to Cloudflare Pages
+        if: ${{ env.CF_API_TOKEN != '' }}
+        working-directory: web
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT: wickra-terminal
+          WRANGLER: wrangler@4.148.0
+        run: |
+          status=$(curl -sS -o /dev/null -w '%{http_code}' --retry 3             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT")
+          case "$status" in
+            200) ;;
+            404) npx --yes "$WRANGLER" pages project create "$PROJECT" --production-branch main ;;
+            *) echo "::error::Cloudflare answered HTTP $status for the Pages project $PROJECT"; exit 1 ;;
+          esac
+          npx --yes "$WRANGLER" pages deploy dist --project-name "$PROJECT" --branch main --commit-dirty=true
+
+      - name: Note when the deploy is skipped
+        if: ${{ env.CF_API_TOKEN == '' }}
+        run: echo "::notice::built web/dist; skipping deploy (CLOUDFLARE_API_TOKEN not set)"
