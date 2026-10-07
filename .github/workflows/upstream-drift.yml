@@ -36,7 +36,7 @@ concurrency:
 jobs:
   compare:
     name: wickra-core, locked against published
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10 # backstop against a hung job, not a budget
     permissions:
       contents: read
