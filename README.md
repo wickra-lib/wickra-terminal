@@ -155,7 +155,7 @@ does not mean having decided to before it began.
 | Renderer | Where | How |
 |---|---|---|
 | **TUI** | native terminal | `crates/ui-tui` (ratatui), `cargo run -p wickra-terminal` |
-| **Web** | browser | `web/` (Vue) over `bindings/wasm`, `cd web && npm run dev` |
+| **Web** | browser | `web/` (Vue) over `bindings/wasm`, `cd web && npm run dev`; live at [terminal-web.wickra.org](https://terminal-web.wickra.org) |
 
 Both consume the identical `Frame` of view-models from `wickra-terminal-core`,
 and both read the same keymap out of the same config. Where they differ they
