@@ -285,7 +285,7 @@ python scripts/check_binding_surface.py     # every binding matches the C ABI he
 
 - **Rust** ≥ 1.88 to build the `wickra-terminal` TUI (ratatui pulls
   `instability`/`darling`), and to build the Node binding. The library crate
-  `wickra-terminal-core` keeps the workspace MSRV of ≥ 1.86.
+  `wickra-terminal-core` keeps the workspace MSRV of ≥ 1.87.
 - Renderer/binding toolchains as needed: Node ≥ 22, Python ≥ 3.9, a C toolchain,
   .NET 8, JDK 22+, Go 1.23, R ≥ 4.1 — see each `bindings/<lang>/README.md`.
 

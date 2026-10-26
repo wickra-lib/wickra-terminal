@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **MSRV 1.87** (was 1.86) for the workspace; the TUI application and the Node
+  binding stay at 1.88. wickra-exchange reaches `crypto-bigint` and `ctutils`
+  through `p256`, and the releases that fix RUSTSEC-2026-0387 and
+  RUSTSEC-2026-0385 require Rust 1.87. Every earlier crypto-bigint 0.7 release is
+  yanked, so a fresh resolve could no longer build on 1.86.
+
+### Security
+
+- **crypto-bigint 0.7.9, ctutils 0.4.6 and tokio 1.53.3** in the lockfile, for
+  RUSTSEC-2026-0387, RUSTSEC-2026-0385 and RUSTSEC-2026-0386.
+
 ## [0.2.0] - 2026-10-06
 
 A follow-up release on the wickra 2.0 family.

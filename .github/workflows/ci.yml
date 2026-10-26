@@ -90,7 +90,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   msrv:
-    name: MSRV workspace (1.86)
+    name: MSRV workspace (1.87)
     runs-on: ubuntu-latest
     timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
     steps:
@@ -99,7 +99,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
         with:
-          toolchain: "1.86"
+          toolchain: "1.87"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
@@ -107,7 +107,7 @@ jobs:
       # The Node binding (napi 3) and the ui-tui app (ratatui pulls instability,
       # which needs 1.88) require Rust 1.88 and are checked separately below; the
       # Python binding needs maturin's platform link flags and is built by the
-      # `python` job. The library (wickra-terminal-core) and the C ABI stay 1.86.
+      # `python` job. The library (wickra-terminal-core) and the C ABI stay 1.87.
       - run: >
           cargo build --workspace
           --exclude wickra-terminal-python
