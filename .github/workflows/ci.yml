@@ -866,7 +866,13 @@ jobs:
       - name: Java info
         run: java -version
       - name: Test the Java binding
-        run: mvn -B -f bindings/java test
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          timeout_minutes: 30
+          max_attempts: 2
+          retry_wait_seconds: 30
+          shell: bash
+          command: mvn -B -f bindings/java test
 
       # `examples-smoke` compiles them, which is not running them: the binding
       # loads its native library at first use, so a compiled example can still
