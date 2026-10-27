@@ -8,3 +8,9 @@
 # RUSTSEC-2024-0436 (paste, unmaintained) was listed here for ratatui; ratatui
 # 0.30 dropped the dependency, so the record no longer describes anything in the
 # graph and the entry was removed.
+
+# GHSA-qwgh-2vcv-g2f7 has no RustSec record, so cargo-deny does not report it
+# and deny.toml carries no counterpart.
+[[IgnoredVulns]]
+id = "GHSA-qwgh-2vcv-g2f7"
+reason = "block-buffer 0.10.4: a panic caught inside a compress or block-generator callback can leave EagerBuffer or ReadBuffer with an invalid cursor, so later use reads or writes out of bounds. Fixed in 0.12.1, unreachable while termwiz 0.23.3 declares sha2 ^0.10 (block-buffer <- digest 0.10 <- sha2 0.10 <- termwiz <- ratatui-termwiz <- ratatui). None of it is built: ratatui's termwiz backend is an optional feature wickra-terminal leaves off (cargo tree -i digest@0.10.7 --all-features prints nothing), so the crate is only in Cargo.lock. Revisit when termwiz moves."
