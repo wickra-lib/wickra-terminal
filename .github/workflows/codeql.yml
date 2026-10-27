@@ -158,13 +158,18 @@ jobs:
       # examples-smoke does it.
       - name: Build the Java binding and example
         if: matrix.language == 'java-kotlin'
-        shell: bash
-        run: |
-          set -euo pipefail
-          mvn -B -f bindings/java test-compile
-          mkdir -p /tmp/java-examples
-          javac --release 22 -d /tmp/java-examples \
-            -sourcepath bindings/java/src/main/java examples/java/*.java
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          timeout_minutes: 30
+          max_attempts: 2
+          retry_wait_seconds: 30
+          shell: bash
+          command: |
+            set -euo pipefail
+            mvn -B -f bindings/java test-compile
+            mkdir -p /tmp/java-examples
+            javac --release 22 -d /tmp/java-examples \
+              -sourcepath bindings/java/src/main/java examples/java/*.java
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
