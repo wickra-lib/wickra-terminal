@@ -20,6 +20,14 @@ security fixes in the dependency tree.
 
 ### Changed
 
+- **Built on wickra-core 2.1.0.** The lock takes the indicator core's minor
+  release; the `2.0` requirement already admitted it. It adds `RunningDrawdown`
+  and updates `MaxDrawdown` in amortised O(1) with the same values; nothing here
+  computes differently.
+- **The family pins follow the owners' releases.** `wickra-exchange` =0.2.0 ->
+  =0.2.1, `wickra-exchange-core` =0.2.0 -> =0.2.1 -- the exact pins this
+  repository keeps on its siblings move to the versions those repositories
+  release in the same train, and every tracked lockfile follows.
 - **MSRV 1.87** (was 1.86) for the workspace; the TUI application and the Node
   binding stay at 1.88. wickra-exchange reaches `crypto-bigint` and `ctutils`
   through `p256`, and the releases that fix RUSTSEC-2026-0387 and
