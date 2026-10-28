@@ -3777,7 +3777,7 @@ checksum = "dd924c51e4871af15651e173fd4d88269455e0b3e9524aa3f24ed72a16bf40e6"
 
 [[package]]
 name = "wickra-terminal"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "clap",
  "crossterm",
@@ -3787,7 +3787,7 @@ dependencies = [
 
 [[package]]
 name = "wickra-terminal-bench"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "codspeed-criterion-compat",
  "rust_decimal",
@@ -3797,14 +3797,14 @@ dependencies = [
 
 [[package]]
 name = "wickra-terminal-c"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "wickra-terminal-core",
 ]
 
 [[package]]
 name = "wickra-terminal-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "proptest",
  "rust_decimal",
@@ -3820,14 +3820,14 @@ dependencies = [
 
 [[package]]
 name = "wickra-terminal-example"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "wickra-terminal-core",
 ]
 
 [[package]]
 name = "wickra-terminal-node"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "napi",
  "napi-build",
@@ -3837,7 +3837,7 @@ dependencies = [
 
 [[package]]
 name = "wickra-terminal-python"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "pyo3",
  "wickra-terminal-core",
@@ -3845,7 +3845,7 @@ dependencies = [
 
 [[package]]
 name = "wickra-terminal-wasm"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "getrandom 0.2.17",
  "getrandom 0.3.4",

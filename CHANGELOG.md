@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-28
+
+A maintenance release: the terminal and its bindings are unchanged. It ships the
+security fixes in the dependency tree.
+
+### Added
+
+- **The web renderer is served at terminal-web.wickra.org.** CI builds it and
+  publishes it through a signed `pages` branch that Cloudflare Pages deploys,
+  without a Cloudflare token in the repository.
+
 ### Changed
 
 - **MSRV 1.87** (was 1.86) for the workspace; the TUI application and the Node
@@ -14,11 +25,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through `p256`, and the releases that fix RUSTSEC-2026-0387 and
   RUSTSEC-2026-0385 require Rust 1.87. Every earlier crypto-bigint 0.7 release is
   yanked, so a fresh resolve could no longer build on 1.86.
+- **napi 3.15.0 with napi-derive 3.6.13** for the Node binding, moved together
+  with napi-derive-backend 6.1.6, napi-build 2.6.0 and napi-sys 3.4.1; the pair
+  Dependabot proposed on its own did not compile. `@napi-rs/cli` 3.10.8 builds
+  it. All five keep the binding's Rust 1.88 floor.
+- **pyo3 0.30.1** for the Python binding, and serde_json 1.0.154. pyo3 0.30
+  drops Python 3.8, which the wheels never supported: they still need Python 3.9
+  or later.
+- **central-publishing-maven-plugin 0.12.0** publishes the Java binding.
+- **uv 0.13.5** for the lockfile bootstrap in `scripts/update-lockfiles.sh`.
+- **The ecosystem list quotes the backtest registry's count** (495) for the
+  products that resolve indicators through it, rather than the core's 514.
 
 ### Security
 
 - **crypto-bigint 0.7.9, ctutils 0.4.6 and tokio 1.53.3** in the lockfile, for
   RUSTSEC-2026-0387, RUSTSEC-2026-0385 and RUSTSEC-2026-0386.
+- **rustls 0.23.46** in the lockfile, for RUSTSEC-2026-0346 to RUSTSEC-2026-0349:
+  TLS secrets in the `Debug` output of client session values, application data
+  sent to the outer server after an ECH rejection, Brotli certificate
+  decompression allocating before authentication, and a ServerHello downgrade to
+  classical key exchange.
+- **rustls-webpki 0.103.16 and webpki-roots 1.0.10** in the lockfile, for
+  RUSTSEC-2026-0382 and RUSTSEC-2026-0381: certificates chaining through the
+  distrusted emSign intermediates are refused.
+- **vite 8.3.5** for the web renderer, for GHSA-587h-7wmj-h5pm,
+  GHSA-r825-w8mm-5pxw and GHSA-698v-4r3x-3vcv (launch-editor); vue and vitest
+  move to the floors the family declares.
+- **GHSA-qwgh-2vcv-g2f7 (block-buffer 0.10) is recorded as not built.** Its only
+  path runs through ratatui's termwiz backend, a feature this crate leaves off;
+  `osv-scanner.toml` carries the reasoning.
 
 ## [0.2.0] - 2026-10-06
 
@@ -923,7 +959,8 @@ nothing stopped the other six registries from publishing around it.
   floor, so only that row stays at 8.4.2. Written here rather than left as prose
   in the requirements file, because this file is now actually read.
 
-[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/wickra-lib/wickra-terminal/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.8...v0.2.0
 [0.1.8]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.6...v0.1.7
