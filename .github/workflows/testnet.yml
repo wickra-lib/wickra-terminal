@@ -38,15 +38,17 @@ jobs:
         continue-on-error: true # cache is an optimisation; never block on a stuck/slow restore
         timeout-minutes: 6
       - uses: ./.github/actions/warm-cargo
-      # The Live source's #[ignore] test opens a real HTTP + WebSocket connection
-      # to a public venue and folds a few streamed events; run it here, not on
-      # every push.
+      # The Live source's #[ignore] test opens real HTTP + WebSocket connections
+      # to three public venues (Binance, OKX, Kraken) and waits for each to
+      # stream; run it here, not on every push.
       - name: Run gated live-integration tests
-        # Binance geo-restricts data-centre IP ranges, and the block arrives as
-        # silence rather than an error, so a hosted runner can legitimately see
-        # no data. Opt this job into the skip; a developer running the same test
-        # locally gets a hard failure instead, which is the point of the gate.
-        # The skip still prints a job warning, so a blocked runner stays visible.
+        # Binance geo-restricts data-centre IP ranges, so a hosted runner cannot
+        # reach it; OKX and Kraken answer the same runners and carry the check.
+        # Opt this job into skipping a venue it cannot reach, reported as a job
+        # notice; a developer running the same test locally gets a hard failure
+        # instead, which is the point of the gate. A venue that answers and
+        # streams nothing fails either way, and a runner that reaches no venue at
+        # all still prints a job warning.
         env:
           WICKRA_LIVE_ALLOW_SKIP: "1"
         run: cargo test -p wickra-terminal-core --all-features -- --ignored --nocapture
