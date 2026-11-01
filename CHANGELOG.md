@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **The GHSA-qwgh-2vcv-g2f7 entry is gone from `osv-scanner.toml`.** The
+  advisory now names block-buffer 0.11.0 up to 0.12.1 as affected, so the
+  0.10.4 in `Cargo.lock` is outside it and osv-scanner reported the entry as
+  unused.
+
 ## [0.2.1] - 2026-10-28
 
 A maintenance release: the terminal and its bindings are unchanged. It ships the
