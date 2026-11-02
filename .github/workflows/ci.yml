@@ -513,9 +513,15 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
           cache-dependency-path: bindings/node/package-lock.json
-      # npm install (not ci): the unpublished per-platform optionalDependencies
-      # are absent from the lock, and the npm in Node 24 rejects that with
-      # EUSAGE. See the longer note in release.yml.
+      # npm ci, reproducible: it installs exactly the lockfile and refuses a
+      # lock that disagrees with the manifest. This was `npm install` while the
+      # six per-platform optionalDependencies did not exist on the registry and
+      # so could not be in the lock -- npm refuses that with
+      # `EUSAGE ... Missing: wickra-terminal-darwin-arm64@ from lock file`.
+      # The releases published them, the lock now names all six, and the
+      # reason for the looser command is gone. A release bump moves those entries
+      # to the new version before it is published, which npm ci accepts:
+      # wickra-backtest has released this way since 0.1.1.
       - name: Install Node dependencies
         # npm's own fetch-retry rides out a single bad request; wrapping the whole
         # install means a longer registry outage retries instead of failing the job.
@@ -524,7 +530,7 @@ jobs:
           timeout_minutes: 10
           max_attempts: 3
           retry_wait_seconds: 20
-          command: cd bindings/node && npm install --no-audit --no-fund
+          command: cd bindings/node && npm ci --no-audit --no-fund
           shell: bash
       # --platform puts the target triple into the filename so the loader finds
       # the freshly built binary instead of a per-platform npm subpackage.
