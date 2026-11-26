@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://wickra.org"><img src="https://raw.githubusercontent.com/wickra-lib/.github/main/profile/wickra-banner.svg?v=514-8" alt="Wickra Terminal — the data-driven streaming trading terminal: one core in ten languages, a native TUI and a Web renderer" width="100%"></a>
+  <a href="https://wickra.org"><img src="https://raw.githubusercontent.com/wickra-lib/.github/main/profile/wickra-banner.svg?v=515-8" alt="Wickra Terminal — the data-driven streaming trading terminal: one core in ten languages, a native TUI and a Web renderer" width="100%"></a>
 </p>
 
 [![CI](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/ci.svg)](https://github.com/wickra-lib/wickra-terminal/actions/workflows/ci.yml)
@@ -11,7 +11,7 @@
 
 ---
 
-> **▶ Live demo:** the Wickra library's own 514 indicators over real Binance market data, computed live in your browser — **[live.wickra.org](https://live.wickra.org)** · zero backend, powered by `wickra-wasm`.
+> **▶ Live demo:** the Wickra library's own 515 indicators over real Binance market data, computed live in your browser — **[live.wickra.org](https://live.wickra.org)** · zero backend, powered by `wickra-wasm`.
 
 **One core. Ten languages. Two renderers — for C / C++. `cargo build -p wickra-terminal-c --release` — a prebuilt shared/static library plus a generated `wickra_terminal.h`, no system dependencies.**
 

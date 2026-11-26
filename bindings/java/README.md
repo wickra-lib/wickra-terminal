@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://wickra.org"><img src="https://raw.githubusercontent.com/wickra-lib/.github/main/profile/wickra-banner.svg?v=514-8" alt="Wickra Terminal — the data-driven streaming trading terminal: one core in ten languages, a native TUI and a Web renderer" width="100%"></a>
+  <a href="https://wickra.org"><img src="https://raw.githubusercontent.com/wickra-lib/.github/main/profile/wickra-banner.svg?v=515-8" alt="Wickra Terminal — the data-driven streaming trading terminal: one core in ten languages, a native TUI and a Web renderer" width="100%"></a>
 </p>
 
 [![CI](https://raw.githubusercontent.com/wickra-lib/.github/main/profile/badges/wickra-terminal/ci.svg)](https://github.com/wickra-lib/wickra-terminal/actions/workflows/ci.yml)
@@ -11,7 +11,7 @@
 
 ---
 
-> **▶ Live demo:** the Wickra library's own 514 indicators over real Binance market data, computed live in your browser — **[live.wickra.org](https://live.wickra.org)** · zero backend, powered by `wickra-wasm`.
+> **▶ Live demo:** the Wickra library's own 515 indicators over real Binance market data, computed live in your browser — **[live.wickra.org](https://live.wickra.org)** · zero backend, powered by `wickra-wasm`.
 
 **One core. Ten languages. Two renderers — for Java. `org.wickra:wickra-terminal` — prebuilt native library inside the jar, no JNI, no system dependencies.**
 
@@ -37,14 +37,14 @@ Maven:
 <dependency>
   <groupId>org.wickra</groupId>
   <artifactId>wickra-terminal</artifactId>
-  <version>0.2.1</version>
+  <version>0.2.2</version>
 </dependency>
 ```
 
 Gradle:
 
 ```kotlin
-implementation("org.wickra:wickra-terminal:0.2.1")
+implementation("org.wickra:wickra-terminal:0.2.2")
 ```
 
 The native library ships prebuilt per platform inside the jar and is
