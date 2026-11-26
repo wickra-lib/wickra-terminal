@@ -13,8 +13,8 @@ package wickraterminal
 #cgo linux,arm64 LDFLAGS: -L${SRCDIR}/lib/linux_arm64 -lwickra_terminal -Wl,-rpath,${SRCDIR}/lib/linux_arm64
 #cgo darwin,amd64 LDFLAGS: -L${SRCDIR}/lib/darwin_amd64 -lwickra_terminal -Wl,-rpath,${SRCDIR}/lib/darwin_amd64
 #cgo darwin,arm64 LDFLAGS: -L${SRCDIR}/lib/darwin_arm64 -lwickra_terminal -Wl,-rpath,${SRCDIR}/lib/darwin_arm64
-#cgo windows,amd64 LDFLAGS: -L${SRCDIR}/lib/windows_amd64 -l:wickra_terminal.dll
-#cgo windows,arm64 LDFLAGS: -L${SRCDIR}/lib/windows_arm64 -l:wickra_terminal.dll
+#cgo windows,amd64 LDFLAGS: -L${SRCDIR}/lib/windows_amd64 -lwickra_terminal
+#cgo windows,arm64 LDFLAGS: -L${SRCDIR}/lib/windows_arm64 -lwickra_terminal
 #include <stdlib.h>
 #include "wickra_terminal.h"
 */
