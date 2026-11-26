@@ -3069,7 +3069,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -3775,9 +3775,9 @@ dependencies = [
 
 [[package]]
 name = "wickra-exchange"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "478e6d074a16087e7e05ef78be0249aea9a97342b095386318851da7eecb5927"
+checksum = "a073118465bbdfc7d5d20950f0eb9a34f755a7c0eacf1aec05b0c719bb1f7189"
 dependencies = [
  "flate2",
  "futures-util",
@@ -3789,9 +3789,9 @@ dependencies = [
 
 [[package]]
 name = "wickra-exchange-core"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d609757d42bc1547937aa8ce9c33583c3984427b55019c72510b5d9d7749aac2"
+checksum = "c2675c6b5b0318ee431104218ede0313d67cba54ea35bde630ab66b3ae22c0d7"
 dependencies = [
  "base64 0.22.1",
  "hex",
