@@ -49,7 +49,8 @@ impl PyTerminal {
 
 /// The native module (`wickra_terminal._wickra_terminal`).
 #[pymodule]
-fn _wickra_terminal(module: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pyo3(name = "_wickra_terminal")]
+fn wickra_terminal_extension(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;
     module.add_class::<PyTerminal>()?;
     Ok(())
