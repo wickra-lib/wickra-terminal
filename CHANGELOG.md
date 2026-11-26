@@ -7,8 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-26
+
+A maintenance release: it follows wickra-core 2.2.0, builds on Rust 1.100 and
+Go 1.27, and ships the refreshed dependency tree.
+
+### Changed
+
+- **Built on wickra-core 2.2.0** (from 2.1.0). The lock takes the indicator
+  core's release; the caret requirement already admitted it. Saturated `Rsi` and
+  `StochRsi` values are now exactly 100 (and 0), and `TtmSqueeze` detrends its
+  momentum per bar, as the reference does, with a warmup of `2 * period - 1`;
+  anything here that runs those indicators can report different values with it.
+- **Third-party dependencies refreshed.** `Cargo.lock` takes 114 crates at their
+  latest releases within the declared ranges. The npm and Python dev locks are
+  re-resolved the same way. No manifest changed.
+- **Dependabot's monthly updates** (GitHub Actions, Maven, npm): 4 pull
+  requests, each checked against the versions the rest of the family holds.
+- **CI and release workflow:** point osv-scanner at the Python lockfiles it was
+  silently skipping; install the Node binding with npm ci now that the lock
+  names every platform package; use setup-java's *-env-var inputs.
+
+### Fixed
+
+- **Builds on Rust 1.100.** Its `clippy::used_underscore_items` fires on the
+  code `#[pymodule]` generates for an underscore-named module function. The
+  function has a plain name now and `#[pyo3(name = "_...")]` keeps the extension
+  module's import name unchanged.
+- **The Go binding links on Windows with Go 1.27,** which rejects
+  `-l:<name>.dll` in `#cgo LDFLAGS` as an invalid flag. It is `-l<name>` now;
+  the MinGW linker resolves that to the same DLL.
+
 ### Security
 
+- **url 2.5.9** in the lockfile, for RUSTSEC-2026-0592: a stack overflow in
+  `Url::origin()` on nested `blob:` URLs.
+- **rustix 1.1.6** in the lockfile, for RUSTSEC-2026-0486: xattr functions
+  marked unwritten bytes as initialised when given a zero-length buffer.
+- **quinn-proto 0.11.19** in the lockfile, for RUSTSEC-2026-0523 and
+  RUSTSEC-2026-0524: a `MAX_STREAM_DATA` frame could open streams beyond the
+  limit, and a long Retry token could panic or exhaust memory in a QUIC client.
+- **quinn-udp 0.5.16** in the lockfile, for RUSTSEC-2026-0538: the receive loop
+  could spin after a truncated datagram.
 - **The GHSA-qwgh-2vcv-g2f7 entry is gone from `osv-scanner.toml`.** The
   advisory now names block-buffer 0.11.0 up to 0.12.1 as affected, so the
   0.10.4 in `Cargo.lock` is outside it and osv-scanner reported the entry as
@@ -974,7 +1014,8 @@ nothing stopped the other six registries from publishing around it.
   floor, so only that row stays at 8.4.2. Written here rather than left as prose
   in the requirements file, because this file is now actually read.
 
-[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/wickra-lib/wickra-terminal/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/wickra-lib/wickra-terminal/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.8...v0.2.0
 [0.1.8]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.7...v0.1.8
