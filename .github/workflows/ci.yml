@@ -897,7 +897,18 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
-          cache: maven
+      # The Maven repository, cached with restore-keys. setup-java's
+      # `cache: maven` keys on the pom's hash alone, so every version bump
+      # started empty and fetched every plugin from Maven Central again --
+      # all repositories at once in a release train, which Central answers
+      # with 429. Same key format as setup-java, so its caches restore.
+      - name: Cache the Maven repository
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.m2/repository
+          key: setup-java-${{ runner.os }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            setup-java-${{ runner.os }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-maven-
       - name: Java info
         run: java -version
       - name: Test the Java binding
@@ -1233,6 +1244,18 @@ jobs:
         with:
           distribution: temurin
           java-version: "22"
+      # The Maven repository, cached with restore-keys. setup-java's
+      # `cache: maven` keys on the pom's hash alone, so every version bump
+      # started empty and fetched every plugin from Maven Central again --
+      # all repositories at once in a release train, which Central answers
+      # with 429. Same key format as setup-java, so its caches restore.
+      - name: Cache the Maven repository
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.m2/repository
+          key: setup-java-${{ runner.os }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            setup-java-${{ runner.os }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-maven-
 
       - uses: r-lib/actions/setup-r@f9a764fea8d5c63df6ef9a5c7795bf7deb5d7e05 # v2.14.0
         with:
@@ -1328,7 +1351,7 @@ jobs:
   # checks are left out on purpose -- an outside outage must not hold a merge.
   ci-ok:
     name: ci-ok
-    if: ${{ !github.event.pull_request.draft && (always()) }}
+    if: always()
     needs:
       - test
       - lint
@@ -1354,6 +1377,15 @@ jobs:
     timeout-minutes: 5
     permissions: {}
     steps:
+      # A draft runs no job (each carries !github.event.pull_request.draft),
+      # and a skipped required check counts as passed: auto-merge merged
+      # drafts the moment they were marked ready, before their CI ran. So the
+      # gate fails on a draft and only the real run can turn it green.
+      - name: A draft pull request is never green
+        if: github.event.pull_request.draft
+        run: |
+          echo "::error::draft pull request: no job ran; mark it ready for review to run CI"
+          exit 1
       - name: Every required job passed
         env:
           RESULTS: ${{ toJSON(needs) }}

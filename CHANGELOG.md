@@ -7,8 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-27
+
+A release of the build and release pipeline; the library code is unchanged.
+
 ### Changed
 
+- **The family pins follow the owners' releases.** `wickra-exchange` =0.2.2 ->
+  =0.2.3, `wickra-exchange-core` =0.2.2 -> =0.2.3 -- the exact pins this
+  repository keeps on its siblings move to the versions those repositories
+  release in the same train, and every tracked lockfile follows.
 - **The Maven sources jar no longer carries the native libraries.** The release
   workflow stages every platform's library into the resources before the
   deploy, and the sources jar packed them a second time. A release's size on
@@ -29,6 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Draft pull requests start no CI.** Every job of the workflows that run
   on pull requests skips a draft, and marking it ready for review starts
   the full run.
+- **CI caches the Maven repository with restore-keys.** setup-java's own
+  cache keyed on the pom alone, so every version bump started empty and
+  fetched every plugin from Maven Central again; in a release train that ran
+  into Central's 429 throttling. A changed pom now restores the previous
+  cache and downloads only what is new.
+- **A draft pull request cannot be merged by accident.** The ci-ok gate
+  now runs on a draft and fails there; skipped, it counted as passed and let
+  auto-merge merge a draft the moment it was marked ready, before its CI ran.
 
 ## [0.2.2] - 2026-11-26
 
@@ -1041,7 +1057,8 @@ nothing stopped the other six registries from publishing around it.
   floor, so only that row stays at 8.4.2. Written here rather than left as prose
   in the requirements file, because this file is now actually read.
 
-[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/wickra-lib/wickra-terminal/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/wickra-lib/wickra-terminal/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/wickra-lib/wickra-terminal/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/wickra-lib/wickra-terminal/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/wickra-lib/wickra-terminal/compare/v0.1.8...v0.2.0
