@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches: [main]
 
 permissions:
@@ -31,6 +32,7 @@ env:
 
 jobs:
   test:
+    if: ${{ !github.event.pull_request.draft }}
     name: Test (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -63,6 +65,7 @@ jobs:
       - run: cargo test --workspace --all-features --exclude wickra-terminal-python --exclude wickra-terminal-c
 
   lint:
+    if: ${{ !github.event.pull_request.draft }}
     name: Format & Clippy (${{ matrix.os }})
     # Linted on every OS the crate is built for, not just Linux. A lint can be
     # platform-conditional, and this repository has platform-conditional code:
@@ -90,6 +93,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   msrv:
+    if: ${{ !github.event.pull_request.draft }}
     name: MSRV workspace (1.87)
     runs-on: ubuntu-latest
     timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
@@ -115,6 +119,7 @@ jobs:
           --exclude wickra-terminal
 
   msrv-1_88:
+    if: ${{ !github.event.pull_request.draft }}
     name: MSRV node + tui (1.88)
     runs-on: ubuntu-latest
     timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
@@ -132,6 +137,7 @@ jobs:
       - run: cargo build -p wickra-terminal-node -p wickra-terminal
 
   binding-surface:
+    if: ${{ !github.event.pull_request.draft }}
     name: Binding surface parity
     runs-on: ubuntu-latest
     timeout-minutes: 10 # static checks; if they are not done in ten minutes they are stuck
@@ -171,6 +177,7 @@ jobs:
         run: python3 scripts/check_license_copies.py
 
   supply-chain:
+    if: ${{ !github.event.pull_request.draft }}
     name: Supply-chain (cargo-deny + osv-scanner)
     runs-on: ubuntu-latest
     timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
@@ -238,6 +245,7 @@ jobs:
   # today and becomes a real gate the moment 0.1.0 publishes, without anyone
   # having to remember to come back and enable it.
   semver:
+    if: ${{ !github.event.pull_request.draft }}
     name: Public API (cargo-semver-checks)
     runs-on: ubuntu-latest
     timeout-minutes: 30 # backstop: it builds rustdoc JSON for each crate and its baseline
@@ -294,6 +302,7 @@ jobs:
           cargo semver-checks check-release -p wickra-terminal-core -p wickra-terminal
 
   python:
+    if: ${{ !github.event.pull_request.draft }}
     name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -390,6 +399,7 @@ jobs:
   # wickra's equivalent stops at the build; a wheel that compiles is not a wheel
   # that loads, and the musllinux one is the variant nothing else touches.
   python-wheel-container-smoke:
+    if: ${{ !github.event.pull_request.draft }}
     name: Python wheel (${{ matrix.manylinux }}/${{ matrix.target }} smoke)
     runs-on: ubuntu-latest
     timeout-minutes: 30 # backstop: a container build from a cold cache is slow
@@ -503,6 +513,7 @@ jobs:
             sh -c "$PY -m pip install --no-index --find-links bindings/python/dist --force-reinstall --no-deps wickra-terminal && $PY wheel-smoke.py"
 
   node:
+    if: ${{ !github.event.pull_request.draft }}
     name: Node ${{ matrix.node-version }} on ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -591,6 +602,7 @@ jobs:
           done
 
   wasm:
+    if: ${{ !github.event.pull_request.draft }}
     name: WASM
     runs-on: ubuntu-latest
     timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
@@ -630,6 +642,7 @@ jobs:
         run: node --test bindings/wasm/tests/*.test.cjs
 
   web:
+    if: ${{ !github.event.pull_request.draft }}
     name: Web renderer
     runs-on: ubuntu-latest
     timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
@@ -674,6 +687,7 @@ jobs:
         run: cd web && npm run build
 
   c-abi:
+    if: ${{ !github.event.pull_request.draft }}
     name: C ABI on ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -721,6 +735,7 @@ jobs:
           ctest --test-dir examples/c/build -C Release --output-on-failure
 
   go:
+    if: ${{ !github.event.pull_request.draft }}
     name: Go ${{ matrix.go }} on ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -817,6 +832,7 @@ jobs:
           done
 
   csharp:
+    if: ${{ !github.event.pull_request.draft }}
     name: C# on ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -856,6 +872,7 @@ jobs:
         run: dotnet run --project examples/csharp -c Release -- time-machine
 
   java:
+    if: ${{ !github.event.pull_request.draft }}
     name: Java on ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -920,6 +937,7 @@ jobs:
           done
 
   r:
+    if: ${{ !github.event.pull_request.draft }}
     name: R on ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -999,6 +1017,7 @@ jobs:
           fi
 
   coverage:
+    if: ${{ !github.event.pull_request.draft }}
     name: Coverage
     runs-on: ubuntu-latest
     timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
@@ -1080,6 +1099,7 @@ jobs:
           the codecov/patch status stay empty until the secret is added."
 
   fuzz-smoke:
+    if: ${{ !github.event.pull_request.draft }}
     name: Fuzz (smoke)
     runs-on: ubuntu-latest
     timeout-minutes: 30 # backstop: cap a wedged job instead of GitHub's 6h default (headroom for slow registry/package installs)
@@ -1156,6 +1176,7 @@ jobs:
   # A job-level continue-on-error would not do: the check run still concludes
   # `failure`, the commit shows red and a release gate reading check runs stops.
   links:
+    if: ${{ !github.event.pull_request.draft }}
     name: External links (non-blocking)
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -1193,6 +1214,7 @@ jobs:
   # that can be said without one. The rest stays as a cheap second opinion that
   # fails before the heavier jobs do.
   examples-smoke:
+    if: ${{ !github.event.pull_request.draft }}
     name: Examples (syntax smoke)
     runs-on: ubuntu-latest
     timeout-minutes: 15 # a parse check; if it is not done in fifteen minutes it is stuck
@@ -1306,7 +1328,7 @@ jobs:
   # checks are left out on purpose -- an outside outage must not hold a merge.
   ci-ok:
     name: ci-ok
-    if: always()
+    if: ${{ !github.event.pull_request.draft && (always()) }}
     needs:
       - test
       - lint
